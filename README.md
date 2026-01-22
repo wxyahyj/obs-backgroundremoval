@@ -20,6 +20,8 @@ A plugin for [OBS Studio](https://obsproject.com/) that allows you to replace th
 
 Or, browse versions on [releases page](https://github.com/royshil/obs-backgroundremoval/releases).
 
+> Not working? Please try [the Lite version (Live Background Removal Lite)](https://github.com/kaito-tokyo/live-backgroundremoval-lite) developed by one of us (Kaito Udagawa).
+
 ## Usage
 
 <div style="text-align:center;">
