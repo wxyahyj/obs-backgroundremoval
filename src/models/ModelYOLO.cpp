@@ -102,20 +102,13 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         populateInputOutputNames(session_, inputNames_, outputNames_);
         populateInputOutputShapes(session_, inputDims_, outputDims_);
         
-        if (inputResolution > 0) {
-            inputWidth_ = inputResolution;
-            inputHeight_ = inputResolution;
-            if (!inputDims_.empty()) {
-                inputDims_[0][2] = inputHeight_;
-                inputDims_[0][3] = inputWidth_;
-            }
-        } else {
-            if (!inputDims_.empty()) {
-                auto shape = inputDims_[0];
-                if (shape.size() >= 4) {
-                    inputHeight_ = static_cast<int>(shape[2]);
-                    inputWidth_ = static_cast<int>(shape[3]);
-                }
+        // 始终使用从模型读取的实际输入尺寸，而不是用户设置的 inputResolution
+        if (!inputDims_.empty()) {
+            auto shape = inputDims_[0];
+            if (shape.size() >= 4) {
+                inputHeight_ = static_cast<int>(shape[2]);
+                inputWidth_ = static_cast<int>(shape[3]);
+                obs_log(LOG_INFO, "[ModelYOLO] Using model actual input size: %dx%d", inputWidth_, inputHeight_);
             }
         }
         
@@ -575,12 +568,8 @@ void ModelYOLO::setTargetClass(int classId) {
 }
 
 void ModelYOLO::setInputResolution(int resolution) {
-    if (resolution > 0) {
-        inputWidth_ = resolution;
-        inputHeight_ = resolution;
-        if (!inputDims_.empty()) {
-            inputDims_[0][2] = inputHeight_;
-            inputDims_[0][3] = inputWidth_;
-        }
-    }
+    // 禁用手动设置输入分辨率，始终使用模型实际输入尺寸
+    obs_log(LOG_WARNING, "[ModelYOLO] setInputResolution is disabled. Input resolution is determined by model.");
+    obs_log(LOG_WARNING, "[ModelYOLO] Current model input size: %dx%d", inputWidth_, inputHeight_);
+    // 不执行任何修改
 }
