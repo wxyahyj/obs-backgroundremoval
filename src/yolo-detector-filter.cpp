@@ -35,8 +35,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
     std::mutex detectionsMutex;
 
     std::string modelPath;
-    std::string useGPU;
-    int numThreads;
     int inputResolution;
     float confidenceThreshold;
     float nmsThreshold;
@@ -91,6 +89,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
     obs_properties_add_group(props, "control_group", obs_module_text("Control"), OBS_GROUP_NORMAL, nullptr);
 
     obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
+    obs_properties_add_text(props, "inference_status", "Inference: ON", OBS_TEXT_INFO);
 
     obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -211,7 +210,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
     std::string newModelPath = obs_data_get_string(settings, "model_path");
     ModelYOLO::Version newModelVersion = static_cast<ModelYOLO::Version>(obs_data_get_int(settings, "model_version"));
     std::string newUseGPU = obs_data_get_string(settings, "use_gpu");
-    int newNumThreads = (int)obs_data_get_int(settings, "num_threads");
+    uint32_t newNumThreads = (uint32_t)obs_data_get_int(settings, "num_threads");
     int newInputResolution = (int)obs_data_get_int(settings, "input_resolution");
     
     if (newModelPath != tf->modelPath || newUseGPU != tf->useGPU || newNumThreads != tf->numThreads || newInputResolution != tf->inputResolution || !tf->yoloModel) {
@@ -227,7 +226,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
                 
                 tf->yoloModel = std::make_unique<ModelYOLO>(tf->modelVersion);
                 
-                tf->yoloModel->loadModel(tf->modelPath, tf->useGPU, tf->numThreads, tf->inputResolution);
+                tf->yoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
                 
                 obs_log(LOG_INFO, "[YOLO Filter] Model loaded successfully");
                 
@@ -279,6 +278,11 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 
     tf->isInferencing = !tf->isInferencing;
     obs_log(LOG_INFO, "[YOLO Detector] Inference %s", tf->isInferencing ? "enabled" : "disabled");
+
+    obs_property_t *statusText = obs_properties_get(props, "inference_status");
+    if (statusText) {
+        obs_property_set_description(statusText, tf->isInferencing ? "Inference: ON" : "Inference: OFF");
+    }
 
     return true;
 }
@@ -612,6 +616,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
     tf->totalFrames++;
     tf->frameCounter++;
 
+    uint32_t width, height;
+    getRGBAFromStageSurface(tf.get(), width, height);
+
     if (tf->frameCounter >= tf->inferenceIntervalFrames) {
         tf->frameCounter = 0;
         tf->shouldInference = true;
@@ -635,8 +642,23 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *effect)
         return;
     }
 
-    uint32_t width, height;
-    getRGBAFromStageSurface(tf.get(), width, height);
+    obs_source_t *target = obs_filter_get_target(tf->source);
+    if (!target) {
+        if (tf->source) {
+            obs_source_skip_video_filter(tf->source);
+        }
+        return;
+    }
+
+    uint32_t width = obs_source_get_base_width(target);
+    uint32_t height = obs_source_get_base_height(target);
+
+    if (width == 0 || height == 0) {
+        if (tf->source) {
+            obs_source_skip_video_filter(tf->source);
+        }
+        return;
+    }
 
     if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
         if (tf->source) {
