@@ -334,12 +334,17 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
 
 	while (filter->inferenceRunning) {
-		if (!filter->shouldInference || !filter->isInferencing) {
+		if (!filter->shouldInference) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			continue;
 		}
 
 		filter->shouldInference = false;
+
+		if (!filter->isInferencing) {
+			// 推理被禁用了，跳过
+			continue;
+		}
 
 		if (!filter->yoloModel) {
 			obs_log(LOG_INFO, "[YOLO Detector] No yoloModel, skipping");
