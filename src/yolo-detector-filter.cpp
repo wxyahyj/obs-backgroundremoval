@@ -83,11 +83,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
     obs_properties_add_group(props, "control_group", obs_module_text("Control"), OBS_GROUP_NORMAL, nullptr);
 
-    obs_properties_add_text(props, "inference_status", obs_module_text("InferenceStatus"), OBS_TEXT_INFO);
-
     obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
-
-    obs_properties_set_modified_callback(props, onPropertiesModified);
 
     obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -225,15 +221,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
     tf->isDisabled = false;
 }
 
-static void updateInferenceStatusText(obs_properties_t *props, yolo_detector_filter *tf)
-{
-    obs_property_t *statusProp = obs_properties_get(props, "inference_status");
-    if (statusProp) {
-        const char *status = tf->isInferencing ? "Enabled" : "Disabled";
-        obs_property_set_text(statusProp, status);
-    }
-}
-
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data)
 {
     auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
@@ -248,25 +235,6 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 
     tf->isInferencing = !tf->isInferencing;
     obs_log(LOG_INFO, "[YOLO Detector] Inference %s", tf->isInferencing ? "enabled" : "disabled");
-
-    updateInferenceStatusText(props, tf.get());
-
-    return true;
-}
-
-static bool onPropertiesModified(obs_properties_t *props, obs_property_t *property, void *data)
-{
-    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
-    if (!ptr) {
-        return true;
-    }
-
-    std::shared_ptr<yolo_detector_filter> tf = *ptr;
-    if (!tf) {
-        return true;
-    }
-
-    updateInferenceStatusText(props, tf.get());
 
     return true;
 }
