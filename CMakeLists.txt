@@ -208,10 +208,9 @@ target_sources(
     src/obs-utils/obs-config-utils.cpp
     src/update-checker/github-utils.cpp
     src/update-checker/update-checker.cpp
-    src/background-filter-info.c
-    src/background-filter.cpp
-    src/enhance-filter.cpp
-    src/enhance-filter-info.c
+    src/yolo-detector-filter-info.c
+    src/yolo-detector-filter.cpp
+    src/models/ModelYOLO.cpp
 )
 target_compile_options(
   ${CMAKE_PROJECT_NAME}

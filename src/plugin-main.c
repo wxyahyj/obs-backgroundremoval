@@ -1,5 +1,6 @@
 /*
-OBS Background Removal Filter Plugin
+OBS YOLO Detector Filter Plugin
+Based on OBS Background Removal Filter Plugin
 Copyright (C) 2021 Roy Shilkrot roy.shil@gmail.com
 
 This program is free software; you can redistribute it and/or modify
@@ -13,7 +14,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along
-with this program. If not, see <https://www.gnu.org/licenses/>
+with this program; if not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
@@ -27,17 +28,16 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-	return obs_module_text("PortraitBackgroundFilterPlugin");
+	return obs_module_text("YOLODetectorPlugin");
 }
 
-extern struct obs_source_info background_removal_filter_info;
-extern struct obs_source_info enhance_filter_info;
+extern struct obs_source_info yolo_detector_filter_info;
 
 bool obs_module_load(void)
 {
-	obs_register_source(&background_removal_filter_info);
-	obs_register_source(&enhance_filter_info);
-	obs_log(LOG_INFO, "Plugin loaded successfully (version %s)", PLUGIN_VERSION);
+	obs_register_source(&yolo_detector_filter_info);
+	
+	obs_log(LOG_INFO, "YOLO Detector Plugin loaded successfully (version %s)", PLUGIN_VERSION);
 
 	check_update();
 
@@ -46,5 +46,5 @@ bool obs_module_load(void)
 
 void obs_module_unload()
 {
-	obs_log(LOG_INFO, "plugin unloaded");
+	obs_log(LOG_INFO, "YOLO Detector Plugin unloaded");
 }
