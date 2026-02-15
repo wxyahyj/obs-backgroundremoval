@@ -56,12 +56,19 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
         if (currentUseGPU == "cuda") {
             try {
+                // Try with CUDA (uppercase) first
                 Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
                 obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled");
             } catch (const std::exception& e) {
-                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
-                gpuFailed = true;
-                currentUseGPU = "cpu";
+                try {
+                    // Try with Cuda (mixed case) as fallback
+                    Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Cuda(sessionOptions, 0));
+                    obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled (mixed case)");
+                } catch (const std::exception& e2) {
+                    obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e2.what());
+                    gpuFailed = true;
+                    currentUseGPU = "cpu";
+                }
             }
         }
 #endif
