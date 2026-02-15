@@ -166,7 +166,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *targetClass = obs_properties_add_list(props, "target_class", obs_module_text("TargetClass"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(targetClass, obs_module_text("AllClasses"), -1);
 
-	obs_properties_add_int_slider(props, "inference_interval_frames", obs_module_text("InferenceIntervalFrames"), 1, 10, 1);
+	obs_properties_add_int_slider(props, "inference_interval_frames", obs_module_text("InferenceIntervalFrames"), 0, 10, 1);
 
 	obs_properties_add_group(props, "render_group", obs_module_text("RenderConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -893,13 +893,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	tf->totalFrames++;
 	tf->frameCounter++;
 
-	if (tf->frameCounter >= tf->inferenceIntervalFrames) {
+	if (tf->inferenceIntervalFrames == 0 || tf->frameCounter >= tf->inferenceIntervalFrames) {
 			tf->frameCounter = 0;
 			tf->shouldInference = true;
-			// 减少日志输出，只在调试模式下输出
-			// obs_log(LOG_DEBUG, "[YOLO Detector] Set shouldInference = true, isInferencing = %d, yoloModel valid = %d", 
-			// 	(int)tf->isInferencing, 
-			// 	tf->yoloModel ? 1 : 0);
 		}
 }
 
