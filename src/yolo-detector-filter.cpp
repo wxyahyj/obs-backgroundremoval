@@ -1002,7 +1002,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 	cv::Mat outputImage;
 	gs_texture_t *renderTexture = nullptr;
-	bool hasDetections = false;
 
 	{
 		std::lock_guard<std::mutex> lock(tf->inputBGRALock);
@@ -1012,7 +1011,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			if (tf->showBBox) {
 				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
 				if (!tf->detections.empty()) {
-					hasDetections = true;
 					for (const auto& det : tf->detections) {
 						int x = static_cast<int>(det.x * width);
 						int y = static_cast<int>(det.y * height);
@@ -1078,9 +1076,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 	if (renderTexture) {
 		gs_draw_sprite(renderTexture, 0, width, height);
-	} else {
-		gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
-		obs_source_video_render(target);
 	}
 
 	if (tf->showFOV) {
