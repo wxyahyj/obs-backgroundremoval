@@ -221,7 +221,6 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
 }
 
 std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
-    obs_log(LOG_DEBUG, "[ModelYOLO] inference called with image %dx%d", input.cols, input.rows);
     
     // 输入验证
     if (input.empty()) {
@@ -278,7 +277,7 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             outputNamesChar.push_back(name.get());
         }
         
-        obs_log(LOG_DEBUG, "[ModelYOLO] Running ONNX Runtime inference");
+
         
         // 添加详细的错误处理
         Ort::RunOptions runOptions;
@@ -361,11 +360,7 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        obs_log(LOG_DEBUG, "[ModelYOLO] Using numClasses from model: %d", numClasses_);
-	
-	obs_log(LOG_DEBUG, "[ModelYOLO] Output shape: [%lld, %lld, %lld]", 
-			outputShape[0], outputShape[1], outputShape[2]);
-	obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes, %d classes", numBoxes, numClasses_);
+
         
         cv::Size modelSize(inputWidth_, inputHeight_);
         cv::Size originalSize(input.cols, input.rows);
@@ -390,13 +385,6 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Postprocessing exception: %s", e.what());
             return {};
-        }
-        
-        // 只在有检测结果时输出日志，减少日志量
-        if (!detections.empty()) {
-            obs_log(LOG_INFO, "[ModelYOLO] Inference completed, found %zu detections", detections.size());
-        } else {
-            obs_log(LOG_DEBUG, "[ModelYOLO] Inference completed, found 0 detections");
         }
         
         return detections;
@@ -500,8 +488,6 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         detections.push_back(det);
     }
 
-    obs_log(LOG_DEBUG, "[ModelYOLO] Detected %zu objects after NMS", detections.size());
-
     return detections;
 }
 
@@ -582,8 +568,6 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
 
         detections.push_back(det);
     }
-
-    obs_log(LOG_DEBUG, "[ModelYOLO] Detected %zu objects after NMS", detections.size());
 
     return detections;
 }

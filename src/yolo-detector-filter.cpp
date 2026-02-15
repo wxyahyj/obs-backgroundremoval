@@ -4,6 +4,9 @@
 
 #ifdef _WIN32
 #include <wchar.h>
+#include <windows.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
 #endif
 
 #include <opencv2/imgproc.hpp>
@@ -55,6 +58,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int fovRadius;
 	uint32_t fovColor;
 
+	int regionX;
+	int regionY;
+	int regionWidth;
+	int regionHeight;
+	bool useRegion;
+
 	std::thread inferenceThread;
 	std::atomic<bool> inferenceRunning;
 	std::atomic<bool> shouldInference;
@@ -68,6 +77,19 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	gs_effect_t *solidEffect;
 
+#ifdef _WIN32
+	bool showFloatingWindow;
+	int floatingWindowWidth;
+	int floatingWindowHeight;
+	int floatingWindowX;
+	int floatingWindowY;
+	bool floatingWindowDragging;
+	POINT floatingWindowDragOffset;
+	HWND floatingWindowHandle;
+	std::mutex floatingWindowMutex;
+	cv::Mat floatingWindowFrame;
+#endif
+
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
 };
 
@@ -77,6 +99,14 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
+
+#ifdef _WIN32
+static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static void createFloatingWindow(yolo_detector_filter *filter);
+static void destroyFloatingWindow(yolo_detector_filter *filter);
+static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame);
+static void renderFloatingWindow(yolo_detector_filter *filter);
+#endif
 
 const char *yolo_detector_filter_getname(void *unused)
 {
@@ -159,6 +189,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_int_slider(props, "fov_radius", "FOV Radius", 50, 500, 10);
 	obs_properties_add_color(props, "fov_color", "FOV Color");
 
+	obs_properties_add_group(props, "region_group", "Region Detection", OBS_GROUP_NORMAL, nullptr);
+
+	obs_properties_add_bool(props, "use_region", "Use Region Detection");
+	obs_properties_add_int(props, "region_x", "Region X", 0, 3840, 1);
+	obs_properties_add_int(props, "region_y", "Region Y", 0, 2160, 1);
+	obs_properties_add_int(props, "region_width", "Region Width", 1, 3840, 1);
+	obs_properties_add_int(props, "region_height", "Region Height", 1, 2160, 1);
+
 	obs_properties_add_group(props, "advanced_group", obs_module_text("AdvancedConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
 	obs_properties_add_bool(props, "export_coordinates", obs_module_text("ExportCoordinates"));
@@ -170,6 +208,13 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_text(props, "avg_inference_time", obs_module_text("AvgInferenceTime"), OBS_TEXT_INFO);
 
 	obs_properties_add_text(props, "detected_objects", obs_module_text("DetectedObjects"), OBS_TEXT_INFO);
+
+#ifdef _WIN32
+	obs_properties_add_group(props, "floating_window_group", "Floating Window", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "show_floating_window", "Show Floating Window");
+	obs_properties_add_int_slider(props, "floating_window_width", "Window Width", 320, 1920, 10);
+	obs_properties_add_int_slider(props, "floating_window_height", "Window Height", 240, 1080, 10);
+#endif
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -194,8 +239,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "show_fov", false);
 	obs_data_set_default_int(settings, "fov_radius", 200);
 	obs_data_set_default_int(settings, "fov_color", 0xFFFF0000);
+	obs_data_set_default_bool(settings, "use_region", false);
+	obs_data_set_default_int(settings, "region_x", 0);
+	obs_data_set_default_int(settings, "region_y", 0);
+	obs_data_set_default_int(settings, "region_width", 640);
+	obs_data_set_default_int(settings, "region_height", 480);
 	obs_data_set_default_bool(settings, "export_coordinates", false);
 	obs_data_set_default_string(settings, "coordinate_output_path", "");
+#ifdef _WIN32
+	obs_data_set_default_bool(settings, "show_floating_window", false);
+	obs_data_set_default_int(settings, "floating_window_width", 640);
+	obs_data_set_default_int(settings, "floating_window_height", 480);
+#endif
 }
 
 void yolo_detector_filter_update(void *data, obs_data_t *settings)
@@ -280,9 +335,35 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->showFOV = obs_data_get_bool(settings, "show_fov");
 	tf->fovRadius = (int)obs_data_get_int(settings, "fov_radius");
 	tf->fovColor = (uint32_t)obs_data_get_int(settings, "fov_color");
-	
+
+	tf->useRegion = obs_data_get_bool(settings, "use_region");
+	tf->regionX = (int)obs_data_get_int(settings, "region_x");
+	tf->regionY = (int)obs_data_get_int(settings, "region_y");
+	tf->regionWidth = (int)obs_data_get_int(settings, "region_width");
+	tf->regionHeight = (int)obs_data_get_int(settings, "region_height");
+
 	tf->exportCoordinates = obs_data_get_bool(settings, "export_coordinates");
 	tf->coordinateOutputPath = obs_data_get_string(settings, "coordinate_output_path");
+
+#ifdef _WIN32
+	bool newShowFloatingWindow = obs_data_get_bool(settings, "show_floating_window");
+	int newFloatingWindowWidth = (int)obs_data_get_int(settings, "floating_window_width");
+	int newFloatingWindowHeight = (int)obs_data_get_int(settings, "floating_window_height");
+
+	if (newShowFloatingWindow != tf->showFloatingWindow || 
+	    newFloatingWindowWidth != tf->floatingWindowWidth || 
+	    newFloatingWindowHeight != tf->floatingWindowHeight) {
+		tf->showFloatingWindow = newShowFloatingWindow;
+		tf->floatingWindowWidth = newFloatingWindowWidth;
+		tf->floatingWindowHeight = newFloatingWindowHeight;
+
+		if (tf->showFloatingWindow) {
+			createFloatingWindow(tf.get());
+		} else {
+			destroyFloatingWindow(tf.get());
+		}
+	}
+#endif
 
 	tf->isDisabled = false;
 }
@@ -352,11 +433,149 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 	return true;
 }
 
+#ifdef _WIN32
+static yolo_detector_filter *g_floatingWindowFilter = nullptr;
+
+static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	yolo_detector_filter *filter = g_floatingWindowFilter;
+
+	switch (msg) {
+	case WM_CREATE: {
+		CREATESTRUCT *cs = (CREATESTRUCT *)lParam;
+		SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+		break;
+	}
+	case WM_PAINT: {
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hwnd, &ps);
+		if (filter) {
+			std::lock_guard<std::mutex> lock(filter->floatingWindowMutex);
+			if (!filter->floatingWindowFrame.empty()) {
+				BITMAPINFO bmi = {};
+				bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+				bmi.bmiHeader.biWidth = filter->floatingWindowFrame.cols;
+				bmi.bmiHeader.biHeight = -filter->floatingWindowFrame.rows;
+				bmi.bmiHeader.biPlanes = 1;
+				bmi.bmiHeader.biBitCount = 32;
+				bmi.bmiHeader.biCompression = BI_RGB;
+				SetDIBitsToDevice(hdc, 0, 0, filter->floatingWindowFrame.cols, filter->floatingWindowFrame.rows,
+					0, 0, 0, filter->floatingWindowFrame.rows, filter->floatingWindowFrame.data, &bmi, DIB_RGB_COLORS);
+			}
+		}
+		EndPaint(hwnd, &ps);
+		break;
+	}
+	case WM_LBUTTONDOWN: {
+		if (filter) {
+			filter->floatingWindowDragging = true;
+			POINT pt;
+			GetCursorPos(&pt);
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+			filter->floatingWindowDragOffset.x = pt.x - rect.left;
+			filter->floatingWindowDragOffset.y = pt.y - rect.top;
+			SetCapture(hwnd);
+		}
+		break;
+	}
+	case WM_LBUTTONUP: {
+		if (filter) {
+			filter->floatingWindowDragging = false;
+			ReleaseCapture();
+		}
+		break;
+	}
+	case WM_MOUSEMOVE: {
+		if (filter && filter->floatingWindowDragging) {
+			POINT pt;
+			GetCursorPos(&pt);
+			SetWindowPos(hwnd, NULL, pt.x - filter->floatingWindowDragOffset.x, pt.y - filter->floatingWindowDragOffset.y,
+				0, 0, SWP_NOSIZE | SWP_NOZORDER);
+		}
+		break;
+	}
+	case WM_CLOSE: {
+		if (filter) {
+			filter->showFloatingWindow = false;
+			destroyFloatingWindow(filter);
+		}
+		break;
+	}
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		break;
+	default:
+		return DefWindowProc(hwnd, msg, wParam, lParam);
+	}
+	return 0;
+}
+
+static void createFloatingWindow(yolo_detector_filter *filter)
+{
+	if (filter->floatingWindowHandle) {
+		return;
+	}
+
+	g_floatingWindowFilter = filter;
+
+	WNDCLASS wc = {};
+	wc.lpfnWndProc = FloatingWindowProc;
+	wc.hInstance = GetModuleHandle(NULL);
+	wc.lpszClassName = L"YOLODetectorFloatingWindow";
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+
+	RegisterClass(&wc);
+
+	int x = GetSystemMetrics(SM_CXSCREEN) / 2 - filter->floatingWindowWidth / 2;
+	int y = GetSystemMetrics(SM_CYSCREEN) / 2 - filter->floatingWindowHeight / 2;
+
+	filter->floatingWindowHandle = CreateWindowEx(
+		WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+		L"YOLODetectorFloatingWindow",
+		L"YOLO Detector",
+		WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+		x, y,
+		filter->floatingWindowWidth, filter->floatingWindowHeight,
+		NULL, NULL, GetModuleHandle(NULL), filter
+	);
+
+	filter->floatingWindowX = x;
+	filter->floatingWindowY = y;
+	filter->floatingWindowDragging = false;
+
+	obs_log(LOG_INFO, "[YOLO Detector] Floating window created");
+}
+
+static void destroyFloatingWindow(yolo_detector_filter *filter)
+{
+	if (filter->floatingWindowHandle) {
+		DestroyWindow(filter->floatingWindowHandle);
+		filter->floatingWindowHandle = nullptr;
+		g_floatingWindowFilter = nullptr;
+		obs_log(LOG_INFO, "[YOLO Detector] Floating window destroyed");
+	}
+}
+
+static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame)
+{
+	std::lock_guard<std::mutex> lock(filter->floatingWindowMutex);
+	frame.copyTo(filter->floatingWindowFrame);
+}
+
+static void renderFloatingWindow(yolo_detector_filter *filter)
+{
+	if (!filter->floatingWindowHandle || filter->floatingWindowFrame.empty()) {
+		return;
+	}
+	InvalidateRect(filter->floatingWindowHandle, NULL, FALSE);
+}
+#endif
+
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
-	int logThrottleCounter = 0;
-	const int LOG_THROTTLE_INTERVAL = 10; // 每10次推理输出一次详细日志
 
 	while (filter->inferenceRunning) {
 		if (!filter->shouldInference) {
@@ -371,19 +590,44 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			continue;
 		}
 
+		cv::Mat fullFrame;
 		cv::Mat frame;
+		int cropX = 0;
+		int cropY = 0;
+		int cropWidth = 0;
+		int cropHeight = 0;
+
 		{
 			std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
 			if (!lock.owns_lock()) {
-				obs_log(LOG_DEBUG, "[YOLO Detector] Failed to lock inputBGRALock, skipping");
 				continue;
 			}
 			if (filter->inputBGRA.empty()) {
-				obs_log(LOG_DEBUG, "[YOLO Detector] inputBGRA is empty, skipping");
 				continue;
 			}
-			obs_log(LOG_DEBUG, "[YOLO Detector] Got frame: %dx%d", filter->inputBGRA.cols, filter->inputBGRA.rows);
-			frame = filter->inputBGRA.clone();
+			fullFrame = filter->inputBGRA.clone();
+		}
+
+		if (filter->useRegion) {
+			int fullWidth = fullFrame.cols;
+			int fullHeight = fullFrame.rows;
+
+			cropX = std::max(0, filter->regionX);
+			cropY = std::max(0, filter->regionY);
+			cropWidth = std::min(filter->regionWidth, fullWidth - cropX);
+			cropHeight = std::min(filter->regionHeight, fullHeight - cropY);
+
+			if (cropWidth > 0 && cropHeight > 0) {
+				frame = fullFrame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).clone();
+			} else {
+				frame = fullFrame.clone();
+				cropX = 0;
+				cropY = 0;
+				cropWidth = fullWidth;
+				cropHeight = fullHeight;
+			}
+		} else {
+			frame = fullFrame.clone();
 		}
 
 		auto startTime = std::chrono::high_resolution_clock::now();
@@ -392,12 +636,22 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		try {
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (!filter->yoloModel) {
-				obs_log(LOG_DEBUG, "[YOLO Detector] No yoloModel, skipping");
 				continue;
 			}
 			newDetections = filter->yoloModel->inference(frame);
 		} catch (const std::exception& e) {
 			obs_log(LOG_ERROR, "[YOLO Detector] Inference error: %s", e.what());
+		}
+
+		if (filter->useRegion && cropWidth > 0 && cropHeight > 0) {
+			for (auto& det : newDetections) {
+				det.x = (det.x * cropWidth + cropX) / fullFrame.cols;
+				det.y = (det.y * cropHeight + cropY) / fullFrame.rows;
+				det.width = (det.width * cropWidth) / fullFrame.cols;
+				det.height = (det.height * cropHeight) / fullFrame.rows;
+				det.centerX = (det.centerX * cropWidth + cropX) / fullFrame.cols;
+				det.centerY = (det.centerY * cropHeight + cropY) / fullFrame.rows;
+			}
 		}
 
 		auto endTime = std::chrono::high_resolution_clock::now();
@@ -412,17 +666,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		filter->inferenceCount++;
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
-
-		// 日志节流：每10次推理输出一次详细日志
-		logThrottleCounter++;
-		if (logThrottleCounter >= LOG_THROTTLE_INTERVAL) {
-			obs_log(LOG_INFO, "[YOLO Detector] Inference completed in %lld ms, detections: %zu, avg time: %.2f ms", 
-				duration, newDetections.size(), filter->avgInferenceTimeMs);
-			logThrottleCounter = 0;
-		} else {
-			obs_log(LOG_DEBUG, "[YOLO Detector] Inference completed in %lld ms, detections: %zu", 
-				duration, newDetections.size());
-		}
 
 		if (filter->exportCoordinates && !newDetections.empty()) {
 			exportCoordinatesToFile(filter, frame.cols, frame.rows);
@@ -589,9 +832,6 @@ static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frame
 
 		file.close();
 
-		obs_log(LOG_DEBUG, "[YOLO Filter] Exported %zu detections to file", 
-				filter->detections.size());
-
 	} catch (const std::exception& e) {
 		obs_log(LOG_ERROR, "[YOLO Filter] Error exporting coordinates: %s", e.what());
 	}
@@ -619,6 +859,16 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->inferenceCount = 0;
 		instance->avgInferenceTimeMs = 0.0;
 		instance->isInferencing = true;
+
+#ifdef _WIN32
+		instance->showFloatingWindow = false;
+		instance->floatingWindowWidth = 640;
+		instance->floatingWindowHeight = 480;
+		instance->floatingWindowX = 0;
+		instance->floatingWindowY = 0;
+		instance->floatingWindowDragging = false;
+		instance->floatingWindowHandle = nullptr;
+#endif
 
 		obs_enter_graphics();
 		instance->solidEffect = obs_get_base_effect(OBS_EFFECT_SOLID);
@@ -662,6 +912,11 @@ void yolo_detector_filter_destroy(void *data)
 	if (tf->inferenceThread.joinable()) {
 		tf->inferenceThread.join();
 	}
+
+#ifdef _WIN32
+	// Destroy floating window
+	destroyFloatingWindow(tf.get());
+#endif
 
 	// Clean up graphics resources
 	obs_enter_graphics();
@@ -728,11 +983,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 
 	uint32_t width, height;
 	if (!getRGBAFromStageSurface(tf.get(), width, height)) {
-		obs_log(LOG_DEBUG, "[YOLO Detector] getRGBAFromStageSurface failed");
 		return;
 	}
-
-	obs_log(LOG_DEBUG, "[YOLO Detector] Got frame from getRGBAFromStageSurface: %dx%d", width, height);
 
 	tf->totalFrames++;
 	tf->frameCounter++;
@@ -782,7 +1034,82 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
+	cv::Mat outputImage;
+	{
+		std::lock_guard<std::mutex> lock(tf->inputBGRALock);
+		if (!tf->inputBGRA.empty()) {
+			outputImage = tf->inputBGRA.clone();
+		}
+	}
+
+	gs_texture_t *renderTexture = nullptr;
+
+	if (!outputImage.empty()) {
+		if (tf->showBBox) {
+			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+			for (const auto& det : tf->detections) {
+				int x = static_cast<int>(det.x * width);
+				int y = static_cast<int>(det.y * height);
+				int w = static_cast<int>(det.width * width);
+				int h = static_cast<int>(det.height * height);
+
+				cv::Scalar bboxColor(
+					(tf->bboxColor >> 16) & 0xFF,
+					(tf->bboxColor >> 8) & 0xFF,
+					tf->bboxColor & 0xFF
+				);
+
+				cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
+
+				std::string labelText;
+				if (tf->showLabel) {
+					labelText = std::to_string(det.classId);
+				}
+				if (tf->showLabel && tf->showConfidence) {
+					labelText += " ";
+				}
+				if (tf->showConfidence) {
+					char confidenceStr[32];
+					snprintf(confidenceStr, sizeof(confidenceStr), "%.2f", det.confidence);
+					labelText += confidenceStr;
+				}
+
+				if (!labelText.empty()) {
+					int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+					double fontScale = 0.5;
+					int thickness = 2;
+					int baseline = 0;
+
+					cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
+
+					int textY = y - 5;
+					if (textY < 0) {
+						textY = y + textSize.height + 5;
+					}
+
+					cv::rectangle(outputImage,
+						cv::Rect(x, textY - textSize.height - 5, textSize.width, textSize.height + 10),
+						bboxColor,
+						-1);
+
+					cv::putText(outputImage,
+						labelText,
+						cv::Point(x, textY),
+						fontFace,
+						fontScale,
+						cv::Scalar(255, 255, 255),
+						thickness);
+				}
+			}
+		}
+
+		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
+	}
+
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
+		if (renderTexture) {
+			gs_texture_destroy(renderTexture);
+		}
 		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
 		}
@@ -792,17 +1119,27 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
-	// Render target source first
-	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
-
-	// Now render detection boxes on top
-	if (tf->showBBox) {
-		renderDetectionBoxes(tf.get(), width, height);
+	if (renderTexture) {
+		gs_draw_sprite(renderTexture, 0, width, height);
+	} else {
+		obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 	}
 
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
 	}
-
 	gs_blend_state_pop();
+
+	if (renderTexture) {
+		gs_texture_destroy(renderTexture);
+	}
+
+#ifdef _WIN32
+	if (tf->showFloatingWindow && !outputImage.empty()) {
+		cv::Mat resizedFrame;
+		cv::resize(outputImage, resizedFrame, cv::Size(tf->floatingWindowWidth, tf->floatingWindowHeight));
+		updateFloatingWindowFrame(tf.get(), resizedFrame);
+		renderFloatingWindow(tf.get());
+	}
+#endif
 }
