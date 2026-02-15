@@ -212,6 +212,9 @@ target_sources(
     src/background-filter.cpp
     src/enhance-filter.cpp
     src/enhance-filter-info.c
+    src/yolo-filter.cpp
+    src/yolo-filter-defs.c
+    src/models/ModelYOLO.cpp
 )
 target_compile_options(
   ${CMAKE_PROJECT_NAME}
