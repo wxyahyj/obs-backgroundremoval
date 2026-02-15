@@ -245,20 +245,14 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         
-        // 根据执行提供程序选择合适的内存分配器
-        Ort::MemoryInfo memoryInfo;
+        Ort::Value inputTensor;
         try {
-            memoryInfo = Ort::MemoryInfo::CreateCpu(
+            // 根据执行提供程序选择合适的内存分配器
+            Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
                 OrtAllocatorType::OrtArenaAllocator, 
                 OrtMemType::OrtMemTypeDefault
             );
-        } catch (const std::exception& e) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create memory info: %s", e.what());
-            return {};
-        }
-        
-        Ort::Value inputTensor;
-        try {
+            
             inputTensor = Ort::Value::CreateTensor<float>(
                 memoryInfo,
                 inputBuffer_.data(),
