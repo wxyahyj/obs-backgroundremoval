@@ -75,7 +75,7 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         populateInputOutputNames(session_, inputNames_, outputNames_);
         populateInputOutputShapes(session_, inputDims_, outputDims_);
         
-        if (inputResolution &gt; 0) {
+        if (inputResolution > 0) {
             inputWidth_ = inputResolution;
             inputHeight_ = inputResolution;
             if (!inputDims_.empty()) {
@@ -85,9 +85,9 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         } else {
             if (!inputDims_.empty()) {
                 auto shape = inputDims_[0];
-                if (shape.size() &gt;= 4) {
-                    inputHeight_ = static_cast&lt;int&gt;(shape[2]);
-                    inputWidth_ = static_cast&lt;int&gt;(shape[3]);
+                if (shape.size() >= 4) {
+                    inputHeight_ = static_cast<int>(shape[2]);
+                    inputWidth_ = static_cast<int>(shape[3]);
                 }
             }
         }
@@ -544,7 +544,7 @@ void ModelYOLO::setTargetClass(int classId) {
 }
 
 void ModelYOLO::setInputResolution(int resolution) {
-    if (resolution &gt; 0) {
+    if (resolution > 0) {
         inputWidth_ = resolution;
         inputHeight_ = resolution;
         if (!inputDims_.empty()) {
