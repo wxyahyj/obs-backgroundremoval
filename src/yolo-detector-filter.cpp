@@ -118,9 +118,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_group(props, "control_group", obs_module_text("Control"), OBS_GROUP_NORMAL, nullptr);
 
 	obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
-	obs_properties_add_text(props, "inference_status", "Inference: ON", OBS_TEXT_INFO);
+	obs_properties_add_text(props, "inference_status", obs_module_text("InferenceStatus"), OBS_TEXT_INFO);
 
-	obs_property_t *refreshBtn = obs_properties_add_button(props, "refresh_stats", "Refresh Stats", refreshStats);
+	obs_property_t *refreshBtn = obs_properties_add_button(props, "refresh_stats", obs_module_text("RefreshStats"), refreshStats);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -149,7 +149,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_string(useGPUList, "DirectML", USEGPU_DML);
 #endif
 
-	obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", "Input Resolution", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", obs_module_text("InputResolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(resolutionList, "320x320", 320);
 	obs_property_list_add_int(resolutionList, "416x416", 416);
 	obs_property_list_add_int(resolutionList, "512x512", 512);
@@ -180,19 +180,19 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_color(props, "bbox_color", obs_module_text("BoxColor"));
 
-	obs_properties_add_group(props, "fov_group", "FOV Settings", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_group(props, "fov_group", obs_module_text("FOVSettings"), OBS_GROUP_NORMAL, nullptr);
 
-	obs_properties_add_bool(props, "show_fov", "Show FOV");
-	obs_properties_add_int_slider(props, "fov_radius", "FOV Radius", 50, 500, 10);
-	obs_properties_add_color(props, "fov_color", "FOV Color");
+	obs_properties_add_bool(props, "show_fov", obs_module_text("ShowFOV"));
+	obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 50, 500, 10);
+	obs_properties_add_color(props, "fov_color", obs_module_text("FOVColor"));
 
-	obs_properties_add_group(props, "region_group", "Region Detection", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_group(props, "region_group", obs_module_text("RegionDetection"), OBS_GROUP_NORMAL, nullptr);
 
-	obs_properties_add_bool(props, "use_region", "Use Region Detection");
-	obs_properties_add_int(props, "region_x", "Region X", 0, 3840, 1);
-	obs_properties_add_int(props, "region_y", "Region Y", 0, 2160, 1);
-	obs_properties_add_int(props, "region_width", "Region Width", 1, 3840, 1);
-	obs_properties_add_int(props, "region_height", "Region Height", 1, 2160, 1);
+	obs_properties_add_bool(props, "use_region", obs_module_text("UseRegionDetection"));
+	obs_properties_add_int(props, "region_x", obs_module_text("RegionX"), 0, 3840, 1);
+	obs_properties_add_int(props, "region_y", obs_module_text("RegionY"), 0, 2160, 1);
+	obs_properties_add_int(props, "region_width", obs_module_text("RegionWidth"), 1, 3840, 1);
+	obs_properties_add_int(props, "region_height", obs_module_text("RegionHeight"), 1, 2160, 1);
 
 	obs_properties_add_group(props, "advanced_group", obs_module_text("AdvancedConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -207,10 +207,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_text(props, "detected_objects", obs_module_text("DetectedObjects"), OBS_TEXT_INFO);
 
 #ifdef _WIN32
-	obs_properties_add_group(props, "floating_window_group", "Floating Window", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "show_floating_window", "Show Floating Window");
-	obs_properties_add_int_slider(props, "floating_window_width", "Window Width", 320, 1920, 10);
-	obs_properties_add_int_slider(props, "floating_window_height", "Window Height", 240, 1080, 10);
+	obs_properties_add_group(props, "floating_window_group", obs_module_text("FloatingWindow"), OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "show_floating_window", obs_module_text("ShowFloatingWindow"));
+	obs_properties_add_int_slider(props, "floating_window_width", obs_module_text("WindowWidth"), 320, 1920, 10);
+	obs_properties_add_int_slider(props, "floating_window_height", obs_module_text("WindowHeight"), 240, 1080, 10);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -388,7 +388,7 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 
 	obs_property_t *statusText = obs_properties_get(props, "inference_status");
 	if (statusText) {
-		obs_property_set_description(statusText, tf->isInferencing ? "Inference: ON" : "Inference: OFF");
+		obs_property_set_description(statusText, tf->isInferencing ? obs_module_text("InferenceRunning") : obs_module_text("InferenceStopped"));
 	}
 
 	return true;
@@ -410,7 +410,7 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 	obs_property_t *inferenceTimeText = obs_properties_get(props, "avg_inference_time");
 	if (inferenceTimeText) {
 		char timeStr[128];
-		snprintf(timeStr, sizeof(timeStr), "Avg Inference Time: %.2f ms", tf->avgInferenceTimeMs);
+		snprintf(timeStr, sizeof(timeStr), "%s: %.2f ms", obs_module_text("AvgInferenceTime"), tf->avgInferenceTimeMs);
 		obs_property_set_description(inferenceTimeText, timeStr);
 	}
 
@@ -423,7 +423,7 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 			count = tf->detections.size();
 		}
 		char countStr[128];
-		snprintf(countStr, sizeof(countStr), "Detected Objects: %zu", count);
+		snprintf(countStr, sizeof(countStr), "%s: %zu", obs_module_text("DetectedObjects"), count);
 		obs_property_set_description(detectedObjectsText, countStr);
 	}
 
@@ -987,82 +987,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
-	cv::Mat outputImage;
-	{
-		std::lock_guard<std::mutex> lock(tf->inputBGRALock);
-		if (!tf->inputBGRA.empty()) {
-			outputImage = tf->inputBGRA.clone();
-		}
-	}
-
-	gs_texture_t *renderTexture = nullptr;
-
-	if (!outputImage.empty()) {
-		if (tf->showBBox) {
-			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-			for (const auto& det : tf->detections) {
-				int x = static_cast<int>(det.x * width);
-				int y = static_cast<int>(det.y * height);
-				int w = static_cast<int>(det.width * width);
-				int h = static_cast<int>(det.height * height);
-
-				cv::Scalar bboxColor(
-					(tf->bboxColor >> 16) & 0xFF,
-					(tf->bboxColor >> 8) & 0xFF,
-					tf->bboxColor & 0xFF
-				);
-
-				cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
-
-				std::string labelText;
-				if (tf->showLabel) {
-					labelText = std::to_string(det.classId);
-				}
-				if (tf->showLabel && tf->showConfidence) {
-					labelText += " ";
-				}
-				if (tf->showConfidence) {
-					char confidenceStr[32];
-					snprintf(confidenceStr, sizeof(confidenceStr), "%.2f", det.confidence);
-					labelText += confidenceStr;
-				}
-
-				if (!labelText.empty()) {
-					int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-					double fontScale = 0.5;
-					int thickness = 2;
-					int baseline = 0;
-
-					cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
-
-					int textY = y - 5;
-					if (textY < 0) {
-						textY = y + textSize.height + 5;
-					}
-
-					cv::rectangle(outputImage,
-						cv::Rect(x, textY - textSize.height - 5, textSize.width, textSize.height + 10),
-						bboxColor,
-						-1);
-
-					cv::putText(outputImage,
-						labelText,
-						cv::Point(x, textY),
-						fontFace,
-						fontScale,
-						cv::Scalar(255, 255, 255),
-						thickness);
-				}
-			}
-		}
-
-		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
-	}
-
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
-		if (renderTexture) {
-			gs_texture_destroy(renderTexture);
-		}
 		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
 		}
@@ -1072,14 +997,94 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
+	cv::Mat outputImage;
+	gs_texture_t *renderTexture = nullptr;
+	bool hasDetections = false;
+
+	{
+		std::lock_guard<std::mutex> lock(tf->inputBGRALock);
+		if (!tf->inputBGRA.empty()) {
+			outputImage = tf->inputBGRA.clone();
+
+			if (tf->showBBox) {
+				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+				if (!tf->detections.empty()) {
+					hasDetections = true;
+					for (const auto& det : tf->detections) {
+						int x = static_cast<int>(det.x * width);
+						int y = static_cast<int>(det.y * height);
+						int w = static_cast<int>(det.width * width);
+						int h = static_cast<int>(det.height * height);
+
+						cv::Scalar bboxColor(
+							(tf->bboxColor >> 16) & 0xFF,
+							(tf->bboxColor >> 8) & 0xFF,
+							tf->bboxColor & 0xFF
+						);
+
+						cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
+
+						std::string labelText;
+						if (tf->showLabel) {
+							labelText = std::to_string(det.classId);
+						}
+						if (tf->showLabel && tf->showConfidence) {
+							labelText += " ";
+						}
+						if (tf->showConfidence) {
+							char confidenceStr[32];
+							snprintf(confidenceStr, sizeof(confidenceStr), "%.2f", det.confidence);
+							labelText += confidenceStr;
+						}
+
+						if (!labelText.empty()) {
+							int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+							double fontScale = 0.5;
+							int thickness = 2;
+							int baseline = 0;
+
+							cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
+
+							int textY = y - 5;
+							if (textY < 0) {
+								textY = y + textSize.height + 5;
+							}
+
+							cv::rectangle(outputImage,
+								cv::Rect(x, textY - textSize.height - 5, textSize.width, textSize.height + 10),
+								bboxColor,
+								-1);
+
+							cv::putText(outputImage,
+								labelText,
+								cv::Point(x, textY),
+								fontFace,
+								fontScale,
+								cv::Scalar(255, 255, 255),
+								thickness);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (!outputImage.empty()) {
+		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
+	}
+
 	if (renderTexture) {
 		gs_draw_sprite(renderTexture, 0, width, height);
+	} else {
+		gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
+		obs_source_video_render(target);
 	}
-	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
 	}
+
+	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 	gs_blend_state_pop();
 
 	if (renderTexture) {
@@ -1088,10 +1093,30 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 #ifdef _WIN32
 	if (tf->showFloatingWindow && !outputImage.empty()) {
-		cv::Mat resizedFrame;
-		cv::resize(outputImage, resizedFrame, cv::Size(tf->floatingWindowWidth, tf->floatingWindowHeight));
-		updateFloatingWindowFrame(tf.get(), resizedFrame);
-		renderFloatingWindow(tf.get());
+		int cropWidth = tf->floatingWindowWidth;
+		int cropHeight = tf->floatingWindowHeight;
+
+		int centerX = outputImage.cols / 2;
+		int centerY = outputImage.rows / 2;
+
+		int cropX = std::max(0, centerX - cropWidth / 2);
+		int cropY = std::max(0, centerY - cropHeight / 2);
+
+		int actualCropWidth = std::min(cropWidth, outputImage.cols - cropX);
+		int actualCropHeight = std::min(cropHeight, outputImage.rows - cropY);
+
+		if (actualCropWidth > 0 && actualCropHeight > 0) {
+			cv::Mat croppedFrame = outputImage(cv::Rect(cropX, cropY, actualCropWidth, actualCropHeight)).clone();
+
+			if (croppedFrame.cols != cropWidth || croppedFrame.rows != cropHeight) {
+				cv::Mat resizedFrame;
+				cv::resize(croppedFrame, resizedFrame, cv::Size(cropWidth, cropHeight));
+				updateFloatingWindowFrame(tf.get(), resizedFrame);
+			} else {
+				updateFloatingWindowFrame(tf.get(), croppedFrame);
+			}
+			renderFloatingWindow(tf.get());
+		}
 	}
 #endif
 }
