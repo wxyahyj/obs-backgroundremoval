@@ -75,6 +75,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	std::atomic<bool> isInferencing;
 
+	std::chrono::high_resolution_clock::time_point lastFpsTime;
+	int fpsFrameCount;
+	double currentFps;
+
 #ifdef _WIN32
 	bool showFloatingWindow;
 	int floatingWindowWidth;
@@ -227,7 +231,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "confidence_threshold", 0.5);
 	obs_data_set_default_double(settings, "nms_threshold", 0.45);
 	obs_data_set_default_int(settings, "target_class", -1);
-	obs_data_set_default_int(settings, "inference_interval_frames", 3);
+	obs_data_set_default_int(settings, "inference_interval_frames", 1);
 	obs_data_set_default_bool(settings, "show_bbox", true);
 	obs_data_set_default_bool(settings, "show_label", true);
 	obs_data_set_default_bool(settings, "show_confidence", true);
@@ -767,6 +771,9 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->inferenceCount = 0;
 		instance->avgInferenceTimeMs = 0.0;
 		instance->isInferencing = true;
+		instance->lastFpsTime = std::chrono::high_resolution_clock::now();
+		instance->fpsFrameCount = 0;
+		instance->currentFps = 0.0;
 
 #ifdef _WIN32
 		instance->showFloatingWindow = false;
@@ -885,18 +892,22 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		return;
 	}
 
-	uint32_t width, height;
-	if (!getRGBAFromStageSurface(tf.get(), width, height)) {
-		return;
-	}
-
 	tf->totalFrames++;
 	tf->frameCounter++;
+	tf->fpsFrameCount++;
+
+	auto now = std::chrono::high_resolution_clock::now();
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - tf->lastFpsTime).count();
+	if (elapsed >= 1000) {
+		tf->currentFps = (double)tf->fpsFrameCount * 1000.0 / (double)elapsed;
+		tf->fpsFrameCount = 0;
+		tf->lastFpsTime = now;
+	}
 
 	if (tf->inferenceIntervalFrames == 0 || tf->frameCounter >= tf->inferenceIntervalFrames) {
-			tf->frameCounter = 0;
-			tf->shouldInference = true;
-		}
+		tf->frameCounter = 0;
+		tf->shouldInference = true;
+	}
 }
 
 void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
@@ -924,15 +935,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
-	uint32_t width = obs_source_get_base_width(target);
-	uint32_t height = obs_source_get_base_height(target);
-
-	if (width == 0 || height == 0) {
-		if (tf->source) {
-			obs_source_skip_video_filter(tf->source);
-		}
-		return;
-	}
+	uint32_t width, height;
+	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
 		if (tf->source) {
@@ -941,107 +945,165 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
+	width = obs_source_get_width(target);
+	height = obs_source_get_height(target);
+
+	if (width == 0 || height == 0) {
+		obs_source_process_filter_end(tf->source, effect, width, height);
+		return;
+	}
+
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
 	cv::Mat outputImage;
 	gs_texture_t *renderTexture = nullptr;
+	bool needRenderTexture = false;
 
-	{
-		std::lock_guard<std::mutex> lock(tf->inputBGRALock);
-		if (!tf->inputBGRA.empty()) {
-			outputImage = tf->inputBGRA.clone();
+	if (tf->showBBox || tf->showFOV) {
+		needRenderTexture = true;
+	}
 
-			if (tf->showBBox) {
-				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-				if (!tf->detections.empty()) {
-					for (const auto& det : tf->detections) {
-						int x = static_cast<int>(det.x * width);
-						int y = static_cast<int>(det.y * height);
-						int w = static_cast<int>(det.width * width);
-						int h = static_cast<int>(det.height * height);
+	if (needRenderTexture) {
+		obs_enter_graphics();
+		gs_texrender_reset(tf->texrender);
+		if (gs_texrender_begin(tf->texrender, width, height)) {
+			struct vec4 background;
+			vec4_zero(&background);
+			gs_clear(GS_CLEAR_COLOR, &background, 0.0f, 0);
+			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
+			gs_blend_state_push();
+			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+			obs_source_video_render(target);
+			gs_blend_state_pop();
+			gs_texrender_end(tf->texrender);
 
-						cv::Scalar bboxColor(
-							(tf->bboxColor >> 16) & 0xFF,
-							(tf->bboxColor >> 8) & 0xFF,
-							tf->bboxColor & 0xFF
-						);
-
-						cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
-
-						std::string labelText;
-						if (tf->showLabel) {
-							labelText = std::to_string(det.classId);
-						}
-						if (tf->showLabel && tf->showConfidence) {
-							labelText += " ";
-						}
-						if (tf->showConfidence) {
-							char confidenceStr[32];
-							snprintf(confidenceStr, sizeof(confidenceStr), "%.2f", det.confidence);
-							labelText += confidenceStr;
-						}
-
-						if (!labelText.empty()) {
-							int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-							double fontScale = 0.5;
-							int thickness = 2;
-							int baseline = 0;
-
-							cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
-
-							int textY = y - 5;
-							if (textY < 0) {
-								textY = y + textSize.height + 5;
-							}
-
-							cv::rectangle(outputImage,
-								cv::Rect(x, textY - textSize.height - 5, textSize.width, textSize.height + 10),
-								bboxColor,
-								-1);
-
-							cv::putText(outputImage,
-								labelText,
-								cv::Point(x, textY),
-								fontFace,
-								fontScale,
-								cv::Scalar(255, 255, 255),
-								thickness);
-						}
+			gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
+			if (tex) {
+				if (!tf->stagesurface || 
+				    gs_stagesurface_get_width(tf->stagesurface) != width || 
+				    gs_stagesurface_get_height(tf->stagesurface) != height) {
+					if (tf->stagesurface) {
+						gs_stagesurface_destroy(tf->stagesurface);
+					}
+					tf->stagesurface = gs_stagesurface_create(width, height, GS_BGRA);
+				}
+				if (tf->stagesurface) {
+					gs_stage_texture(tf->stagesurface, tex);
+					uint8_t *video_data;
+					uint32_t linesize;
+					if (gs_stagesurface_map(tf->stagesurface, &video_data, &linesize)) {
+						cv::Mat temp(height, width, CV_8UC4, video_data, linesize);
+						outputImage = temp.clone();
+						gs_stagesurface_unmap(tf->stagesurface);
 					}
 				}
 			}
-
-			if (tf->showFOV) {
-				int centerX = width / 2;
-				int centerY = height / 2;
-				int radius = tf->fovRadius;
-
-				cv::Scalar fovColor(
-					(tf->fovColor >> 16) & 0xFF,
-					(tf->fovColor >> 8) & 0xFF,
-					tf->fovColor & 0xFF
-				);
-
-				cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
-				cv::circle(outputImage, cv::Point(centerX, centerY), 5, fovColor, -1);
-			}
 		}
+		obs_leave_graphics();
 	}
 
 	if (!outputImage.empty()) {
+		if (tf->showBBox) {
+			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+			if (!tf->detections.empty()) {
+				for (const auto& det : tf->detections) {
+					int x = static_cast<int>(det.x * width);
+					int y = static_cast<int>(det.y * height);
+					int w = static_cast<int>(det.width * width);
+					int h = static_cast<int>(det.height * height);
+
+					cv::Scalar bboxColor(
+						(tf->bboxColor >> 16) & 0xFF,
+						(tf->bboxColor >> 8) & 0xFF,
+						tf->bboxColor & 0xFF
+					);
+
+					cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
+
+					std::string labelText;
+					if (tf->showLabel) {
+						labelText = std::to_string(det.classId);
+					}
+					if (tf->showLabel && tf->showConfidence) {
+						labelText += " ";
+					}
+					if (tf->showConfidence) {
+						char confidenceStr[32];
+						snprintf(confidenceStr, sizeof(confidenceStr), "%.2f", det.confidence);
+						labelText += confidenceStr;
+					}
+
+					if (!labelText.empty()) {
+						int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+						double fontScale = 0.5;
+						int thickness = 2;
+						int baseline = 0;
+
+						cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
+
+						int textY = y - 5;
+						if (textY < 0) {
+							textY = y + textSize.height + 5;
+						}
+
+						cv::rectangle(outputImage,
+							cv::Rect(x, textY - textSize.height - 5, textSize.width, textSize.height + 10),
+							bboxColor,
+							-1);
+
+						cv::putText(outputImage,
+							labelText,
+							cv::Point(x, textY),
+							fontFace,
+							fontScale,
+							cv::Scalar(255, 255, 255),
+							thickness);
+					}
+				}
+			}
+		}
+
+		if (tf->showFOV) {
+			int centerX = width / 2;
+			int centerY = height / 2;
+			int radius = tf->fovRadius;
+
+			cv::Scalar fovColor(
+				(tf->fovColor >> 16) & 0xFF,
+				(tf->fovColor >> 8) & 0xFF,
+				tf->fovColor & 0xFF
+			);
+
+			cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
+			cv::circle(outputImage, cv::Point(centerX, centerY), 1, fovColor, -1);
+		}
+
+		obs_enter_graphics();
 		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
+		obs_leave_graphics();
 	}
 
 	if (renderTexture) {
 		gs_draw_sprite(renderTexture, 0, width, height);
+	} else {
+		obs_source_video_render(target);
 	}
 
-	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+	obs_source_process_filter_end(tf->source, effect, width, height);
 	gs_blend_state_pop();
 
 	if (renderTexture) {
+		obs_enter_graphics();
 		gs_texture_destroy(renderTexture);
+		obs_leave_graphics();
+	}
+
+	{
+		std::unique_lock<std::mutex> lock(tf->inputBGRALock, std::try_to_lock);
+		if (lock.owns_lock() && !outputImage.empty()) {
+			tf->inputBGRA = outputImage.clone();
+		}
 	}
 
 #ifdef _WIN32
@@ -1060,6 +1122,42 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 		if (actualCropWidth > 0 && actualCropHeight > 0) {
 			cv::Mat croppedFrame = outputImage(cv::Rect(cropX, cropY, actualCropWidth, actualCropHeight)).clone();
+
+			size_t detectionCount = 0;
+			{
+				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+				detectionCount = tf->detections.size();
+			}
+
+			int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+			double fontScale = 0.6;
+			int thickness = 2;
+			int baseline = 0;
+
+			char fpsText[64];
+			snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", tf->currentFps);
+			cv::Size fpsSize = cv::getTextSize(fpsText, fontFace, fontScale, thickness, &baseline);
+
+			char detText[64];
+			snprintf(detText, sizeof(detText), "Detected: %zu", detectionCount);
+			cv::Size detSize = cv::getTextSize(detText, fontFace, fontScale, thickness, &baseline);
+
+			int maxWidth = std::max(fpsSize.width, detSize.width);
+			int totalHeight = fpsSize.height + detSize.height + 20;
+
+			cv::rectangle(croppedFrame,
+				cv::Point(5, 5),
+				cv::Point(5 + maxWidth + 20, 5 + totalHeight),
+				cv::Scalar(0, 0, 0, 200),
+				-1);
+
+			cv::putText(croppedFrame, fpsText,
+				cv::Point(15, 5 + fpsSize.height + 5),
+				fontFace, fontScale, cv::Scalar(0, 255, 0), thickness);
+
+			cv::putText(croppedFrame, detText,
+				cv::Point(15, 5 + fpsSize.height + 5 + detSize.height + 10),
+				fontFace, fontScale, cv::Scalar(0, 255, 255), thickness);
 
 			if (croppedFrame.cols != cropWidth || croppedFrame.rows != cropHeight) {
 				cv::Mat resizedFrame;
