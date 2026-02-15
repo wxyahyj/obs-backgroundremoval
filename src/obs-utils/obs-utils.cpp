@@ -13,7 +13,6 @@
 */
 bool getRGBAFromStageSurface(filter_data *tf, uint32_t &width, uint32_t &height)
 {
-
 	if (!obs_source_enabled(tf->source)) {
 		return false;
 	}
@@ -27,10 +26,16 @@ bool getRGBAFromStageSurface(filter_data *tf, uint32_t &width, uint32_t &height)
 	if (width == 0 || height == 0) {
 		return false;
 	}
+
+	bool success = false;
+
+	obs_enter_graphics();
+
 	gs_texrender_reset(tf->texrender);
 	if (!gs_texrender_begin(tf->texrender, width, height)) {
-		return false;
+		goto cleanup;
 	}
+
 	struct vec4 background;
 	vec4_zero(&background);
 	gs_clear(GS_CLEAR_COLOR, &background, 0.0f, 0);
@@ -49,23 +54,32 @@ bool getRGBAFromStageSurface(filter_data *tf, uint32_t &width, uint32_t &height)
 			tf->stagesurface = nullptr;
 		}
 	}
+
 	if (!tf->stagesurface) {
 		tf->stagesurface = gs_stagesurface_create(width, height, GS_BGRA);
+		if (!tf->stagesurface) {
+			goto cleanup;
+		}
 	}
+
 	gs_stage_texture(tf->stagesurface, gs_texrender_get_texture(tf->texrender));
+
 	uint8_t *video_data;
 	uint32_t linesize;
 	if (!gs_stagesurface_map(tf->stagesurface, &video_data, &linesize)) {
-		return false;
+		goto cleanup;
 	}
+
 	{
 		std::lock_guard<std::mutex> lock(tf->inputBGRALock);
-		// Create a temporary Mat that wraps the video_data pointer
 		cv::Mat temp(height, width, CV_8UC4, video_data, linesize);
-		// Clone the data to ensure tf->inputBGRA has its own copy
-		// This prevents use-after-unmap race condition
 		tf->inputBGRA = temp.clone();
 	}
+
 	gs_stagesurface_unmap(tf->stagesurface);
-	return true;
+	success = true;
+
+cleanup:
+	obs_leave_graphics();
+	return success;
 }

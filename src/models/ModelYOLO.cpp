@@ -139,14 +139,29 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
             }
             obs_log(LOG_INFO, "[ModelYOLO] Model version: %d", static_cast<int>(version_));
             
+            int detectedClasses = 80; // default COCO classes
+            
             if (version_ == Version::YOLOv5 && shape.size() >= 3) {
-                int lastDim = static_cast<int>(shape[2]);
-                numClasses_ = lastDim - 5;
-                obs_log(LOG_INFO, "[ModelYOLO] YOLOv5 mode: lastDim=%d, numClasses=%d", lastDim, numClasses_);
+                int64_t lastDim = shape[2];
+                if (lastDim > 5) {
+                    detectedClasses = static_cast<int>(lastDim - 5);
+                }
+                obs_log(LOG_INFO, "[ModelYOLO] YOLOv5 mode: lastDim=%lld, detectedClasses=%d", lastDim, detectedClasses);
             } else if (shape.size() >= 3) {
-                int elementsDim = static_cast<int>(shape[1]);
-                numClasses_ = elementsDim - 4;
-                obs_log(LOG_INFO, "[ModelYOLO] YOLOv8/v11 mode: elementsDim=%d, numClasses=%d", elementsDim, numClasses_);
+                int64_t elementsDim = shape[1];
+                if (elementsDim > 4) {
+                    detectedClasses = static_cast<int>(elementsDim - 4);
+                }
+                obs_log(LOG_INFO, "[ModelYOLO] YOLOv8/v11 mode: elementsDim=%lld, detectedClasses=%d", elementsDim, detectedClasses);
+            }
+            
+            // 验证 detectedClasses 是否合理（一般不会超过 1000 个类别）
+            if (detectedClasses > 0 && detectedClasses < 1000) {
+                numClasses_ = detectedClasses;
+                obs_log(LOG_INFO, "[ModelYOLO] Using numClasses: %d (valid range)", numClasses_);
+            } else {
+                obs_log(LOG_WARNING, "[ModelYOLO] Detected numClasses %d is invalid, using default: 80", detectedClasses);
+                numClasses_ = 80;
             }
         }
         
@@ -257,21 +272,21 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        int numBoxes, numElements, detectedClasses;
+        int numBoxes, numElements;
         
         if (version_ == Version::YOLOv5) {
             numBoxes = static_cast<int>(outputShape[1]);
             numElements = static_cast<int>(outputShape[2]);
-            detectedClasses = numElements - 5;
         } else {
             numBoxes = static_cast<int>(outputShape[2]);
             numElements = static_cast<int>(outputShape[1]);
-            detectedClasses = numElements - 4;
         }
+        
+        obs_log(LOG_INFO, "[ModelYOLO] Using numClasses from model: %d", numClasses_);
         
         obs_log(LOG_DEBUG, "[ModelYOLO] Output shape: [%lld, %lld, %lld]", 
                 outputShape[0], outputShape[1], outputShape[2]);
-        obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes, %d classes", numBoxes, detectedClasses);
+        obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes, %d classes", numBoxes, numClasses_);
         
         cv::Size modelSize(inputWidth_, inputHeight_);
         cv::Size originalSize(input.cols, input.rows);
@@ -280,15 +295,15 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         switch (version_) {
             case Version::YOLOv5:
-                detections = postprocessYOLOv5(outputData, numBoxes, detectedClasses, 
+                detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, 
                                               modelSize, originalSize);
                 break;
             case Version::YOLOv8:
-                detections = postprocessYOLOv8(outputData, numBoxes, detectedClasses, 
+                detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, 
                                               modelSize, originalSize);
                 break;
             case Version::YOLOv11:
-                detections = postprocessYOLOv11(outputData, numBoxes, detectedClasses, 
+                detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, 
                                                modelSize, originalSize);
                 break;
         }

@@ -283,7 +283,13 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 	}
 
 	tf->isInferencing = !tf->isInferencing;
-	obs_log(LOG_INFO, "[YOLO Detector] Inference %s", tf->isInferencing ? "enabled" : "disabled");
+	if (tf->isInferencing) {
+		tf->shouldInference = true;
+	}
+	obs_log(LOG_INFO, "[YOLO Detector] Inference %s, isInferencing=%d, shouldInference=%d", 
+		tf->isInferencing ? "enabled" : "disabled",
+		(int)tf->isInferencing,
+		(int)tf->shouldInference);
 
 	obs_property_t *statusText = obs_properties_get(props, "inference_status");
 	if (statusText) {
@@ -694,8 +700,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 
 	uint32_t width, height;
 	if (!getRGBAFromStageSurface(tf.get(), width, height)) {
+		obs_log(LOG_DEBUG, "[YOLO Detector] getRGBAFromStageSurface failed");
 		return;
 	}
+
+	obs_log(LOG_DEBUG, "[YOLO Detector] Got frame from getRGBAFromStageSurface: %dx%d", width, height);
 
 	tf->totalFrames++;
 	tf->frameCounter++;
@@ -703,7 +712,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	if (tf->frameCounter >= tf->inferenceIntervalFrames) {
 		tf->frameCounter = 0;
 		tf->shouldInference = true;
-		obs_log(LOG_INFO, "[YOLO Detector] Set shouldInference = true, isInferencing = %d", (int)tf->isInferencing);
+		obs_log(LOG_INFO, "[YOLO Detector] Set shouldInference = true, isInferencing = %d, yoloModel valid = %d", 
+			(int)tf->isInferencing, 
+			tf->yoloModel ? 1 : 0);
 	}
 }
 
