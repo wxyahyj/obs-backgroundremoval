@@ -682,58 +682,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread stopped");
 }
 
-static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
-{
-	if (!filter->showFOV) {
-		return;
-	}
-
-	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
-	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
-	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
-
-	float centerX = frameWidth / 2.0f;
-	float centerY = frameHeight / 2.0f;
-	float radius = static_cast<float>(filter->fovRadius);
-
-	struct vec4 color;
-	float r = ((filter->fovColor >> 16) & 0xFF) / 255.0f;
-	float g = ((filter->fovColor >> 8) & 0xFF) / 255.0f;
-	float b = (filter->fovColor & 0xFF) / 255.0f;
-	float a = ((filter->fovColor >> 24) & 0xFF) / 255.0f;
-	vec4_set(&color, r, g, b, a);
-
-	gs_technique_begin(tech);
-	gs_technique_begin_pass(tech, 0);
-	gs_effect_set_vec4(colorParam, &color);
-
-	gs_ortho(0.0f, static_cast<float>(frameWidth), 0.0f, static_cast<float>(frameHeight), -100.0f, 100.0f);
-
-	float dotRadius = 5.0f;
-	const int dotSegments = 32;
-	gs_render_start(true);
-	for (int i = 0; i <= dotSegments; ++i) {
-		float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(dotSegments);
-		float x = centerX + dotRadius * cosf(angle);
-		float y = centerY + dotRadius * sinf(angle);
-		gs_vertex2f(x, y);
-	}
-	gs_render_stop(GS_LINESTRIP);
-
-	const int circleSegments = 64;
-	gs_render_start(true);
-	for (int i = 0; i <= circleSegments; ++i) {
-		float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(circleSegments);
-		float x = centerX + radius * cosf(angle);
-		float y = centerY + radius * sinf(angle);
-		gs_vertex2f(x, y);
-	}
-	gs_render_stop(GS_LINESTRIP);
-
-	gs_technique_end_pass(tech);
-	gs_technique_end(tech);
-}
-
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (filter->coordinateOutputPath.empty()) {
@@ -1067,6 +1015,21 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					}
 				}
 			}
+
+			if (tf->showFOV) {
+				int centerX = width / 2;
+				int centerY = height / 2;
+				int radius = tf->fovRadius;
+
+				cv::Scalar fovColor(
+					(tf->fovColor >> 16) & 0xFF,
+					(tf->fovColor >> 8) & 0xFF,
+					tf->fovColor & 0xFF
+				);
+
+				cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
+				cv::circle(outputImage, cv::Point(centerX, centerY), 5, fovColor, -1);
+			}
 		}
 	}
 
@@ -1076,10 +1039,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 	if (renderTexture) {
 		gs_draw_sprite(renderTexture, 0, width, height);
-	}
-
-	if (tf->showFOV) {
-		renderFOV(tf.get(), width, height);
 	}
 
 	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
