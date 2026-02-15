@@ -59,6 +59,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
     uint64_t inferenceCount;
     double avgInferenceTimeMs;
 
+    std::atomic<bool> isInferencing;
+
     gs_effect_t *solidEffect;
 
     ~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -67,6 +69,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 void inferenceThreadWorker(yolo_detector_filter *filter);
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
+static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 
 const char *yolo_detector_filter_getname(void *unused)
 {
@@ -77,6 +80,14 @@ const char *yolo_detector_filter_getname(void *unused)
 obs_properties_t *yolo_detector_filter_properties(void *data)
 {
     obs_properties_t *props = obs_properties_create();
+
+    obs_properties_add_group(props, "control_group", obs_module_text("Control"), OBS_GROUP_NORMAL, nullptr);
+
+    obs_properties_add_text(props, "inference_status", obs_module_text("InferenceStatus"), OBS_TEXT_INFO);
+
+    obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
+
+    obs_properties_set_modified_callback(props, onPropertiesModified);
 
     obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -214,12 +225,58 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
     tf->isDisabled = false;
 }
 
+static void updateInferenceStatusText(obs_properties_t *props, yolo_detector_filter *tf)
+{
+    obs_property_t *statusProp = obs_properties_get(props, "inference_status");
+    if (statusProp) {
+        const char *status = tf->isInferencing ? "Enabled" : "Disabled";
+        obs_property_set_text(statusProp, status);
+    }
+}
+
+static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data)
+{
+    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+    if (!ptr) {
+        return true;
+    }
+
+    std::shared_ptr<yolo_detector_filter> tf = *ptr;
+    if (!tf) {
+        return true;
+    }
+
+    tf->isInferencing = !tf->isInferencing;
+    obs_log(LOG_INFO, "[YOLO Detector] Inference %s", tf->isInferencing ? "enabled" : "disabled");
+
+    updateInferenceStatusText(props, tf.get());
+
+    return true;
+}
+
+static bool onPropertiesModified(obs_properties_t *props, obs_property_t *property, void *data)
+{
+    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+    if (!ptr) {
+        return true;
+    }
+
+    std::shared_ptr<yolo_detector_filter> tf = *ptr;
+    if (!tf) {
+        return true;
+    }
+
+    updateInferenceStatusText(props, tf.get());
+
+    return true;
+}
+
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
     obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
 
     while (filter->inferenceRunning) {
-        if (!filter->shouldInference) {
+        if (!filter->shouldInference || !filter->isInferencing) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
@@ -398,9 +455,10 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
     tf->totalFrames = 0;
     tf->inferenceCount = 0;
     tf->avgInferenceTimeMs = 0.0;
+    tf->isInferencing = true;
 
     obs_enter_graphics();
-    tf->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+    tf->texrender = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
     tf->solidEffect = obs_get_base_effect(OBS_EFFECT_SOLID);
     obs_leave_graphics();
 
@@ -511,37 +569,27 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *effect)
         return;
     }
 
-    if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_NO_DIRECT_RENDERING)) {
+    uint32_t width, height;
+    if (!getRGBAFromStageSurface(tf.get(), width, height)) {
+        if (tf->source) {
+            obs_source_skip_video_filter(tf->source);
+        }
         return;
     }
 
-    uint32_t width = obs_source_get_base_width(tf->source);
-    uint32_t height = obs_source_get_base_height(tf->source);
-
-    gs_texrender_reset(tf->texrender);
-    if (gs_texrender_begin(tf->texrender, width, height)) {
-        gs_blend_state_push();
-        gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-
-        obs_source_process_filter_tech_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0, "Draw");
-
-        gs_blend_state_pop();
-        gs_texrender_end(tf->texrender);
+    if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
+        if (tf->source) {
+            obs_source_skip_video_filter(tf->source);
+        }
+        return;
     }
 
-    if (!tf->stagesurface) {
-        tf->stagesurface = gs_stagesurface_create(width, height, GS_BGRA);
-    } else if (gs_stagesurface_get_width(tf->stagesurface) != width || gs_stagesurface_get_height(tf->stagesurface) != height) {
-        gs_stagesurface_destroy(tf->stagesurface);
-        tf->stagesurface = gs_stagesurface_create(width, height, GS_BGRA);
-    }
-
-    gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
-    if (tex) {
-        gs_stage_texture(tf->stagesurface, tex);
-    }
+    gs_blend_state_push();
+    gs_reset_blend_state();
 
     obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+
+    gs_blend_state_pop();
 
     if (tf->showBBox) {
         renderDetectionBoxes(tf.get(), width, height);
