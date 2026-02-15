@@ -52,6 +52,10 @@ struct yolo_filter_data : public filter_data, public std::enable_shared_from_thi
     int detectionEveryXFrames = 1;
     int detectionFrameCounter = 0;
 
+    // 新增缺失的成员变量
+    std::mutex modelMutex;
+    gs_effect_t *effect = nullptr;
+
     ~yolo_filter_data() { obs_log(LOG_INFO, "YOLO filter destructor called"); }
 };
 
@@ -225,6 +229,8 @@ void yolo_filter_update(void *data, obs_data_t *settings)
         return;
     }
 
+    tf->isDisabled = true;
+
     // Update detection parameters
     tf->enableDetection = obs_data_get_bool(settings, "enable_detection");
     tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
@@ -270,61 +276,6 @@ void yolo_filter_update(void *data, obs_data_t *settings)
     tf->numThreads = (int)obs_data_get_int(settings, "numThreads");
     
     obs_log(LOG_INFO, "YOLO filter updated with new parameters");
-
-    // Cast to shared_ptr pointer and create a local shared_ptr
-    auto *ptr = static_cast<std::shared_ptr<yolo_filter_data> *>(data);
-    if (!ptr) {
-        return;
-    }
-
-    std::shared_ptr<yolo_filter_data> tf = *ptr;
-    if (!tf) {
-        return;
-    }
-
-    tf->isDisabled = true;
-
-    // Update YOLO-specific settings
-    tf->enableDetection = obs_data_get_bool(settings, "enable_detection");
-    tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
-    tf->nmsThreshold = (float)obs_data_get_double(settings, "nms_threshold");
-    tf->targetClassId = (int)obs_data_get_int(settings, "target_class_id");
-    
-    const char *modelPath = obs_data_get_string(settings, "model_path");
-    if (modelPath && strlen(modelPath) > 0) {
-        tf->modelPath = std::string(modelPath);
-    }
-    
-    const char *classNamesPath = obs_data_get_string(settings, "class_names_path");
-    if (classNamesPath && strlen(classNamesPath) > 0) {
-        tf->classNamesPath = std::string(classNamesPath);
-    }
-    
-    const std::string yoloVersionStr = obs_data_get_string(settings, "yolo_version");
-    if (yoloVersionStr == "yolov8") {
-        tf->yoloVersion = ModelYOLO::Version::YOLOv8;
-    } else if (yoloVersionStr == "yolov11") {
-        tf->yoloVersion = ModelYOLO::Version::YOLOv11;
-    } else {
-        tf->yoloVersion = ModelYOLO::Version::YOLOv5;
-    }
-    
-    tf->detectionEveryXFrames = (int)obs_data_get_int(settings, "detection_every_x_frames");
-    tf->detectionFrameCounter = 0;
-    
-    tf->drawBoundingBoxes = obs_data_get_bool(settings, "draw_bounding_boxes");
-    tf->drawLabels = obs_data_get_bool(settings, "draw_labels");
-    tf->boundingBoxThickness = (float)obs_data_get_double(settings, "bounding_box_thickness");
-    
-    int color = (int)obs_data_get_int(settings, "bounding_box_color");
-    tf->boundingBoxColor = cv::Scalar(
-        color & 0xFF,           // Blue
-        (color >> 8) & 0xFF,    // Green  
-        (color >> 16) & 0xFF,   // Red
-        255                     // Alpha
-    );
-    
-    tf->fontSize = (float)obs_data_get_double(settings, "font_size");
 
     // Handle model and inference settings
     const std::string newUseGpu = obs_data_get_string(settings, "useGPU");
@@ -556,8 +507,24 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
             // Get the rendered texture
             gs_texture_t *texture = gs_texrender_get_texture(tf->texrender);
             if (texture) {
-                // Copy texture to CPU memory for processing
-                if (gs_stagesurface_resize(tf->stagesurface, width, height)) {
+                uint32_t tex_width = gs_texture_get_width(texture);
+                uint32_t tex_height = gs_texture_get_height(texture);
+                
+                // Check if stage surface needs to be recreated due to size mismatch
+                if (!tf->stagesurface || 
+                    gs_stage_surface_get_width(tf->stagesurface) != tex_width ||
+                    gs_stage_surface_get_height(tf->stagesurface) != tex_height) {
+                    
+                    // Release old stage surface if exists
+                    if (tf->stagesurface) {
+                        gs_stagesurface_destroy(tf->stagesurface);
+                    }
+                    
+                    // Create new stage surface with correct size
+                     tf->stagesurface = gs_stagesurface_create(tex_width, tex_height, GS_RGBA);
+                }
+                
+                if (tf->stagesurface) {
                     gs_stage_texture(tf->stagesurface, texture);
 
                     // Map the staged texture
@@ -565,7 +532,7 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
                     uint32_t linesize;
                     if (gs_stagesurface_map(tf->stagesurface, &data_ptr, &linesize)) {
                         // Create OpenCV Mat from the texture data
-                        cv::Mat frame(height, width, CV_8UC4, data_ptr, linesize);
+                        cv::Mat frame(tex_height, tex_width, CV_8UC4, data_ptr, linesize);
 
                         // Perform YOLO detection in a separate thread or queue it
                         // For now, we'll just copy the frame to be processed by the detection thread
@@ -574,6 +541,8 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
                             // Only copy if the frame is valid and not too large to prevent memory issues
                             if (!frame.empty() && frame.total() * frame.elemSize() < 10 * 1024 * 1024) { // 10MB limit
                                 tf->inputBGRA = frame.clone();
+                                tf->frameWidth = tex_width;
+                                tf->frameHeight = tex_height;
                             }
                         }
 
