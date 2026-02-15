@@ -75,8 +75,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	std::atomic<bool> isInferencing;
 
-	gs_effect_t *solidEffect;
-
 #ifdef _WIN32
 	bool showFloatingWindow;
 	int floatingWindowWidth;
@@ -94,7 +92,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 };
 
 void inferenceThreadWorker(yolo_detector_filter *filter);
-static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
@@ -645,12 +642,22 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		if (filter->useRegion && cropWidth > 0 && cropHeight > 0) {
 			for (auto& det : newDetections) {
-				det.x = (det.x * cropWidth + cropX) / fullFrame.cols;
-				det.y = (det.y * cropHeight + cropY) / fullFrame.rows;
-				det.width = (det.width * cropWidth) / fullFrame.cols;
-				det.height = (det.height * cropHeight) / fullFrame.rows;
-				det.centerX = (det.centerX * cropWidth + cropX) / fullFrame.cols;
-				det.centerY = (det.centerY * cropHeight + cropY) / fullFrame.rows;
+				int fullWidth = fullFrame.cols;
+				int fullHeight = fullFrame.rows;
+				
+				float pixelX = det.x * cropWidth + cropX;
+				float pixelY = det.y * cropHeight + cropY;
+				float pixelW = det.width * cropWidth;
+				float pixelH = det.height * cropHeight;
+				float pixelCenterX = det.centerX * cropWidth + cropX;
+				float pixelCenterY = det.centerY * cropHeight + cropY;
+				
+				det.x = pixelX / fullWidth;
+				det.y = pixelY / fullHeight;
+				det.width = pixelW / fullWidth;
+				det.height = pixelH / fullHeight;
+				det.centerX = pixelCenterX / fullWidth;
+				det.centerY = pixelCenterY / fullHeight;
 			}
 		}
 
@@ -675,63 +682,13 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread stopped");
 }
 
-static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
-{
-	std::lock_guard<std::mutex> lock(filter->detectionsMutex);
-
-	if (filter->detections.empty()) {
-		return;
-	}
-
-	gs_effect_t *solid = filter->solidEffect;
-	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
-	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
-
-	gs_technique_begin(tech);
-	gs_technique_begin_pass(tech, 0);
-
-	for (const auto& det : filter->detections) {
-		float x = det.x * frameWidth;
-		float y = det.y * frameHeight;
-		float w = det.width * frameWidth;
-		float h = det.height * frameHeight;
-
-		struct vec4 color;
-		float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
-		float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
-		float b = (filter->bboxColor & 0xFF) / 255.0f;
-		float a = ((filter->bboxColor >> 24) & 0xFF) / 255.0f;
-		vec4_set(&color, r, g, b, a);
-		gs_effect_set_vec4(colorParam, &color);
-
-		gs_render_start(true);
-
-		gs_vertex2f(x, y);
-		gs_vertex2f(x + w, y);
-
-		gs_vertex2f(x + w, y);
-		gs_vertex2f(x + w, y + h);
-
-		gs_vertex2f(x + w, y + h);
-		gs_vertex2f(x, y + h);
-
-		gs_vertex2f(x, y + h);
-		gs_vertex2f(x, y);
-
-		gs_render_stop(GS_LINES);
-	}
-
-	gs_technique_end_pass(tech);
-	gs_technique_end(tech);
-}
-
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (!filter->showFOV) {
 		return;
 	}
 
-	gs_effect_t *solid = filter->solidEffect;
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
 
@@ -869,10 +826,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->floatingWindowDragging = false;
 		instance->floatingWindowHandle = nullptr;
 #endif
-
-		obs_enter_graphics();
-		instance->solidEffect = obs_get_base_effect(OBS_EFFECT_SOLID);
-		obs_leave_graphics();
 
 		// Create pointer to shared_ptr for the update call
 		auto ptr = new std::shared_ptr<yolo_detector_filter>(instance);
@@ -1121,9 +1074,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 	if (renderTexture) {
 		gs_draw_sprite(renderTexture, 0, width, height);
-	} else {
-		obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 	}
+	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
