@@ -245,18 +245,31 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         
-        Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
-            OrtAllocatorType::OrtArenaAllocator, 
-            OrtMemType::OrtMemTypeDefault
-        );
+        // 根据执行提供程序选择合适的内存分配器
+        Ort::MemoryInfo memoryInfo;
+        try {
+            memoryInfo = Ort::MemoryInfo::CreateCpu(
+                OrtAllocatorType::OrtArenaAllocator, 
+                OrtMemType::OrtMemTypeDefault
+            );
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create memory info: %s", e.what());
+            return {};
+        }
         
-        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-            memoryInfo,
-            inputBuffer_.data(),
-            inputBufferSize_,
-            inputShape.data(),
-            inputShape.size()
-        );
+        Ort::Value inputTensor;
+        try {
+            inputTensor = Ort::Value::CreateTensor<float>(
+                memoryInfo,
+                inputBuffer_.data(),
+                inputBufferSize_,
+                inputShape.data(),
+                inputShape.size()
+            );
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create input tensor: %s", e.what());
+            return {};
+        }
         
         std::vector<Ort::Value> inputTensors;
         inputTensors.push_back(std::move(inputTensor));
@@ -276,14 +289,26 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         // 添加详细的错误处理
         Ort::RunOptions runOptions;
         
-        auto outputTensors = session_->Run(
-            runOptions,
-            inputNamesChar.data(),
-            inputTensors.data(),
-            inputTensors.size(),
-            outputNamesChar.data(),
-            outputNamesChar.size()
-        );
+        std::vector<Ort::Value> outputTensors;
+        try {
+            outputTensors = session_->Run(
+                runOptions,
+                inputNamesChar.data(),
+                inputTensors.data(),
+                inputTensors.size(),
+                outputNamesChar.data(),
+                outputNamesChar.size()
+            );
+        } catch (const Ort::Exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] ONNX Runtime exception during Run: %s", e.what());
+            return {};
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Exception during Run: %s", e.what());
+            return {};
+        } catch (...) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Unknown exception during Run");
+            return {};
+        }
         
         if (outputTensors.empty()) {
             obs_log(LOG_ERROR, "[ModelYOLO] No output tensors from ONNX Runtime");
@@ -295,27 +320,45 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        float* outputData = nullptr;
+        try {
+            outputData = outputTensors[0].GetTensorMutableData<float>();
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output tensor data: %s", e.what());
+            return {};
+        }
+        
         if (!outputData) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output tensor data");
             return {};
         }
         
-        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        std::vector<int64_t> outputShape;
+        try {
+            outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output shape: %s", e.what());
+            return {};
+        }
         
         if (outputShape.size() < 3) {
             obs_log(LOG_ERROR, "[ModelYOLO] Invalid output shape size: %zu", outputShape.size());
             return {};
         }
         
-        int numBoxes, numElements;
+        int numBoxes = 0, numElements = 0;
         
-        if (version_ == Version::YOLOv5) {
-            numBoxes = static_cast<int>(outputShape[1]);
-            numElements = static_cast<int>(outputShape[2]);
-        } else {
-            numBoxes = static_cast<int>(outputShape[2]);
-            numElements = static_cast<int>(outputShape[1]);
+        try {
+            if (version_ == Version::YOLOv5) {
+                numBoxes = static_cast<int>(outputShape[1]);
+                numElements = static_cast<int>(outputShape[2]);
+            } else {
+                numBoxes = static_cast<int>(outputShape[2]);
+                numElements = static_cast<int>(outputShape[1]);
+            }
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to parse output shape: %s", e.what());
+            return {};
         }
         
         // 验证输出参数
@@ -355,7 +398,12 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        obs_log(LOG_INFO, "[ModelYOLO] Inference completed, found %zu detections", detections.size());
+        // 只在有检测结果时输出日志，减少日志量
+        if (!detections.empty()) {
+            obs_log(LOG_INFO, "[ModelYOLO] Inference completed, found %zu detections", detections.size());
+        } else {
+            obs_log(LOG_DEBUG, "[ModelYOLO] Inference completed, found 0 detections");
+        }
         
         return detections;
         

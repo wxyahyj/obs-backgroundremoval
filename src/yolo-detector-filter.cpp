@@ -721,12 +721,13 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	tf->frameCounter++;
 
 	if (tf->frameCounter >= tf->inferenceIntervalFrames) {
-		tf->frameCounter = 0;
-		tf->shouldInference = true;
-		obs_log(LOG_DEBUG, "[YOLO Detector] Set shouldInference = true, isInferencing = %d, yoloModel valid = %d", 
-			(int)tf->isInferencing, 
-			tf->yoloModel ? 1 : 0);
-	}
+			tf->frameCounter = 0;
+			tf->shouldInference = true;
+			// 减少日志输出，只在调试模式下输出
+			// obs_log(LOG_DEBUG, "[YOLO Detector] Set shouldInference = true, isInferencing = %d, yoloModel valid = %d", 
+			// 	(int)tf->isInferencing, 
+			// 	tf->yoloModel ? 1 : 0);
+		}
 }
 
 void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
