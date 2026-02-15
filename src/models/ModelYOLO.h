@@ -19,8 +19,9 @@ public:
     explicit ModelYOLO(Version version);
     ~ModelYOLO() override;
 
-    void loadModel(const std::string& modelPath);
-    void preprocessInput(const cv::Mat& input, float* outputBuffer);
+    void loadModel(const std::string&amp; modelPath, const std::string&amp; useGPU = "cpu", int numThreads = 1, int inputResolution = 640);
+    void preprocessInput(const cv::Mat&amp; input, float* outputBuffer);
+    void setInputResolution(int resolution);
 
     std::vector<Detection> inference(const cv::Mat& input);
 

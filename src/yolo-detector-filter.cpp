@@ -27,15 +27,17 @@
 #include "consts.h"
 #include "update-checker/update-checker.h"
 
-struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
-    std::unique_ptr<ModelYOLO> yoloModel;
+struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this&lt;yolo_detector_filter&gt; {
+    std::unique_ptr&lt;ModelYOLO&gt; yoloModel;
     ModelYOLO::Version modelVersion;
 
-    std::vector<Detection> detections;
+    std::vector&lt;Detection&gt; detections;
     std::mutex detectionsMutex;
 
     std::string modelPath;
-    std::string classNamesPath;
+    std::string useGPU;
+    int numThreads;
+    int inputResolution;
     float confidenceThreshold;
     float nmsThreshold;
     int targetClassId;
@@ -51,15 +53,15 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
     std::string coordinateOutputPath;
 
     std::thread inferenceThread;
-    std::atomic<bool> inferenceRunning;
-    std::atomic<bool> shouldInference;
+    std::atomic&lt;bool&gt; inferenceRunning;
+    std::atomic&lt;bool&gt; shouldInference;
     int frameCounter;
 
     uint64_t totalFrames;
     uint64_t inferenceCount;
     double avgInferenceTimeMs;
 
-    std::atomic<bool> isInferencing;
+    std::atomic&lt;bool&gt; isInferencing;
 
     gs_effect_t *solidEffect;
 
@@ -94,7 +96,28 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
     obs_property_list_add_int(modelVersion, "YOLOv8", static_cast<int>(ModelYOLO::Version::YOLOv8));
     obs_property_list_add_int(modelVersion, "YOLOv11", static_cast<int>(ModelYOLO::Version::YOLOv11));
 
-    obs_properties_add_path(props, "class_names_path", obs_module_text("ClassNamesFile"), OBS_PATH_FILE, "Text Files (*.txt *.names)", nullptr);
+    obs_property_t *useGPUList = obs_properties_add_list(props, "use_gpu", obs_module_text("UseGPU"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(useGPUList, "CPU", USEGPU_CPU);
+#ifdef HAVE_ONNXRUNTIME_CUDA_EP
+    obs_property_list_add_string(useGPUList, "CUDA", USEGPU_CUDA);
+#endif
+#ifdef HAVE_ONNXRUNTIME_ROCM_EP
+    obs_property_list_add_string(useGPUList, "ROCm", USEGPU_ROCM);
+#endif
+#ifdef HAVE_ONNXRUNTIME_TENSORRT_EP
+    obs_property_list_add_string(useGPUList, "TensorRT", USEGPU_TENSORRT);
+#endif
+#ifdef HAVE_ONNXRUNTIME_COREML_EP
+    obs_property_list_add_string(useGPUList, "CoreML", USEGPU_COREML);
+#endif
+
+    obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", "Input Resolution", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(resolutionList, "320x320", 320);
+    obs_property_list_add_int(resolutionList, "416x416", 416);
+    obs_property_list_add_int(resolutionList, "512x512", 512);
+    obs_property_list_add_int(resolutionList, "640x640", 640);
+
+    obs_properties_add_int_slider(props, "num_threads", obs_module_text("NumThreads"), 1, 16, 1);
 
     obs_properties_add_group(props, "detection_group", obs_module_text("DetectionConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -139,7 +162,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 {
     obs_data_set_default_string(settings, "model_path", "");
     obs_data_set_default_int(settings, "model_version", static_cast<int>(ModelYOLO::Version::YOLOv8));
-    obs_data_set_default_string(settings, "class_names_path", "");
+    obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
+    obs_data_set_default_int(settings, "input_resolution", 640);
+    obs_data_set_default_int(settings, "num_threads", 4);
     obs_data_set_default_double(settings, "confidence_threshold", 0.5);
     obs_data_set_default_double(settings, "nms_threshold", 0.45);
     obs_data_set_default_int(settings, "target_class", -1);
@@ -171,10 +196,16 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 
     std::string newModelPath = obs_data_get_string(settings, "model_path");
     ModelYOLO::Version newModelVersion = static_cast<ModelYOLO::Version>(obs_data_get_int(settings, "model_version"));
+    std::string newUseGPU = obs_data_get_string(settings, "use_gpu");
+    int newNumThreads = (int)obs_data_get_int(settings, "num_threads");
+    int newInputResolution = (int)obs_data_get_int(settings, "input_resolution");
     
-    if (newModelPath != tf->modelPath || !tf->yoloModel) {
+    if (newModelPath != tf->modelPath || newUseGPU != tf->useGPU || newNumThreads != tf->numThreads || newInputResolution != tf->inputResolution || !tf->yoloModel) {
         tf->modelPath = newModelPath;
         tf->modelVersion = newModelVersion;
+        tf->useGPU = newUseGPU;
+        tf->numThreads = newNumThreads;
+        tf->inputResolution = newInputResolution;
         
         if (!tf->modelPath.empty()) {
             try {
@@ -182,12 +213,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
                 
                 tf->yoloModel = std::make_unique<ModelYOLO>(tf->modelVersion);
                 
-                tf->yoloModel->loadModel(tf->modelPath);
-                
-                tf->classNamesPath = obs_data_get_string(settings, "class_names_path");
-                if (!tf->classNamesPath.empty()) {
-                    tf->yoloModel->loadClassNames(tf->classNamesPath);
-                }
+                tf->yoloModel->loadModel(tf->modelPath, tf->useGPU, tf->numThreads, tf->inputResolution);
                 
                 obs_log(LOG_INFO, "[YOLO Filter] Model loaded successfully");
                 

@@ -29,12 +29,41 @@ ModelYOLO::~ModelYOLO() {
     obs_log(LOG_INFO, "[ModelYOLO] Destroyed");
 }
 
-void ModelYOLO::loadModel(const std::string& modelPath) {
+void ModelYOLO::loadModel(const std::string&amp; modelPath, const std::string&amp; useGPU, int numThreads, int inputResolution) {
     obs_log(LOG_INFO, "[ModelYOLO] Loading model: %s", modelPath.c_str());
     
     try {
         Ort::SessionOptions sessionOptions;
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        
+        obs_log(LOG_INFO, "[ModelYOLO] Using device: %s", useGPU.c_str());
+        
+        if (useGPU != "cpu") {
+            sessionOptions.DisableMemPattern();
+            sessionOptions.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+        } else {
+            sessionOptions.SetInterOpNumThreads(numThreads);
+            sessionOptions.SetIntraOpNumThreads(numThreads);
+        }
+        
+#ifdef HAVE_ONNXRUNTIME_CUDA_EP
+        if (useGPU == "cuda") {
+            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
+            obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled");
+        }
+#endif
+#ifdef HAVE_ONNXRUNTIME_ROCM_EP
+        if (useGPU == "rocm") {
+            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_ROCM(sessionOptions, 0));
+            obs_log(LOG_INFO, "[ModelYOLO] ROCM execution provider enabled");
+        }
+#endif
+#ifdef HAVE_ONNXRUNTIME_TENSORRT_EP
+        if (useGPU == "tensorrt") {
+            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Tensorrt(sessionOptions, 0));
+            obs_log(LOG_INFO, "[ModelYOLO] TensorRT execution provider enabled");
+        }
+#endif
         
 #if _WIN32
         std::wstring modelPathW(modelPath.begin(), modelPath.end());
@@ -45,16 +74,26 @@ void ModelYOLO::loadModel(const std::string& modelPath) {
         
         populateInputOutputNames(session_, inputNames_, outputNames_);
         populateInputOutputShapes(session_, inputDims_, outputDims_);
-        allocateTensorBuffers(inputDims_, outputDims_, outputTensorValues_, inputTensorValues_,
-                              inputTensor_, outputTensor_);
         
-        if (!inputDims_.empty()) {
-            auto shape = inputDims_[0];
-            if (shape.size() >= 4) {
-                inputHeight_ = static_cast<int>(shape[2]);
-                inputWidth_ = static_cast<int>(shape[3]);
+        if (inputResolution &gt; 0) {
+            inputWidth_ = inputResolution;
+            inputHeight_ = inputResolution;
+            if (!inputDims_.empty()) {
+                inputDims_[0][2] = inputHeight_;
+                inputDims_[0][3] = inputWidth_;
+            }
+        } else {
+            if (!inputDims_.empty()) {
+                auto shape = inputDims_[0];
+                if (shape.size() &gt;= 4) {
+                    inputHeight_ = static_cast&lt;int&gt;(shape[2]);
+                    inputWidth_ = static_cast&lt;int&gt;(shape[3]);
+                }
             }
         }
+        
+        allocateTensorBuffers(inputDims_, outputDims_, outputTensorValues_, inputTensorValues_,
+                              inputTensor_, outputTensor_);
         
         if (!outputDims_.empty()) {
             auto shape = outputDims_[0];
@@ -170,13 +209,21 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        int numBoxes = static_cast<int>(outputShape[1]);
-        int numElements = static_cast<int>(outputShape[2]);
-        int detectedClasses = numElements - 5;
+        int numBoxes, numElements, detectedClasses;
+        
+        if (version_ == Version::YOLOv5) {
+            numBoxes = static_cast<int>(outputShape[1]);
+            numElements = static_cast<int>(outputShape[2]);
+            detectedClasses = numElements - 5;
+        } else {
+            numBoxes = static_cast<int>(outputShape[2]);
+            numElements = static_cast<int>(outputShape[1]);
+            detectedClasses = numElements - 4;
+        }
         
         obs_log(LOG_DEBUG, "[ModelYOLO] Output shape: [%lld, %lld, %lld]", 
                 outputShape[0], outputShape[1], outputShape[2]);
-        obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes", numBoxes);
+        obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes, %d classes", numBoxes, detectedClasses);
         
         cv::Size modelSize(inputWidth_, inputHeight_);
         cv::Size originalSize(input.cols, input.rows);
@@ -185,8 +232,11 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         switch (version_) {
             case Version::YOLOv5:
-            case Version::YOLOv8:
                 detections = postprocessYOLOv5(outputData, numBoxes, detectedClasses, 
+                                              modelSize, originalSize);
+                break;
+            case Version::YOLOv8:
+                detections = postprocessYOLOv8(outputData, numBoxes, detectedClasses, 
                                               modelSize, originalSize);
                 break;
             case Version::YOLOv11:
@@ -304,7 +354,80 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
     const cv::Size& modelInputSize,
     const cv::Size& originalImageSize
 ) {
-    return postprocessYOLOv5(rawOutput, numBoxes, numClasses, modelInputSize, originalImageSize);
+    std::vector<Detection> detections;
+    std::vector<cv::Rect2f> boxes;
+    std::vector<float> scores;
+    std::vector<int> classIds;
+
+    float scaleX = static_cast<float>(originalImageSize.width) / modelInputSize.width;
+    float scaleY = static_cast<float>(originalImageSize.height) / modelInputSize.height;
+
+    for (int i = 0; i < numBoxes; ++i) {
+        float cx = rawOutput[0 * numBoxes + i];
+        float cy = rawOutput[1 * numBoxes + i];
+        float w = rawOutput[2 * numBoxes + i];
+        float h = rawOutput[3 * numBoxes + i];
+
+        int maxClassId = 0;
+        float maxClassProb = rawOutput[4 * numBoxes + i];
+
+        for (int c = 1; c < numClasses; ++c) {
+            float prob = rawOutput[(4 + c) * numBoxes + i];
+            if (prob > maxClassProb) {
+                maxClassProb = prob;
+                maxClassId = c;
+            }
+        }
+
+        float confidence = maxClassProb;
+
+        if (confidence < confidenceThreshold_) {
+            continue;
+        }
+
+        if (targetClassId_ >= 0 && maxClassId != targetClassId_) {
+            continue;
+        }
+
+        float x1 = (cx - w / 2.0f) * scaleX;
+        float y1 = (cy - h / 2.0f) * scaleY;
+        float x2 = (cx + w / 2.0f) * scaleX;
+        float y2 = (cy + h / 2.0f) * scaleY;
+
+        x1 = std::max(0.0f, std::min(x1, static_cast<float>(originalImageSize.width)));
+        y1 = std::max(0.0f, std::min(y1, static_cast<float>(originalImageSize.height)));
+        x2 = std::max(0.0f, std::min(x2, static_cast<float>(originalImageSize.width)));
+        y2 = std::max(0.0f, std::min(y2, static_cast<float>(originalImageSize.height)));
+
+        boxes.push_back(cv::Rect2f(x1, y1, x2 - x1, y2 - y1));
+        scores.push_back(confidence);
+        classIds.push_back(maxClassId);
+    }
+
+    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
+
+    for (int idx : nmsIndices) {
+        Detection det;
+        det.classId = classIds[idx];
+        det.className = (det.classId < classNames_.size())
+                        ? classNames_[det.classId]
+                        : "Class_" + std::to_string(det.classId);
+        det.confidence = scores[idx];
+
+        det.x = boxes[idx].x / originalImageSize.width;
+        det.y = boxes[idx].y / originalImageSize.height;
+        det.width = boxes[idx].width / originalImageSize.width;
+        det.height = boxes[idx].height / originalImageSize.height;
+
+        det.centerX = det.x + det.width / 2.0f;
+        det.centerY = det.y + det.height / 2.0f;
+
+        detections.push_back(det);
+    }
+
+    obs_log(LOG_DEBUG, "[ModelYOLO] Detected %zu objects after NMS", detections.size());
+
+    return detections;
 }
 
 std::vector<Detection> ModelYOLO::postprocessYOLOv11(
@@ -314,7 +437,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv11(
     const cv::Size& modelInputSize,
     const cv::Size& originalImageSize
 ) {
-    return postprocessYOLOv5(rawOutput, numBoxes, numClasses, modelInputSize, originalImageSize);
+    return postprocessYOLOv8(rawOutput, numBoxes, numClasses, modelInputSize, originalImageSize);
 }
 
 std::vector<int> ModelYOLO::performNMS(
@@ -418,4 +541,15 @@ void ModelYOLO::setNMSThreshold(float threshold) {
 
 void ModelYOLO::setTargetClass(int classId) {
     targetClassId_ = classId;
+}
+
+void ModelYOLO::setInputResolution(int resolution) {
+    if (resolution &gt; 0) {
+        inputWidth_ = resolution;
+        inputHeight_ = resolution;
+        if (!inputDims_.empty()) {
+            inputDims_[0][2] = inputHeight_;
+            inputDims_[0][3] = inputWidth_;
+        }
+    }
 }
