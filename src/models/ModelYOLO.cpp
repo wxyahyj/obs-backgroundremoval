@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <fstream>
 #include <numeric>
+#include <dml_provider_factory.h>
 
 ModelYOLO::ModelYOLO(Version version)
     : ModelBCHW(),
@@ -80,6 +81,19 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                 obs_log(LOG_INFO, "[ModelYOLO] TensorRT execution provider enabled");
             } catch (const std::exception& e) {
                 obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable TensorRT: %s, falling back to CPU", e.what());
+                gpuFailed = true;
+                currentUseGPU = "cpu";
+            }
+        }
+#endif
+
+#if _WIN32
+        if (currentUseGPU == "dml" && !gpuFailed) {
+            try {
+                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
+                obs_log(LOG_INFO, "[ModelYOLO] DirectML execution provider enabled");
+            } catch (const std::exception& e) {
+                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable DirectML: %s, falling back to CPU", e.what());
                 gpuFailed = true;
                 currentUseGPU = "cpu";
             }
