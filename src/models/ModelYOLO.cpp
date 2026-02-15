@@ -22,18 +22,6 @@ ModelYOLO::~ModelYOLO() {
     obs_log(LOG_INFO, "[ModelYOLO] Destroyed");
 }
 
-void ModelYOLO::loadModel(const std::string& modelPath) {
-    obs_log(LOG_INFO, "[ModelYOLO] Loading model: %s", modelPath.c_str());
-    
-    // 调用基类的模型加载（使用 obs-backgroundremoval 的 ONNX Runtime 封装）
-    // 注意：这里我们需要获取模型输入输出形状
-    // 实际的模型加载会在子类中完成
-    
-    obs_log(LOG_INFO, "[ModelYOLO] Model loaded successfully");
-    obs_log(LOG_INFO, "  Input size: %dx%d", inputWidth_, inputHeight_);
-    obs_log(LOG_INFO, "  Num classes: %d", numClasses_);
-}
-
 void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
     // YOLO 预处理标准流程：
     // 1. Resize 到模型输入尺寸 (保持宽高比的 letterbox)
@@ -132,99 +120,116 @@ void ModelYOLO::loadModel(const std::string& modelPath) {
 }
 
 std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
-    // 1. 预处理
-    std::vector<float> inputTensorData(1 * 3 * inputHeight_ * inputWidth_);
-    preprocessInput(input, inputTensorData.data());
-    
-    // 2. 创建输入 tensor
-    std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
-        OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault
-    );
-    
-    Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-        memoryInfo,
-        inputTensorData.data(),
-        inputTensorData.size(),
-        inputShape.data(),
-        inputShape.size()
-    );
-    
-    // 3. 执行推理
-    std::vector<Ort::Value> inputTensors;
-    inputTensors.push_back(std::move(inputTensor));
-    
-    // 获取输入输出名称
-    std::vector<const char*> inputNames;
-    std::vector<const char*> outputNames;
-    for (size_t i = 0; i < inputNames_.size(); ++i) {
-        inputNames.push_back(inputNames_[i].get());
-    }
-    for (size_t i = 0; i < outputNames_.size(); ++i) {
-        outputNames.push_back(outputNames_[i].get());
-    }
-    
-    auto outputTensors = session->Run(Ort::RunOptions{nullptr}, 
-                                      inputNames.data(), 
-                                      inputTensors.data(), 
-                                      inputNames.size(),
-                                      outputNames.data(),
-                                      outputNames.size());
-    
-    // 4. 获取输出数据
-    float* outputData = outputTensors[0].GetTensorMutableData<float>();
-    auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-    
-    int outputSize = 1;
-    for (auto dim : outputShape) {
-        outputSize *= static_cast<int>(dim);
-    }
-    
-    // 根据模型版本确定如何处理输出
-    cv::Size modelSize(inputWidth_, inputHeight_);
-    cv::Size originalSize(input.cols, input.rows);
-    
-    std::vector<Detection> detections;
-    
-    if (outputShape.size() == 3) {
-        // 3维输出：[batch, num_boxes, features] - 如YOLOv5
-        int numBoxes = static_cast<int>(outputShape[1]);
-        int numFeatures = static_cast<int>(outputShape[2]);
-        
-        switch (version_) {
-            case Version::YOLOv5:
-                detections = postprocessYOLOv5(outputData, numBoxes, numFeatures - 5, 
-                                              modelSize, originalSize);
-                break;
-            case Version::YOLOv8:
-            case Version::YOLOv11:
-                // 对于3D输出的YOLOv8/v11，也按此处理
-                detections = postprocessYOLOv8(outputData, numBoxes, numFeatures - 4, 
-                                              modelSize, originalSize);
-                break;
+    try {
+        // 检查输入图像是否有效
+        if (input.empty() || input.cols <= 0 || input.rows <= 0) {
+            obs_log(LOG_WARNING, "[ModelYOLO] Invalid input image");
+            return std::vector<Detection>();
         }
-    } else if (outputShape.size() == 2) {
-        // 2维输出：[features, num_anchors] - 如某些YOLOv8输出
-        int numFeatures = static_cast<int>(outputShape[0]);
-        int numAnchors = static_cast<int>(outputShape[1]);
         
-        if (numFeatures == 4 + numClasses_) {
-            // [4+num_classes, num_anchors] 格式，需要转置
+        // 1. 预处理
+        std::vector<float> inputTensorData(1 * 3 * inputHeight_ * inputWidth_);
+        preprocessInput(input, inputTensorData.data());
+        
+        // 2. 创建输入 tensor
+        std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
+        Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+            OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault
+        );
+        
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo,
+            inputTensorData.data(),
+            inputTensorData.size(),
+            inputShape.data(),
+            inputShape.size()
+        );
+        
+        // 3. 执行推理
+        std::vector<Ort::Value> inputTensors;
+        inputTensors.push_back(std::move(inputTensor));
+        
+        // 获取输入输出名称
+        std::vector<const char*> inputNames;
+        std::vector<const char*> outputNames;
+        for (size_t i = 0; i < inputNames_.size(); ++i) {
+            inputNames.push_back(inputNames_[i].get());
+        }
+        for (size_t i = 0; i < outputNames_.size(); ++i) {
+            outputNames.push_back(outputNames_[i].get());
+        }
+        
+        auto outputTensors = session->Run(Ort::RunOptions{nullptr}, 
+                                          inputNames.data(), 
+                                          inputTensors.data(), 
+                                          inputNames.size(),
+                                          outputNames.data(),
+                                          outputNames.size());
+        
+        // 4. 获取输出数据
+        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        
+        int outputSize = 1;
+        for (auto dim : outputShape) {
+            outputSize *= static_cast<int>(dim);
+        }
+        
+        // 根据模型版本确定如何处理输出
+        cv::Size modelSize(inputWidth_, inputHeight_);
+        cv::Size originalSize(input.cols, input.rows);
+        
+        std::vector<Detection> detections;
+        
+        if (outputShape.size() == 3) {
+            // 3维输出：[batch, num_boxes, features] - 如YOLOv5
+            int numBoxes = static_cast<int>(outputShape[1]);
+            int numFeatures = static_cast<int>(outputShape[2]);
+            
             switch (version_) {
-                case Version::YOLOv8:
-                case Version::YOLOv11:
-                    detections = postprocessYOLOv8(outputData, numAnchors, numClasses_, 
+                case Version::YOLOv5:
+                    detections = postprocessYOLOv5(outputData, numBoxes, numFeatures - 5, 
                                                   modelSize, originalSize);
                     break;
-                case Version::YOLOv5:
-                    detections = postprocessYOLOv5(outputData, numAnchors, numClasses_, 
+                case Version::YOLOv8:
+                case Version::YOLOv11:
+                    // 对于3D输出的YOLOv8/v11，也按此处理
+                    detections = postprocessYOLOv8(outputData, numBoxes, numFeatures - 4, 
                                                   modelSize, originalSize);
                     break;
             }
+        } else if (outputShape.size() == 2) {
+            // 2维输出：[features, num_anchors] - 如某些YOLOv8输出
+            int numFeatures = static_cast<int>(outputShape[0]);
+            int numAnchors = static_cast<int>(outputShape[1]);
+            
+            if (numFeatures == 4 + numClasses_) {
+                // [4+num_classes, num_anchors] 格式，需要转置
+                switch (version_) {
+                    case Version::YOLOv8:
+                    case Version::YOLOv11:
+                        detections = postprocessYOLOv8(outputData, numAnchors, numClasses_, 
+                                                      modelSize, originalSize);
+                        break;
+                    case Version::YOLOv5:
+                        detections = postprocessYOLOv5(outputData, numAnchors, numClasses_, 
+                                                      modelSize, originalSize);
+                        break;
+                }
+            }
         }
+        
+        return detections;
+    } catch (const Ort::Exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] ONNX Runtime exception: %s", e.what());
+        return std::vector<Detection>();
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Standard exception: %s", e.what());
+        return std::vector<Detection>();
+    } catch (...) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Unknown exception during inference");
+        return std::vector<Detection>();
     }
-    
-    return detections;
 }
 
 void ModelYOLO::setConfidenceThreshold(float threshold) {

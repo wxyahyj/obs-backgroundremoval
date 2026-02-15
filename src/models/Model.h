@@ -2,6 +2,7 @@
 #define MODEL_H
 
 #include <onnxruntime_cxx_api.h>
+#include <obs-module.h>
 #include "plugin-support.h"
 
 #ifdef _WIN32
@@ -82,6 +83,11 @@ static void chw_to_hwc_32f(cv::InputArray src, cv::OutputArray dst)
   * with different pre-post processing behavior (like BCHW instead of BHWC or different ranges).
 */
 class Model {
+protected:
+	// Model dimensions
+	std::vector<std::vector<int64_t>> inputDims;
+	std::vector<std::vector<int64_t>> outputDims;
+	
 private:
 	/* data */
 public:
@@ -252,6 +258,9 @@ public:
 
 		return cv::Mat(outputHeight, outputWidth, outputChannels, outputTensorValues[0].data());
 	}
+
+	virtual void loadModel(const std::string& modelPath) {}
+	virtual void preprocessInput(const cv::Mat& input, float* outputBuffer) {}
 
 	virtual void assignOutputToInput(std::vector<std::vector<float>> &, std::vector<std::vector<float>> &) {}
 

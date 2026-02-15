@@ -29,27 +29,32 @@ static obs_properties_t *yolo_filter_get_properties(void *data)
 
 static void yolo_filter_update(void *data, obs_data_t *settings)
 {
-    yolo_filter_update(data, settings);
+    struct yolo_filter_data *filter = data;
+    yolo_filter_update(filter, settings);
 }
 
 static void yolo_filter_activate(void *data)
 {
-    yolo_filter_activate(data);
+    struct yolo_filter_data *filter = data;
+    yolo_filter_activate(filter);
 }
 
 static void yolo_filter_deactivate(void *data)
 {
-    yolo_filter_deactivate(data);
+    struct yolo_filter_data *filter = data;
+    yolo_filter_deactivate(filter);
 }
 
 static void yolo_filter_video_tick(void *data, float seconds)
 {
-    yolo_filter_video_tick(data, seconds);
+    struct yolo_filter_data *filter = data;
+    yolo_filter_video_tick(filter, seconds);
 }
 
 static void yolo_filter_video_render(void *data, gs_effect_t *effect)
 {
-    yolo_filter_video_render(data, effect);
+    struct yolo_filter_data *filter = data;
+    yolo_filter_video_render(filter, effect);
 }
 
 struct obs_source_info yolo_filter_info = {

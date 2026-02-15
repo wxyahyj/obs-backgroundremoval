@@ -216,7 +216,61 @@ void yolo_filter_defaults(obs_data_t *settings)
 
 void yolo_filter_update(void *data, obs_data_t *settings)
 {
-    obs_log(LOG_INFO, "YOLO filter updated");
+    auto *ptr = static_cast<std::shared_ptr<yolo_filter_data> *>(data);
+    if (!ptr) {
+        return;
+    }
+
+    std::shared_ptr<yolo_filter_data> tf = *ptr;
+    if (!tf) {
+        return;
+    }
+
+    // Update detection parameters
+    tf->enableDetection = obs_data_get_bool(settings, "enable_detection");
+    tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
+    tf->nmsThreshold = (float)obs_data_get_double(settings, "nms_threshold");
+    tf->targetClassId = (int)obs_data_get_int(settings, "target_class_id");
+    
+    // Update model path and version
+    const char *modelPath = obs_data_get_string(settings, "custom_model_path");
+    tf->modelPath = modelPath ? modelPath : "";
+    
+    const char *classNamesPath = obs_data_get_string(settings, "class_names_path");
+    tf->classNamesPath = classNamesPath ? classNamesPath : "";
+    
+    const char *yoloVersionStr = obs_data_get_string(settings, "yolo_version");
+    if (strcmp(yoloVersionStr, "yolov8") == 0) {
+        tf->yoloVersion = ModelYOLO::Version::YOLOv8;
+    } else if (strcmp(yoloVersionStr, "yolov11") == 0) {
+        tf->yoloVersion = ModelYOLO::Version::YOLOv11;
+    } else { // Default to YOLOv5
+        tf->yoloVersion = ModelYOLO::Version::YOLOv5;
+    }
+    
+    // Update drawing parameters
+    tf->drawBoundingBoxes = obs_data_get_bool(settings, "draw_bounding_boxes");
+    tf->boundingBoxThickness = (float)obs_data_get_double(settings, "bounding_box_thickness");
+    
+    int colorVal = (int)obs_data_get_int(settings, "bounding_box_color");
+    tf->boundingBoxColor[0] = (double)((colorVal >> 16) & 0xFF);   // Blue
+    tf->boundingBoxColor[1] = (double)((colorVal >> 8) & 0xFF);    // Green
+    tf->boundingBoxColor[2] = (double)(colorVal & 0xFF);           // Red
+    
+    tf->drawLabels = obs_data_get_bool(settings, "draw_labels");
+    tf->fontSize = (float)obs_data_get_double(settings, "font_size");
+    
+    // Update detection frequency
+    tf->detectionEveryXFrames = (int)obs_data_get_int(settings, "detection_every_x_frames");
+    
+    // Update inference settings
+    const char *useGPU = obs_data_get_string(settings, "useGPU");
+    if (useGPU) {
+        tf->useGPU = useGPU;
+    }
+    tf->numThreads = (int)obs_data_get_int(settings, "numThreads");
+    
+    obs_log(LOG_INFO, "YOLO filter updated with new parameters");
 
     // Cast to shared_ptr pointer and create a local shared_ptr
     auto *ptr = static_cast<std::shared_ptr<yolo_filter_data> *>(data);
@@ -375,14 +429,22 @@ void yolo_filter_destroy(void *data)
 
     std::shared_ptr<yolo_filter_data> tf = *ptr;
     if (tf) {
+        // 设置禁用标志，让检测线程停止
         tf->isDisabled = true;
         
-        // Clean up resources
+        // 等待一段时间让线程结束
+        // 注意：由于线程已经分离，我们不能直接join，但可以等待一下
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        // 清理资源
         obs_enter_graphics();
         gs_texrender_destroy(tf->texrender);
         gs_stagesurface_destroy(tf->stagesurface);
         gs_effect_destroy(tf->effect);
         obs_leave_graphics();
+        
+        // 重置模型指针
+        tf->model.reset();
     }
 
     delete ptr;
@@ -470,54 +532,57 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
     }
 
     // Process the frame if it's time for detection
-    if (tf->detectionFrameCounter >= tf->detectionEveryXFrames) {
-        tf->detectionFrameCounter = 0;
+        if (tf->detectionFrameCounter >= tf->detectionEveryXFrames) {
+            tf->detectionFrameCounter = 0;
 
-        // Render the input to texture
-        gs_texrender_reset(tf->texrender);
+            // Render the input to texture
+            gs_texrender_reset(tf->texrender);
 
-        if (gs_texrender_begin(tf->texrender, width, height)) {
-            gs_blend_state_push();
-            gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+            if (gs_texrender_begin(tf->texrender, width, height)) {
+                gs_blend_state_push();
+                gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
 
-            // Clear the texture
-            struct vec4 background;
-            vec4_zero(&background);
-            gs_clear(GS_CLEAR_COLOR, &background, 0.0f, 0);
+                // Clear the texture
+                struct vec4 background;
+                vec4_zero(&background);
+                gs_clear(GS_CLEAR_COLOR, &background, 0.0f, 0);
 
-            // Render the input
-            obs_source_video_render(tf->source);
+                // Render the input
+                obs_source_video_render(tf->source);
 
-            gs_blend_state_pop();
-            gs_texrender_end(tf->texrender);
-        }
+                gs_blend_state_pop();
+                gs_texrender_end(tf->texrender);
+            }
 
-        // Get the rendered texture
-        gs_texture_t *texture = gs_texrender_get_texture(tf->texrender);
-        if (texture) {
-            // Copy texture to CPU memory for processing
-            if (gs_stagesurface_resize(tf->stagesurface, width, height)) {
-                gs_stage_texture(tf->stagesurface, texture);
+            // Get the rendered texture
+            gs_texture_t *texture = gs_texrender_get_texture(tf->texrender);
+            if (texture) {
+                // Copy texture to CPU memory for processing
+                if (gs_stagesurface_resize(tf->stagesurface, width, height)) {
+                    gs_stage_texture(tf->stagesurface, texture);
 
-                // Map the staged texture
-                uint8_t *data_ptr;
-                uint32_t linesize;
-                if (gs_stagesurface_map(tf->stagesurface, &data_ptr, &linesize)) {
-                    // Create OpenCV Mat from the texture data
-                    cv::Mat frame(height, width, CV_8UC4, data_ptr, linesize);
+                    // Map the staged texture
+                    uint8_t *data_ptr;
+                    uint32_t linesize;
+                    if (gs_stagesurface_map(tf->stagesurface, &data_ptr, &linesize)) {
+                        // Create OpenCV Mat from the texture data
+                        cv::Mat frame(height, width, CV_8UC4, data_ptr, linesize);
 
-                    // Perform YOLO detection in a separate thread or queue it
-                    // For now, we'll just copy the frame to be processed by the detection thread
-                    {
-                        std::lock_guard<std::mutex> lock(tf->inputBGRALock);
-                        tf->inputBGRA = frame.clone();
+                        // Perform YOLO detection in a separate thread or queue it
+                        // For now, we'll just copy the frame to be processed by the detection thread
+                        {
+                            std::lock_guard<std::mutex> lock(tf->inputBGRALock);
+                            // Only copy if the frame is valid and not too large to prevent memory issues
+                            if (!frame.empty() && frame.total() * frame.elemSize() < 10 * 1024 * 1024) { // 10MB limit
+                                tf->inputBGRA = frame.clone();
+                            }
+                        }
+
+                        gs_stagesurface_unmap(tf->stagesurface);
                     }
-
-                    gs_stagesurface_unmap(tf->stagesurface);
                 }
             }
         }
-    }
 
     // Render the original frame
     obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING);
@@ -557,7 +622,9 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
                 gs_technique_begin(tech);
                 gs_technique_begin_pass(tech, 0);
 
-                // Draw rectangle outline using gs_draw_line
+                // Draw rectangle outline using gs_render_start and gs_render_stop
+                gs_render_start(true);
+                
                 gs_vertex2f(bbox.x, bbox.y);
                 gs_vertex2f(bbox.x + bbox.width, bbox.y);
                 
@@ -570,7 +637,7 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
                 gs_vertex2f(bbox.x, bbox.y + bbox.height);
                 gs_vertex2f(bbox.x, bbox.y);
 
-                gs_draw(GS_LINES, 0, 8);
+                gs_render_stop(GS_LINES);
 
                 gs_technique_end_pass(tech);
                 gs_technique_end(tech);
@@ -607,7 +674,7 @@ void yolo_detection_thread(void *data)
 
     while (!tf_ptr->isDisabled) {
         // Wait a bit before next iteration
-        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // Adjust as needed
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Increased sleep time to reduce CPU usage
 
         // Check if we have a new frame to process
         {
@@ -630,6 +697,8 @@ void yolo_detection_thread(void *data)
                     }
                 } catch (const std::exception& e) {
                     obs_log(LOG_ERROR, "YOLO detection error: %s", e.what());
+                } catch (...) {
+                    obs_log(LOG_ERROR, "YOLO detection unknown error occurred");
                 }
             }
         }
