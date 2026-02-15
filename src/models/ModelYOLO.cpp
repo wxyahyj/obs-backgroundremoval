@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <fstream>
 #include <numeric>
+#ifdef HAVE_ONNXRUNTIME_DML_EP
 #include <dml_provider_factory.h>
+#endif
 
 ModelYOLO::ModelYOLO(Version version)
     : ModelBCHW(),
@@ -87,7 +89,7 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         }
 #endif
 
-#if _WIN32
+#ifdef HAVE_ONNXRUNTIME_DML_EP
         if (currentUseGPU == "dml" && !gpuFailed) {
             try {
                 Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
@@ -131,12 +133,20 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         
         if (!outputDims_.empty()) {
             auto shape = outputDims_[0];
+            obs_log(LOG_INFO, "[ModelYOLO] Output shape size: %zu", shape.size());
+            for (size_t i = 0; i < shape.size(); ++i) {
+                obs_log(LOG_INFO, "[ModelYOLO] Output shape[%zu]: %lld", i, shape[i]);
+            }
+            obs_log(LOG_INFO, "[ModelYOLO] Model version: %d", static_cast<int>(version_));
+            
             if (version_ == Version::YOLOv5 && shape.size() >= 3) {
                 int lastDim = static_cast<int>(shape[2]);
                 numClasses_ = lastDim - 5;
+                obs_log(LOG_INFO, "[ModelYOLO] YOLOv5 mode: lastDim=%d, numClasses=%d", lastDim, numClasses_);
             } else if (shape.size() >= 3) {
                 int elementsDim = static_cast<int>(shape[1]);
                 numClasses_ = elementsDim - 4;
+                obs_log(LOG_INFO, "[ModelYOLO] YOLOv8/v11 mode: elementsDim=%d, numClasses=%d", elementsDim, numClasses_);
             }
         }
         

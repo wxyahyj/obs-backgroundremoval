@@ -199,6 +199,19 @@ if(HAVE_ONNXRUNTIME_TENSORRT_EP)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_TENSORRT_EP)
 endif()
 
+if(WIN32)
+  check_library_exists(
+    onnxruntime::onnxruntime
+    OrtSessionOptionsAppendExecutionProvider_DML
+    onnxruntime_c_api.h
+    HAVE_ONNXRUNTIME_DML_EP
+  )
+  if(HAVE_ONNXRUNTIME_DML_EP)
+    message(STATUS "ONNX Runtime DirectML Execution Provider found")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+  endif()
+endif()
+
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE

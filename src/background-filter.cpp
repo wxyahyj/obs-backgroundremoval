@@ -179,6 +179,9 @@ obs_properties_t *background_filter_properties(void *data)
 #if defined(__APPLE__)
 	obs_property_list_add_string(p_use_gpu, obs_module_text("CoreML"), USEGPU_COREML);
 #endif
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+	obs_property_list_add_string(p_use_gpu, "DirectML", USEGPU_DML);
+#endif
 
 	obs_properties_add_int(props, "mask_every_x_frames", obs_module_text("CalculateMaskEveryXFrame"), 1, 300, 1);
 	obs_properties_add_int_slider(props, "numThreads", obs_module_text("NumThreads"), 0, 8, 1);

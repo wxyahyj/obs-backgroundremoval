@@ -114,7 +114,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #ifdef HAVE_ONNXRUNTIME_COREML_EP
 	obs_property_list_add_string(useGPUList, "CoreML", USEGPU_COREML);
 #endif
-#if _WIN32
+#ifdef HAVE_ONNXRUNTIME_DML_EP
 	obs_property_list_add_string(useGPUList, "DirectML", USEGPU_DML);
 #endif
 
@@ -216,7 +216,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	uint32_t newNumThreads = (uint32_t)obs_data_get_int(settings, "num_threads");
 	int newInputResolution = (int)obs_data_get_int(settings, "input_resolution");
 	
-	if (newModelPath != tf->modelPath || newUseGPU != tf->useGPU || newNumThreads != tf->numThreads || newInputResolution != tf->inputResolution || !tf->yoloModel) {
+	if (newModelPath != tf->modelPath || newModelVersion != tf->modelVersion || newUseGPU != tf->useGPU || newNumThreads != tf->numThreads || newInputResolution != tf->inputResolution || !tf->yoloModel) {
 		tf->modelPath = newModelPath;
 		tf->modelVersion = newModelVersion;
 		tf->useGPU = newUseGPU;
@@ -303,6 +303,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		filter->shouldInference = false;
 
 		if (!filter->yoloModel) {
+			obs_log(LOG_DEBUG, "[YOLO Detector] No yoloModel, skipping");
 			continue;
 		}
 
@@ -310,11 +311,14 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
 			if (!lock.owns_lock()) {
+				obs_log(LOG_DEBUG, "[YOLO Detector] Failed to lock inputBGRALock, skipping");
 				continue;
 			}
 			if (filter->inputBGRA.empty()) {
+				obs_log(LOG_DEBUG, "[YOLO Detector] inputBGRA is empty, skipping");
 				continue;
 			}
+			obs_log(LOG_DEBUG, "[YOLO Detector] Got frame: %dx%d", filter->inputBGRA.cols, filter->inputBGRA.rows);
 			frame = filter->inputBGRA.clone();
 		}
 
@@ -653,6 +657,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	if (tf->frameCounter >= tf->inferenceIntervalFrames) {
 		tf->frameCounter = 0;
 		tf->shouldInference = true;
+		obs_log(LOG_DEBUG, "[YOLO Detector] Set shouldInference = true");
 	}
 }
 
