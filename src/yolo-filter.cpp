@@ -7,7 +7,6 @@
 #endif // _WIN32
 
 #include <opencv2/imgproc.hpp>
-#include <opencv2/highgui.hpp>
 
 #include <numeric>
 #include <memory>

@@ -84,8 +84,22 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
 void ModelYOLO::loadModel(const std::string& modelPath) {
     obs_log(LOG_INFO, "[ModelYOLO] Loading model: %s", modelPath.c_str());
     
-    // 调用基类的模型加载
-    Model::loadModel(modelPath);
+    // 创建ONNX Runtime环境
+    Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "YOLOModel");
+    
+    // 使用 ONNX Runtime 加载模型
+    Ort::SessionOptions sessionOptions;
+    sessionOptions.SetIntraOpNumThreads(1);
+    sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
+    
+    // 创建会话
+    session = std::make_unique<Ort::Session>(env, getModelFilepath(modelPath).c_str(), sessionOptions);
+    
+    // 获取输入输出名称
+    populateInputOutputNames(session, inputNames_, outputNames_);
+    
+    // 获取输入输出维度
+    populateInputOutputShapes(session, inputDims, outputDims);
     
     // 获取模型输入输出形状
     if (!inputDims.empty() && inputDims[0].size() >= 4) {

@@ -88,6 +88,11 @@ protected:
 	std::vector<std::vector<int64_t>> inputDims;
 	std::vector<std::vector<int64_t>> outputDims;
 	
+	// ONNX Runtime objects
+	std::unique_ptr<Ort::Session> session;
+	std::vector<Ort::AllocatedStringPtr> inputNames_;
+	std::vector<Ort::AllocatedStringPtr> outputNames_;
+	
 private:
 	/* data */
 public:
