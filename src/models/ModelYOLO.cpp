@@ -16,7 +16,8 @@ ModelYOLO::ModelYOLO(Version version)
       targetClassId_(-1),
       inputWidth_(640),
       inputHeight_(640),
-      numClasses_(80)
+      numClasses_(80),
+      inputBufferSize_(0)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
     
@@ -165,6 +166,11 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
             }
         }
         
+        // 预分配输入缓冲区
+        inputBufferSize_ = 1 * 3 * inputHeight_ * inputWidth_;
+        inputBuffer_.resize(inputBufferSize_);
+        obs_log(LOG_INFO, "[ModelYOLO] Allocated input buffer size: %zu", inputBufferSize_);
+        
         name = "YOLO";
         
         obs_log(LOG_INFO, "[ModelYOLO] Model loaded successfully");
@@ -213,14 +219,25 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
 std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
     obs_log(LOG_DEBUG, "[ModelYOLO] inference called with image %dx%d", input.cols, input.rows);
     
+    // 输入验证
+    if (input.empty()) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Input image is empty");
+        return {};
+    }
+    
+    if (input.cols <= 0 || input.rows <= 0) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Invalid input image size: %dx%d", input.cols, input.rows);
+        return {};
+    }
+    
     if (!session_) {
         obs_log(LOG_ERROR, "[ModelYOLO] Session is null, cannot run inference");
         return {};
     }
     
     try {
-        std::vector<float> inputTensorData(1 * 3 * inputHeight_ * inputWidth_);
-        preprocessInput(input, inputTensorData.data());
+        // 使用预分配的输入缓冲区
+        preprocessInput(input, inputBuffer_.data());
         
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         
@@ -231,8 +248,8 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
             memoryInfo,
-            inputTensorData.data(),
-            inputTensorData.size(),
+            inputBuffer_.data(),
+            inputBufferSize_,
             inputShape.data(),
             inputShape.size()
         );
@@ -250,8 +267,14 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             outputNamesChar.push_back(name.get());
         }
         
+        obs_log(LOG_DEBUG, "[ModelYOLO] Running ONNX Runtime inference");
+        
+        // 添加详细的错误处理
+        Ort::RunOptions runOptions;
+        runOptions.SetRunLogLevel(ORT_LOGGING_LEVEL_ERROR);
+        
         auto outputTensors = session_->Run(
-            Ort::RunOptions{nullptr},
+            runOptions,
             inputNamesChar.data(),
             inputTensors.data(),
             inputTensors.size(),
@@ -260,15 +283,25 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         );
         
         if (outputTensors.empty()) {
-            obs_log(LOG_ERROR, "[ModelYOLO] No output tensors");
+            obs_log(LOG_ERROR, "[ModelYOLO] No output tensors from ONNX Runtime");
+            return {};
+        }
+        
+        if (!outputTensors[0].IsTensor()) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Output is not a tensor");
             return {};
         }
         
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        if (!outputData) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output tensor data");
+            return {};
+        }
+        
         auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
         
         if (outputShape.size() < 3) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Invalid output shape");
+            obs_log(LOG_ERROR, "[ModelYOLO] Invalid output shape size: %zu", outputShape.size());
             return {};
         }
         
@@ -282,6 +315,12 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             numElements = static_cast<int>(outputShape[1]);
         }
         
+        // 验证输出参数
+        if (numBoxes <= 0 || numElements <= 0) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Invalid output parameters: numBoxes=%d, numElements=%d", numBoxes, numElements);
+            return {};
+        }
+        
         obs_log(LOG_INFO, "[ModelYOLO] Using numClasses from model: %d", numClasses_);
         
         obs_log(LOG_DEBUG, "[ModelYOLO] Output shape: [%lld, %lld, %lld]", 
@@ -293,27 +332,38 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         std::vector<Detection> detections;
         
-        switch (version_) {
-            case Version::YOLOv5:
-                detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, 
-                                              modelSize, originalSize);
-                break;
-            case Version::YOLOv8:
-                detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, 
-                                              modelSize, originalSize);
-                break;
-            case Version::YOLOv11:
-                detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, 
-                                               modelSize, originalSize);
-                break;
+        try {
+            switch (version_) {
+                case Version::YOLOv5:
+                    detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, 
+                                                  modelSize, originalSize);
+                    break;
+                case Version::YOLOv8:
+                    detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, 
+                                                  modelSize, originalSize);
+                    break;
+                case Version::YOLOv11:
+                    detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, 
+                                                   modelSize, originalSize);
+                    break;
+            }
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Postprocessing exception: %s", e.what());
+            return {};
         }
         
         obs_log(LOG_INFO, "[ModelYOLO] Inference completed, found %zu detections", detections.size());
         
         return detections;
         
+    } catch (const Ort::Exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] ONNX Runtime exception: %s", e.what());
+        return {};
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Inference exception: %s", e.what());
+        return {};
+    } catch (...) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Unknown inference exception");
         return {};
     }
 }

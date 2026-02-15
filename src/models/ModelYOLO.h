@@ -92,6 +92,10 @@ private:
     std::vector<std::vector<float>> inputTensorValues_;
     std::vector<Ort::Value> inputTensor_;
     std::vector<Ort::Value> outputTensor_;
+    
+    // 输入缓冲区
+    size_t inputBufferSize_;
+    std::vector<float> inputBuffer_;
 };
 
 #endif
