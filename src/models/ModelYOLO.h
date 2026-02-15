@@ -5,6 +5,8 @@
 #include "Detection.h"
 #include <vector>
 #include <string>
+#include <memory>
+#include <onnxruntime_cxx_api.h>
 
 class ModelYOLO : public ModelBCHW {
 public:
@@ -78,6 +80,17 @@ private:
     int numClasses_;
 
     std::vector<std::string> classNames_;
+
+    std::unique_ptr<Ort::Env> env_;
+    std::unique_ptr<Ort::Session> session_;
+    std::vector<Ort::AllocatedStringPtr> inputNames_;
+    std::vector<Ort::AllocatedStringPtr> outputNames_;
+    std::vector<std::vector<int64_t>> inputDims_;
+    std::vector<std::vector<int64_t>> outputDims_;
+    std::vector<std::vector<float>> outputTensorValues_;
+    std::vector<std::vector<float>> inputTensorValues_;
+    std::vector<Ort::Value> inputTensor_;
+    std::vector<Ort::Value> outputTensor_;
 };
 
 #endif

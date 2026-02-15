@@ -523,7 +523,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *effect)
         gs_blend_state_push();
         gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
 
-        obs_source_process_filter_tech_end(tf->source, effect, width, height);
+        obs_source_process_filter_tech_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0, "Draw");
 
         gs_blend_state_pop();
         gs_texrender_end(tf->texrender);

@@ -1,6 +1,7 @@
 #ifndef MODEL_H
 #define MODEL_H
 
+#include <obs-module.h>
 #include <onnxruntime_cxx_api.h>
 #include "plugin-support.h"
 
@@ -82,19 +83,8 @@ static void chw_to_hwc_32f(cv::InputArray src, cv::OutputArray dst)
   * with different pre-post processing behavior (like BCHW instead of BHWC or different ranges).
 */
 class Model {
-protected:
+private:
 	/* data */
-	std::unique_ptr<Ort::Session> session;
-	std::unique_ptr<Ort::Env> env;
-	std::vector<Ort::AllocatedStringPtr> inputNames;
-	std::vector<Ort::AllocatedStringPtr> outputNames;
-	std::vector<Ort::Value> inputTensor;
-	std::vector<Ort::Value> outputTensor;
-	std::vector<std::vector<int64_t>> inputDims;
-	std::vector<std::vector<int64_t>> outputDims;
-	std::vector<std::vector<float>> outputTensorValues;
-	std::vector<std::vector<float>> inputTensorValues;
-
 public:
 	Model(/* args */) {};
 	virtual ~Model() {};
@@ -266,36 +256,6 @@ public:
 
 	virtual void assignOutputToInput(std::vector<std::vector<float>> &, std::vector<std::vector<float>> &) {}
 
-	virtual void loadModel(const std::string& modelPath) {
-		obs_log(LOG_INFO, "[Model] Loading model: %s", modelPath.c_str());
-
-		try {
-#if _WIN32
-			std::wstring modelPathW(modelPath.begin(), modelPath.end());
-#else
-			std::string modelPathW = modelPath;
-#endif
-
-			env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "YOLOModel");
-
-			Ort::SessionOptions sessionOptions;
-			sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-
-			session = std::make_unique<Ort::Session>(*env, modelPathW.c_str(), sessionOptions);
-
-			Ort::AllocatorWithDefaultOptions allocator;
-			populateInputOutputNames(session, inputNames, outputNames);
-			populateInputOutputShapes(session, inputDims, outputDims);
-			allocateTensorBuffers(inputDims, outputDims, outputTensorValues, inputTensorValues,
-							  inputTensor, outputTensor);
-
-			obs_log(LOG_INFO, "[Model] Model loaded successfully");
-		} catch (const std::exception& e) {
-			obs_log(LOG_ERROR, "[Model] Failed to load model: %s", e.what());
-			throw;
-		}
-	}
-
 	virtual void runNetworkInference(const std::unique_ptr<Ort::Session> &session,
 					 const std::vector<Ort::AllocatedStringPtr> &inputNames,
 					 const std::vector<Ort::AllocatedStringPtr> &outputNames,
@@ -334,11 +294,14 @@ public:
 		hwc_to_chw(resizedImage, preprocessedImage);
 	}
 
-	virtual void postprocessOutput(cv::Mat &output)
+	virtual void postprocessOutput(cv::Mat &outputImage)
 	{
 		cv::Mat outputTransposed;
-		chw_to_hwc_32f(output, outputTransposed);
-		outputTransposed.copyTo(output);
+		chw_to_hwc_32f(outputImage, outputTransposed);
+		// take 2nd channel
+		std::vector<cv::Mat> outputImageSplit;
+		cv::split(outputTransposed, outputImageSplit);
+		outputImage = outputImageSplit[1];
 	}
 
 	virtual void getNetworkInputSize(const std::vector<std::vector<int64_t>> &inputDims, uint32_t &inputWidth,

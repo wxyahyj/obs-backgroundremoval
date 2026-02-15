@@ -16,6 +16,13 @@ ModelYOLO::ModelYOLO(Version version)
       numClasses_(80)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
+    
+    try {
+        std::string instanceName{"YOLOModel"};
+        env_ = std::make_unique<Ort::Env>(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, instanceName.c_str());
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize ORT: %s", e.what());
+    }
 }
 
 ModelYOLO::~ModelYOLO() {
@@ -26,24 +33,31 @@ void ModelYOLO::loadModel(const std::string& modelPath) {
     obs_log(LOG_INFO, "[ModelYOLO] Loading model: %s", modelPath.c_str());
     
     try {
-        // 调用基类的模型加载
-        Model::loadModel(modelPath);
+        Ort::SessionOptions sessionOptions;
+        sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         
-        // 获取模型输入形状
-        if (!inputDims.empty()) {
-            auto shape = inputDims[0];
-            
+#if _WIN32
+        std::wstring modelPathW(modelPath.begin(), modelPath.end());
+        session_ = std::make_unique<Ort::Session>(*env_, modelPathW.c_str(), sessionOptions);
+#else
+        session_ = std::make_unique<Ort::Session>(*env_, modelPath.c_str(), sessionOptions);
+#endif
+        
+        populateInputOutputNames(session_, inputNames_, outputNames_);
+        populateInputOutputShapes(session_, inputDims_, outputDims_);
+        allocateTensorBuffers(inputDims_, outputDims_, outputTensorValues_, inputTensorValues_,
+                              inputTensor_, outputTensor_);
+        
+        if (!inputDims_.empty()) {
+            auto shape = inputDims_[0];
             if (shape.size() >= 4) {
                 inputHeight_ = static_cast<int>(shape[2]);
                 inputWidth_ = static_cast<int>(shape[3]);
             }
         }
         
-        // 获取模型输出形状
-        if (!outputDims.empty()) {
-            auto shape = outputDims[0];
-            
-            // YOLOv5/v8 输出: [1, num_boxes, 5+num_classes]
+        if (!outputDims_.empty()) {
+            auto shape = outputDims_[0];
             if (shape.size() >= 3) {
                 int lastDim = static_cast<int>(shape[2]);
                 numClasses_ = lastDim - 5;
@@ -97,17 +111,15 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
 std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
     obs_log(LOG_DEBUG, "[ModelYOLO] inference called with image %dx%d", input.cols, input.rows);
     
-    if (!session) {
+    if (!session_) {
         obs_log(LOG_ERROR, "[ModelYOLO] Session is null, cannot run inference");
         return {};
     }
     
     try {
-        // 1. 预处理
         std::vector<float> inputTensorData(1 * 3 * inputHeight_ * inputWidth_);
         preprocessInput(input, inputTensorData.data());
         
-        // 2. 创建输入 tensor
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         
         Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
@@ -123,21 +135,20 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             inputShape.size()
         );
         
-        // 3. 执行推理
         std::vector<Ort::Value> inputTensors;
         inputTensors.push_back(std::move(inputTensor));
         
         std::vector<const char*> inputNamesChar;
-        for (const auto& name : inputNames) {
+        for (const auto& name : inputNames_) {
             inputNamesChar.push_back(name.get());
         }
         
         std::vector<const char*> outputNamesChar;
-        for (const auto& name : outputNames) {
+        for (const auto& name : outputNames_) {
             outputNamesChar.push_back(name.get());
         }
         
-        auto outputTensors = session->Run(
+        auto outputTensors = session_->Run(
             Ort::RunOptions{nullptr},
             inputNamesChar.data(),
             inputTensors.data(),
@@ -146,7 +157,6 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             outputNamesChar.size()
         );
         
-        // 4. 获取输出数据
         if (outputTensors.empty()) {
             obs_log(LOG_ERROR, "[ModelYOLO] No output tensors");
             return {};
@@ -168,7 +178,6 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
                 outputShape[0], outputShape[1], outputShape[2]);
         obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes", numBoxes);
         
-        // 5. 后处理（根据版本）
         cv::Size modelSize(inputWidth_, inputHeight_);
         cv::Size originalSize(input.cols, input.rows);
         
