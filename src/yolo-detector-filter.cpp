@@ -75,6 +75,7 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
+static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
 
 const char *yolo_detector_filter_getname(void *unused)
 {
@@ -90,6 +91,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
 	obs_properties_add_text(props, "inference_status", "Inference: ON", OBS_TEXT_INFO);
+
+	obs_property_t *refreshBtn = obs_properties_add_button(props, "refresh_stats", "Refresh Stats", refreshStats);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
@@ -290,6 +293,42 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 	return true;
 }
 
+static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data)
+{
+	auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+	if (!ptr) {
+		return true;
+	}
+
+	std::shared_ptr<yolo_detector_filter> tf = *ptr;
+	if (!tf) {
+		return true;
+	}
+
+	// 更新平均推理时间
+	obs_property_t *inferenceTimeText = obs_properties_get(props, "avg_inference_time");
+	if (inferenceTimeText) {
+		char timeStr[128];
+		snprintf(timeStr, sizeof(timeStr), "Avg Inference Time: %.2f ms", tf->avgInferenceTimeMs);
+		obs_property_set_description(inferenceTimeText, timeStr);
+	}
+
+	// 更新检测到的物体数量
+	obs_property_t *detectedObjectsText = obs_properties_get(props, "detected_objects");
+	if (detectedObjectsText) {
+		size_t count = 0;
+		{
+			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+			count = tf->detections.size();
+		}
+		char countStr[128];
+		snprintf(countStr, sizeof(countStr), "Detected Objects: %zu", count);
+		obs_property_set_description(detectedObjectsText, countStr);
+	}
+
+	return true;
+}
+
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
@@ -303,7 +342,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		filter->shouldInference = false;
 
 		if (!filter->yoloModel) {
-			obs_log(LOG_DEBUG, "[YOLO Detector] No yoloModel, skipping");
+			obs_log(LOG_INFO, "[YOLO Detector] No yoloModel, skipping");
 			continue;
 		}
 
@@ -311,14 +350,14 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
 			if (!lock.owns_lock()) {
-				obs_log(LOG_DEBUG, "[YOLO Detector] Failed to lock inputBGRALock, skipping");
+				obs_log(LOG_INFO, "[YOLO Detector] Failed to lock inputBGRALock, skipping");
 				continue;
 			}
 			if (filter->inputBGRA.empty()) {
-				obs_log(LOG_DEBUG, "[YOLO Detector] inputBGRA is empty, skipping");
+				obs_log(LOG_INFO, "[YOLO Detector] inputBGRA is empty, skipping");
 				continue;
 			}
-			obs_log(LOG_DEBUG, "[YOLO Detector] Got frame: %dx%d", filter->inputBGRA.cols, filter->inputBGRA.rows);
+			obs_log(LOG_INFO, "[YOLO Detector] Got frame: %dx%d", filter->inputBGRA.cols, filter->inputBGRA.rows);
 			frame = filter->inputBGRA.clone();
 		}
 
@@ -343,6 +382,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		filter->inferenceCount++;
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
+
+		obs_log(LOG_INFO, "[YOLO Detector] Inference completed in %lld ms, detections: %zu", duration, newDetections.size());
 
 		if (filter->exportCoordinates && !newDetections.empty()) {
 			exportCoordinatesToFile(filter, frame.cols, frame.rows);
@@ -657,7 +698,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	if (tf->frameCounter >= tf->inferenceIntervalFrames) {
 		tf->frameCounter = 0;
 		tf->shouldInference = true;
-		obs_log(LOG_DEBUG, "[YOLO Detector] Set shouldInference = true");
+		obs_log(LOG_INFO, "[YOLO Detector] Set shouldInference = true, isInferencing = %d", (int)tf->isInferencing);
 	}
 }
 
