@@ -255,17 +255,17 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
             continue;
         }
 
-        uint8_t *data = nullptr;
-        uint32_t linesize = 0;
-
-        if (!gs_stagesurface_map(filter->stagesurface, &data, &linesize)) {
-            continue;
+        cv::Mat frame;
+        {
+            std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
+            if (!lock.owns_lock()) {
+                continue;
+            }
+            if (filter->inputBGRA.empty()) {
+                continue;
+            }
+            frame = filter->inputBGRA.clone();
         }
-
-        uint32_t width = gs_stagesurface_get_width(filter->stagesurface);
-        uint32_t height = gs_stagesurface_get_height(filter->stagesurface);
-
-        cv::Mat frame(height, width, CV_8UC4, data, linesize);
 
         auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -289,10 +289,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
         filter->inferenceCount++;
         filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 
-        gs_stagesurface_unmap(filter->stagesurface);
-
         if (filter->exportCoordinates && !newDetections.empty()) {
-            exportCoordinatesToFile(filter, width, height);
+            exportCoordinatesToFile(filter, frame.cols, frame.rows);
         }
     }
 
@@ -533,17 +531,15 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *effect)
     }
 
     auto &tf = *ptr;
-    if (!tf) {
-        return;
-    }
-
-    uint32_t width, height;
-    if (!getRGBAFromStageSurface(tf.get(), width, height)) {
-        if (tf->source) {
+    if (!tf || tf->isDisabled) {
+        if (tf && tf->source) {
             obs_source_skip_video_filter(tf->source);
         }
         return;
     }
+
+    uint32_t width, height;
+    getRGBAFromStageSurface(tf.get(), width, height);
 
     if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
         if (tf->source) {
