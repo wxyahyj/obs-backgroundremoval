@@ -29,6 +29,7 @@
 
 struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
 	std::unique_ptr<ModelYOLO> yoloModel;
+	std::mutex yoloModelMutex;
 	ModelYOLO::Version modelVersion;
 
 	std::vector<Detection> detections;
@@ -219,7 +220,13 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	uint32_t newNumThreads = (uint32_t)obs_data_get_int(settings, "num_threads");
 	int newInputResolution = (int)obs_data_get_int(settings, "input_resolution");
 	
-	if (newModelPath != tf->modelPath || newModelVersion != tf->modelVersion || newUseGPU != tf->useGPU || newNumThreads != tf->numThreads || newInputResolution != tf->inputResolution || !tf->yoloModel) {
+	bool needModelUpdate = false;
+	{
+		std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+		needModelUpdate = (newModelPath != tf->modelPath || newModelVersion != tf->modelVersion || newUseGPU != tf->useGPU || newNumThreads != tf->numThreads || newInputResolution != tf->inputResolution || !tf->yoloModel);
+	}
+	
+	if (needModelUpdate) {
 		tf->modelPath = newModelPath;
 		tf->modelVersion = newModelVersion;
 		tf->useGPU = newUseGPU;
@@ -230,16 +237,23 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			try {
 				obs_log(LOG_INFO, "[YOLO Filter] Loading new model: %s", tf->modelPath.c_str());
 				
-				tf->yoloModel = std::make_unique<ModelYOLO>(tf->modelVersion);
+				std::unique_ptr<ModelYOLO> newYoloModel = std::make_unique<ModelYOLO>(tf->modelVersion);
 				
-				tf->yoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
+				newYoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
 				
 				obs_log(LOG_INFO, "[YOLO Filter] Model loaded successfully");
 				
+				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+				tf->yoloModel = std::move(newYoloModel);
+				
 			} catch (const std::exception& e) {
 				obs_log(LOG_ERROR, "[YOLO Filter] Failed to load model: %s", e.what());
+				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
 				tf->yoloModel.reset();
 			}
+		} else {
+			std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+			tf->yoloModel.reset();
 		}
 	}
 	
@@ -248,10 +262,13 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->targetClassId = (int)obs_data_get_int(settings, "target_class");
 	tf->inferenceIntervalFrames = (int)obs_data_get_int(settings, "inference_interval_frames");
 	
-	if (tf->yoloModel) {
-		tf->yoloModel->setConfidenceThreshold(tf->confidenceThreshold);
-		tf->yoloModel->setNMSThreshold(tf->nmsThreshold);
-		tf->yoloModel->setTargetClass(tf->targetClassId);
+	{
+		std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+		if (tf->yoloModel) {
+			tf->yoloModel->setConfidenceThreshold(tf->confidenceThreshold);
+			tf->yoloModel->setNMSThreshold(tf->nmsThreshold);
+			tf->yoloModel->setTargetClass(tf->targetClassId);
+		}
 	}
 	
 	tf->showBBox = obs_data_get_bool(settings, "show_bbox");
@@ -354,11 +371,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			continue;
 		}
 
-		if (!filter->yoloModel) {
-			obs_log(LOG_DEBUG, "[YOLO Detector] No yoloModel, skipping");
-			continue;
-		}
-
 		cv::Mat frame;
 		{
 			std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
@@ -378,6 +390,11 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		std::vector<Detection> newDetections;
 		try {
+			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
+			if (!filter->yoloModel) {
+				obs_log(LOG_DEBUG, "[YOLO Detector] No yoloModel, skipping");
+				continue;
+			}
 			newDetections = filter->yoloModel->inference(frame);
 		} catch (const std::exception& e) {
 			obs_log(LOG_ERROR, "[YOLO Detector] Inference error: %s", e.what());
