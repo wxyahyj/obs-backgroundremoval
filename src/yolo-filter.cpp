@@ -55,6 +55,14 @@ struct yolo_filter_data : public filter_data, public std::enable_shared_from_thi
     // 新增缺失的成员变量
     std::mutex modelMutex;
     gs_effect_t *effect = nullptr;
+    
+    // 添加缺失的frame尺寸成员变量
+    uint32_t frameWidth = 0;
+    uint32_t frameHeight = 0;
+    
+    // 添加stage surface尺寸跟踪
+    uint32_t stagesurfaceWidth = 0;
+    uint32_t stagesurfaceHeight = 0;
 
     ~yolo_filter_data() { obs_log(LOG_INFO, "YOLO filter destructor called"); }
 };
@@ -510,10 +518,9 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
                 uint32_t tex_width = gs_texture_get_width(texture);
                 uint32_t tex_height = gs_texture_get_height(texture);
                 
+                // Track stage surface size separately since we can't query it directly
                 // Check if stage surface needs to be recreated due to size mismatch
-                if (!tf->stagesurface || 
-                    gs_stage_surface_get_width(tf->stagesurface) != tex_width ||
-                    gs_stage_surface_get_height(tf->stagesurface) != tex_height) {
+                if (!tf->stagesurface || tf->stagesurfaceWidth != tex_width || tf->stagesurfaceHeight != tex_height) {
                     
                     // Release old stage surface if exists
                     if (tf->stagesurface) {
@@ -521,7 +528,9 @@ void yolo_filter_video_render(void *data, gs_effect_t *_effect)
                     }
                     
                     // Create new stage surface with correct size
-                     tf->stagesurface = gs_stagesurface_create(tex_width, tex_height, GS_RGBA);
+                    tf->stagesurface = gs_stagesurface_create(tex_width, tex_height, GS_RGBA);
+                    tf->stagesurfaceWidth = tex_width;
+                    tf->stagesurfaceHeight = tex_height;
                 }
                 
                 if (tf->stagesurface) {
