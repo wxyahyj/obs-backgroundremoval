@@ -338,6 +338,8 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
+	int logThrottleCounter = 0;
+	const int LOG_THROTTLE_INTERVAL = 10; // 每10次推理输出一次详细日志
 
 	while (filter->inferenceRunning) {
 		if (!filter->shouldInference) {
@@ -353,7 +355,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		}
 
 		if (!filter->yoloModel) {
-			obs_log(LOG_INFO, "[YOLO Detector] No yoloModel, skipping");
+			obs_log(LOG_DEBUG, "[YOLO Detector] No yoloModel, skipping");
 			continue;
 		}
 
@@ -361,14 +363,14 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
 			if (!lock.owns_lock()) {
-				obs_log(LOG_INFO, "[YOLO Detector] Failed to lock inputBGRALock, skipping");
+				obs_log(LOG_DEBUG, "[YOLO Detector] Failed to lock inputBGRALock, skipping");
 				continue;
 			}
 			if (filter->inputBGRA.empty()) {
-				obs_log(LOG_INFO, "[YOLO Detector] inputBGRA is empty, skipping");
+				obs_log(LOG_DEBUG, "[YOLO Detector] inputBGRA is empty, skipping");
 				continue;
 			}
-			obs_log(LOG_INFO, "[YOLO Detector] Got frame: %dx%d", filter->inputBGRA.cols, filter->inputBGRA.rows);
+			obs_log(LOG_DEBUG, "[YOLO Detector] Got frame: %dx%d", filter->inputBGRA.cols, filter->inputBGRA.rows);
 			frame = filter->inputBGRA.clone();
 		}
 
@@ -394,7 +396,16 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		filter->inferenceCount++;
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 
-		obs_log(LOG_INFO, "[YOLO Detector] Inference completed in %lld ms, detections: %zu", duration, newDetections.size());
+		// 日志节流：每10次推理输出一次详细日志
+		logThrottleCounter++;
+		if (logThrottleCounter >= LOG_THROTTLE_INTERVAL) {
+			obs_log(LOG_INFO, "[YOLO Detector] Inference completed in %lld ms, detections: %zu, avg time: %.2f ms", 
+				duration, newDetections.size(), filter->avgInferenceTimeMs);
+			logThrottleCounter = 0;
+		} else {
+			obs_log(LOG_DEBUG, "[YOLO Detector] Inference completed in %lld ms, detections: %zu", 
+				duration, newDetections.size());
+		}
 
 		if (filter->exportCoordinates && !newDetections.empty()) {
 			exportCoordinatesToFile(filter, frame.cols, frame.rows);

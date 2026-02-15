@@ -155,31 +155,15 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CurlClient OpenCV::opencv_co
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)
 
-# Check for CUDA Execution Provider with both uppercase and mixed case
 check_library_exists(
   onnxruntime::onnxruntime
   OrtSessionOptionsAppendExecutionProvider_CUDA
   onnxruntime_c_api.h
-  HAVE_ONNXRUNTIME_CUDA_EP_UPPER
+  HAVE_ONNXRUNTIME_CUDA_EP
 )
-
-check_library_exists(
-  onnxruntime::onnxruntime
-  OrtSessionOptionsAppendExecutionProvider_Cuda
-  onnxruntime_c_api.h
-  HAVE_ONNXRUNTIME_CUDA_EP_MIXED
-)
-
-# Set HAVE_ONNXRUNTIME_CUDA_EP if either version is found
-if(HAVE_ONNXRUNTIME_CUDA_EP_UPPER OR HAVE_ONNXRUNTIME_CUDA_EP_MIXED)
-  set(HAVE_ONNXRUNTIME_CUDA_EP TRUE)
+if(HAVE_ONNXRUNTIME_CUDA_EP)
   message(STATUS "ONNX Runtime CUDA Execution Provider found")
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_CUDA_EP)
-  if(HAVE_ONNXRUNTIME_CUDA_EP_UPPER)
-    message(STATUS "CUDA Execution Provider: using uppercase function name")
-  else()
-    message(STATUS "CUDA Execution Provider: using mixed case function name")
-  endif()
 endif()
 
 check_library_exists(

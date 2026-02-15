@@ -55,20 +55,16 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
         if (currentUseGPU == "cuda") {
+            obs_log(LOG_INFO, "[ModelYOLO] Attempting to enable CUDA execution provider...");
             try {
-                // Try with CUDA (uppercase) first
+                obs_log(LOG_INFO, "[ModelYOLO] Loading CUDA execution provider with device ID 0");
                 Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
-                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled");
+                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled successfully");
             } catch (const std::exception& e) {
-                try {
-                    // Try with Cuda (mixed case) as fallback
-                    Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Cuda(sessionOptions, 0));
-                    obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled (mixed case)");
-                } catch (const std::exception& e2) {
-                    obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e2.what());
-                    gpuFailed = true;
-                    currentUseGPU = "cpu";
-                }
+                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
+                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider fallback to CPU mode");
+                gpuFailed = true;
+                currentUseGPU = "cpu";
             }
         }
 #endif
@@ -327,11 +323,11 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        obs_log(LOG_INFO, "[ModelYOLO] Using numClasses from model: %d", numClasses_);
-        
-        obs_log(LOG_DEBUG, "[ModelYOLO] Output shape: [%lld, %lld, %lld]", 
-                outputShape[0], outputShape[1], outputShape[2]);
-        obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes, %d classes", numBoxes, numClasses_);
+        obs_log(LOG_DEBUG, "[ModelYOLO] Using numClasses from model: %d", numClasses_);
+	
+	obs_log(LOG_DEBUG, "[ModelYOLO] Output shape: [%lld, %lld, %lld]", 
+			outputShape[0], outputShape[1], outputShape[2]);
+	obs_log(LOG_DEBUG, "[ModelYOLO] Processing %d boxes, %d classes", numBoxes, numClasses_);
         
         cv::Size modelSize(inputWidth_, inputHeight_);
         cv::Size originalSize(input.cols, input.rows);
