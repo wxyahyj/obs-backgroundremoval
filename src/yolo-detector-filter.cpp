@@ -707,15 +707,18 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 	gs_technique_begin_pass(tech, 0);
 	gs_effect_set_vec4(colorParam, &color);
 
+	gs_ortho(0.0f, static_cast<float>(frameWidth), 0.0f, static_cast<float>(frameHeight), -100.0f, 100.0f);
+
+	float dotRadius = 5.0f;
+	const int dotSegments = 32;
 	gs_render_start(true);
-
-	gs_vertex2f(centerX - radius, centerY);
-	gs_vertex2f(centerX + radius, centerY);
-
-	gs_vertex2f(centerX, centerY - radius);
-	gs_vertex2f(centerX, centerY + radius);
-
-	gs_render_stop(GS_LINES);
+	for (int i = 0; i <= dotSegments; ++i) {
+		float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(dotSegments);
+		float x = centerX + dotRadius * cosf(angle);
+		float y = centerY + dotRadius * sinf(angle);
+		gs_vertex2f(x, y);
+	}
+	gs_render_stop(GS_LINESTRIP);
 
 	const int circleSegments = 64;
 	gs_render_start(true);
