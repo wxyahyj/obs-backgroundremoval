@@ -63,6 +63,7 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
             } catch (const std::exception& e) {
                 obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
                 obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider fallback to CPU mode");
+                obs_log(LOG_INFO, "[ModelYOLO] Possible reasons: missing cuDNN, incorrect CUDA version, or missing dependencies");
                 gpuFailed = true;
                 currentUseGPU = "cpu";
             }

@@ -723,7 +723,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	if (tf->frameCounter >= tf->inferenceIntervalFrames) {
 		tf->frameCounter = 0;
 		tf->shouldInference = true;
-		obs_log(LOG_INFO, "[YOLO Detector] Set shouldInference = true, isInferencing = %d, yoloModel valid = %d", 
+		obs_log(LOG_DEBUG, "[YOLO Detector] Set shouldInference = true, isInferencing = %d, yoloModel valid = %d", 
 			(int)tf->isInferencing, 
 			tf->yoloModel ? 1 : 0);
 	}

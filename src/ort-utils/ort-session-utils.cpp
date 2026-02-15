@@ -57,14 +57,24 @@ int createOrtSession(filter_data *tf)
 	try {
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
 		if (tf->useGPU == USEGPU_CUDA) {
-			obs_log(LOG_INFO, "Attempting to enable CUDA execution provider...");
+			static bool cuda_logged = false;
+			if (!cuda_logged) {
+				obs_log(LOG_INFO, "Attempting to enable CUDA execution provider...");
+				cuda_logged = true;
+			}
 			try {
-				obs_log(LOG_INFO, "Loading CUDA execution provider with device ID 0");
+				if (!cuda_logged) {
+					obs_log(LOG_INFO, "Loading CUDA execution provider with device ID 0");
+				}
 				Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
-				obs_log(LOG_INFO, "CUDA execution provider enabled successfully");
+				if (!cuda_logged) {
+					obs_log(LOG_INFO, "CUDA execution provider enabled successfully");
+				}
 			} catch (const std::exception& e) {
 				obs_log(LOG_WARNING, "Failed to enable CUDA: %s, falling back to CPU", e.what());
-				obs_log(LOG_INFO, "CUDA execution provider fallback to CPU mode");
+				if (!cuda_logged) {
+					obs_log(LOG_INFO, "CUDA execution provider fallback to CPU mode");
+				}
 				tf->useGPU = USEGPU_CPU;
 				sessionOptions.SetInterOpNumThreads(tf->numThreads);
 				sessionOptions.SetIntraOpNumThreads(tf->numThreads);
