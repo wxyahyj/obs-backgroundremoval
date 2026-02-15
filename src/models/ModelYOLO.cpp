@@ -271,7 +271,6 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
         
         // 添加详细的错误处理
         Ort::RunOptions runOptions;
-        runOptions.SetRunLogLevel(ORT_LOGGING_LEVEL_ERROR);
         
         auto outputTensors = session_->Run(
             runOptions,
