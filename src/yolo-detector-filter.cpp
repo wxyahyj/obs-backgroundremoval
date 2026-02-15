@@ -27,11 +27,11 @@
 #include "consts.h"
 #include "update-checker/update-checker.h"
 
-struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this&lt;yolo_detector_filter&gt; {
-    std::unique_ptr&lt;ModelYOLO&gt; yoloModel;
+struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
+    std::unique_ptr<ModelYOLO> yoloModel;
     ModelYOLO::Version modelVersion;
 
-    std::vector&lt;Detection&gt; detections;
+    std::vector<Detection> detections;
     std::mutex detectionsMutex;
 
     std::string modelPath;
@@ -53,15 +53,15 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
     std::string coordinateOutputPath;
 
     std::thread inferenceThread;
-    std::atomic&lt;bool&gt; inferenceRunning;
-    std::atomic&lt;bool&gt; shouldInference;
+    std::atomic<bool> inferenceRunning;
+    std::atomic<bool> shouldInference;
     int frameCounter;
 
     uint64_t totalFrames;
     uint64_t inferenceCount;
     double avgInferenceTimeMs;
 
-    std::atomic&lt;bool&gt; isInferencing;
+    std::atomic<bool> isInferencing;
 
     gs_effect_t *solidEffect;
 

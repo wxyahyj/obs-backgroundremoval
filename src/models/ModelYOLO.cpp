@@ -29,7 +29,7 @@ ModelYOLO::~ModelYOLO() {
     obs_log(LOG_INFO, "[ModelYOLO] Destroyed");
 }
 
-void ModelYOLO::loadModel(const std::string&amp; modelPath, const std::string&amp; useGPU, int numThreads, int inputResolution) {
+void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGPU, int numThreads, int inputResolution) {
     obs_log(LOG_INFO, "[ModelYOLO] Loading model: %s", modelPath.c_str());
     
     try {
