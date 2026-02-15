@@ -32,13 +32,16 @@ ModelYOLO::~ModelYOLO() {
 void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGPU, int numThreads, int inputResolution) {
     obs_log(LOG_INFO, "[ModelYOLO] Loading model: %s", modelPath.c_str());
     
+    std::string currentUseGPU = useGPU;
+    bool gpuFailed = false;
+    
     try {
         Ort::SessionOptions sessionOptions;
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         
-        obs_log(LOG_INFO, "[ModelYOLO] Using device: %s", useGPU.c_str());
+        obs_log(LOG_INFO, "[ModelYOLO] Using device: %s", currentUseGPU.c_str());
         
-        if (useGPU != "cpu") {
+        if (currentUseGPU != "cpu") {
             sessionOptions.DisableMemPattern();
             sessionOptions.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
         } else {
@@ -47,23 +50,47 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         }
         
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
-        if (useGPU == "cuda") {
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
-            obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled");
+        if (currentUseGPU == "cuda") {
+            try {
+                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
+                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled");
+            } catch (const std::exception& e) {
+                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
+                gpuFailed = true;
+                currentUseGPU = "cpu";
+            }
         }
 #endif
 #ifdef HAVE_ONNXRUNTIME_ROCM_EP
-        if (useGPU == "rocm") {
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_ROCM(sessionOptions, 0));
-            obs_log(LOG_INFO, "[ModelYOLO] ROCM execution provider enabled");
+        if (currentUseGPU == "rocm" && !gpuFailed) {
+            try {
+                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_ROCM(sessionOptions, 0));
+                obs_log(LOG_INFO, "[ModelYOLO] ROCM execution provider enabled");
+            } catch (const std::exception& e) {
+                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable ROCM: %s, falling back to CPU", e.what());
+                gpuFailed = true;
+                currentUseGPU = "cpu";
+            }
         }
 #endif
 #ifdef HAVE_ONNXRUNTIME_TENSORRT_EP
-        if (useGPU == "tensorrt") {
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Tensorrt(sessionOptions, 0));
-            obs_log(LOG_INFO, "[ModelYOLO] TensorRT execution provider enabled");
+        if (currentUseGPU == "tensorrt" && !gpuFailed) {
+            try {
+                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Tensorrt(sessionOptions, 0));
+                obs_log(LOG_INFO, "[ModelYOLO] TensorRT execution provider enabled");
+            } catch (const std::exception& e) {
+                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable TensorRT: %s, falling back to CPU", e.what());
+                gpuFailed = true;
+                currentUseGPU = "cpu";
+            }
         }
 #endif
+        
+        if (gpuFailed) {
+            sessionOptions.SetInterOpNumThreads(numThreads);
+            sessionOptions.SetIntraOpNumThreads(numThreads);
+            obs_log(LOG_INFO, "[ModelYOLO] Switched to CPU mode");
+        }
         
 #if _WIN32
         std::wstring modelPathW(modelPath.begin(), modelPath.end());
@@ -97,9 +124,12 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         
         if (!outputDims_.empty()) {
             auto shape = outputDims_[0];
-            if (shape.size() >= 3) {
+            if (version_ == Version::YOLOv5 && shape.size() >= 3) {
                 int lastDim = static_cast<int>(shape[2]);
                 numClasses_ = lastDim - 5;
+            } else if (shape.size() >= 3) {
+                int elementsDim = static_cast<int>(shape[1]);
+                numClasses_ = elementsDim - 4;
             }
         }
         
@@ -108,6 +138,7 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         obs_log(LOG_INFO, "[ModelYOLO] Model loaded successfully");
         obs_log(LOG_INFO, "  Input size: %dx%d", inputWidth_, inputHeight_);
         obs_log(LOG_INFO, "  Num classes: %d", numClasses_);
+        obs_log(LOG_INFO, "  Device: %s", currentUseGPU.c_str());
         
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Failed to load model: %s", e.what());

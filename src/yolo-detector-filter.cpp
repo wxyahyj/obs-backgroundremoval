@@ -52,6 +52,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
     bool exportCoordinates;
     std::string coordinateOutputPath;
 
+    bool showFOV;
+    int fovRadius;
+    uint32_t fovColor;
+
     std::thread inferenceThread;
     std::atomic<bool> inferenceRunning;
     std::atomic<bool> shouldInference;
@@ -70,6 +74,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 void inferenceThreadWorker(yolo_detector_filter *filter);
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
+static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 
@@ -142,6 +147,12 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
     obs_properties_add_color(props, "bbox_color", obs_module_text("BoxColor"));
 
+    obs_properties_add_group(props, "fov_group", "FOV Settings", OBS_GROUP_NORMAL, nullptr);
+
+    obs_properties_add_bool(props, "show_fov", "Show FOV");
+    obs_properties_add_int_slider(props, "fov_radius", "FOV Radius", 50, 500, 10);
+    obs_properties_add_color(props, "fov_color", "FOV Color");
+
     obs_properties_add_group(props, "advanced_group", obs_module_text("AdvancedConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
     obs_properties_add_bool(props, "export_coordinates", obs_module_text("ExportCoordinates"));
@@ -174,6 +185,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_bool(settings, "show_confidence", true);
     obs_data_set_default_int(settings, "bbox_line_width", 2);
     obs_data_set_default_int(settings, "bbox_color", 0xFF00FF00);
+    obs_data_set_default_bool(settings, "show_fov", false);
+    obs_data_set_default_int(settings, "fov_radius", 200);
+    obs_data_set_default_int(settings, "fov_color", 0xFFFF0000);
     obs_data_set_default_bool(settings, "export_coordinates", false);
     obs_data_set_default_string(settings, "coordinate_output_path", "");
 }
@@ -240,6 +254,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
     tf->showConfidence = obs_data_get_bool(settings, "show_confidence");
     tf->bboxLineWidth = (int)obs_data_get_int(settings, "bbox_line_width");
     tf->bboxColor = (uint32_t)obs_data_get_int(settings, "bbox_color");
+    
+    tf->showFOV = obs_data_get_bool(settings, "show_fov");
+    tf->fovRadius = (int)obs_data_get_int(settings, "fov_radius");
+    tf->fovColor = (uint32_t)obs_data_get_int(settings, "fov_color");
     
     tf->exportCoordinates = obs_data_get_bool(settings, "export_coordinates");
     tf->coordinateOutputPath = obs_data_get_string(settings, "coordinate_output_path");
@@ -345,7 +363,11 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
         float h = det.height * frameHeight;
 
         struct vec4 color;
-        vec4_set(&color, 0.0f, 1.0f, 0.0f, 1.0f);
+        float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
+        float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
+        float b = (filter->bboxColor & 0xFF) / 255.0f;
+        float a = ((filter->bboxColor >> 24) & 0xFF) / 255.0f;
+        vec4_set(&color, r, g, b, a);
         gs_effect_set_vec4(colorParam, &color);
 
         gs_render_start(true);
@@ -364,6 +386,55 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 
         gs_render_stop(GS_LINES);
     }
+
+    gs_technique_end_pass(tech);
+    gs_technique_end(tech);
+}
+
+static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+{
+    if (!filter->showFOV) {
+        return;
+    }
+
+    gs_effect_t *solid = filter->solidEffect;
+    gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+    gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+    float centerX = frameWidth / 2.0f;
+    float centerY = frameHeight / 2.0f;
+    float radius = static_cast<float>(filter->fovRadius);
+
+    struct vec4 color;
+    float r = ((filter->fovColor >> 16) & 0xFF) / 255.0f;
+    float g = ((filter->fovColor >> 8) & 0xFF) / 255.0f;
+    float b = (filter->fovColor & 0xFF) / 255.0f;
+    float a = ((filter->fovColor >> 24) & 0xFF) / 255.0f;
+    vec4_set(&color, r, g, b, a);
+
+    gs_technique_begin(tech);
+    gs_technique_begin_pass(tech, 0);
+    gs_effect_set_vec4(colorParam, &color);
+
+    gs_render_start(true);
+
+    gs_vertex2f(centerX - radius, centerY);
+    gs_vertex2f(centerX + radius, centerY);
+
+    gs_vertex2f(centerX, centerY - radius);
+    gs_vertex2f(centerX, centerY + radius);
+
+    gs_render_stop(GS_LINES);
+
+    const int circleSegments = 64;
+    gs_render_start(true);
+    for (int i = 0; i <= circleSegments; ++i) {
+        float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(circleSegments);
+        float x = centerX + radius * cosf(angle);
+        float y = centerY + radius * sinf(angle);
+        gs_vertex2f(x, y);
+    }
+    gs_render_stop(GS_LINESTRIP);
 
     gs_technique_end_pass(tech);
     gs_technique_end(tech);
@@ -579,9 +650,13 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *effect)
 
     obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 
-    gs_blend_state_pop();
-
     if (tf->showBBox) {
         renderDetectionBoxes(tf.get(), width, height);
     }
+
+    if (tf->showFOV) {
+        renderFOV(tf.get(), width, height);
+    }
+
+    gs_blend_state_pop();
 }
