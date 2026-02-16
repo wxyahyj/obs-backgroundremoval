@@ -1120,8 +1120,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		// 使用标准 OBS 滤镜渲染流程
 		if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
 			obs_log(LOG_INFO, "[YOLO] obs_source_process_filter_begin successful");
-			// 获取基础效果
-			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+			// 获取叠加效果（更适合 overlay 操作）
+			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_OVERLAY);
 			if (!effect) {
 				obs_log(LOG_ERROR, "[YOLO] Failed to get base effect");
 				obs_source_process_filter_end(tf->source, nullptr, width, height);
