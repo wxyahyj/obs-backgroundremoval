@@ -691,13 +691,10 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
-	std::vector<Detection> detectionsCopy;
-	{
-		std::lock_guard<std::mutex> lock(filter->detectionsMutex);
-		if (filter->detections.empty()) {
-			return;
-		}
-		detectionsCopy = filter->detections;
+	std::lock_guard<std::mutex> lock(filter->detectionsMutex);
+
+	if (filter->detections.empty()) {
+		return;
 	}
 
 	gs_effect_t *solid = filter->solidEffect;
@@ -707,7 +704,7 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 	gs_technique_begin(tech);
 	gs_technique_begin_pass(tech, 0);
 
-	for (const auto& det : detectionsCopy) {
+	for (const auto& det : filter->detections) {
 		float x = det.x * frameWidth;
 		float y = det.y * frameHeight;
 		float w = det.width * frameWidth;
@@ -722,19 +719,14 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 		gs_effect_set_vec4(colorParam, &color);
 
 		gs_render_start(true);
-
 		gs_vertex2f(x, y);
 		gs_vertex2f(x + w, y);
-
 		gs_vertex2f(x + w, y);
 		gs_vertex2f(x + w, y + h);
-
 		gs_vertex2f(x + w, y + h);
 		gs_vertex2f(x, y + h);
-
 		gs_vertex2f(x, y + h);
 		gs_vertex2f(x, y);
-
 		gs_render_stop(GS_LINES);
 	}
 
@@ -809,8 +801,28 @@ static void renderLabels(yolo_detector_filter *filter, uint32_t frameWidth, uint
 		float h = det.height * frameHeight;
 
 		// 绘制标签背景
-		// 由于OBS API版本不兼容，暂时跳过标签背景绘制
-		// 建议使用OBS的文本渲染API来绘制标签和置信度
+		gs_effect_t *solid = filter->solidEffect;
+		gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+		gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+		struct vec4 bgColor;
+		vec4_set(&bgColor, 0.0f, 0.0f, 0.0f, 0.8f);
+
+		gs_technique_begin(tech);
+		gs_technique_begin_pass(tech, 0);
+		gs_effect_set_vec4(colorParam, &bgColor);
+
+		gs_render_start(true);
+		gs_vertex2f(x, y - 20);
+		gs_vertex2f(x + w, y - 20);
+		gs_vertex2f(x, y);
+		gs_vertex2f(x + w, y - 20);
+		gs_vertex2f(x + w, y);
+		gs_vertex2f(x, y);
+		gs_render_stop(GS_TRIANGLES);
+
+		gs_technique_end_pass(tech);
+		gs_technique_end(tech);
 
 		// 绘制标签文本
 		// 这里需要使用OBS的文本渲染API，或者使用OpenCV绘制文本
@@ -1154,11 +1166,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
-	}
-
-	// 绘制标签和置信度
-	if (tf->showLabel || tf->showConfidence) {
-		renderLabels(tf.get(), width, height);
 	}
 
 	gs_blend_state_pop();
