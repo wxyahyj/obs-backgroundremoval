@@ -809,26 +809,8 @@ static void renderLabels(yolo_detector_filter *filter, uint32_t frameWidth, uint
 		float h = det.height * frameHeight;
 
 		// 绘制标签背景
-		gs_effect_t *solid = filter->solidEffect;
-		gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
-		gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
-
-		struct vec4 bgColor;
-		vec4_set(&bgColor, 0.0f, 0.0f, 0.0f, 0.8f);
-
-		gs_technique_begin(tech);
-		gs_technique_begin_pass(tech, 0);
-		gs_effect_set_vec4(colorParam, &bgColor);
-
-		gs_render_start(true);
-		gs_vertex2f(x, y - 20);
-		gs_vertex2f(x + w, y - 20);
-		gs_vertex2f(x + w, y);
-		gs_vertex2f(x, y);
-		gs_render_stop(GS_QUADS);
-
-		gs_technique_end_pass(tech);
-		gs_technique_end(tech);
+		// 由于OBS API版本不兼容，暂时跳过标签背景绘制
+		// 建议使用OBS的文本渲染API来绘制标签和置信度
 
 		// 绘制标签文本
 		// 这里需要使用OBS的文本渲染API，或者使用OpenCV绘制文本
