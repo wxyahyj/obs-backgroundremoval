@@ -25,6 +25,10 @@ struct filter_data : public ORTModelData, public std::enable_shared_from_this<fi
 	gs_texrender_t *texrender;
 	gs_stagesurf_t *stagesurface;
 
+	gs_texture_t *overlayTexture;
+	uint32_t overlayWidth;
+	uint32_t overlayHeight;
+
 	cv::Mat inputBGRA;
 
 	std::atomic<bool> isDisabled{false};

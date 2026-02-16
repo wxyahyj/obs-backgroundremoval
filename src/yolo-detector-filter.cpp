@@ -759,6 +759,9 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->source = source;
 		instance->texrender = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
 		instance->stagesurface = nullptr;
+		instance->overlayTexture = nullptr;
+		instance->overlayWidth = 0;
+		instance->overlayHeight = 0;
 
 		// Initialize ORT environment
 		std::string instanceName{"yolo-detector-inference"};
@@ -838,6 +841,10 @@ void yolo_detector_filter_destroy(void *data)
 	if (tf->stagesurface) {
 		gs_stagesurface_destroy(tf->stagesurface);
 		tf->stagesurface = nullptr;
+	}
+	if (tf->overlayTexture) {
+		gs_texture_destroy(tf->overlayTexture);
+		tf->overlayTexture = nullptr;
 	}
 	obs_leave_graphics();
 
@@ -1005,13 +1012,12 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			return;
 		}
 
-		cv::Mat outputImage = originalImage.clone();
+		// 创建完全透明的 overlay 图像（全 0 = 完全透明）
+		cv::Mat outputImage(height, width, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 
 		// 绘制BBox
 		if (tf->showBBox) {
 			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-			size_t detectionCount = tf->detections.size();
-			obs_log(LOG_INFO, "[YOLO] Drawing BBox: %zu detections found", detectionCount);
 			if (!tf->detections.empty()) {
 				for (size_t i = 0; i < tf->detections.size(); ++i) {
 					const auto& det = tf->detections[i];
@@ -1020,14 +1026,12 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					int w = static_cast<int>(det.width * width);
 					int h = static_cast<int>(det.height * height);
 
-					obs_log(LOG_INFO, "[YOLO] Detection %zu: x=%d, y=%d, w=%d, h=%d, conf=%.2f", 
-						i, x, y, w, h, det.confidence);
-
-					// OBS 颜色是 0xAARRGGBB，OpenCV 用 BGR
+					// OBS 颜色是 0xAARRGGBB，OpenCV 用 BGRA
 					cv::Scalar bboxColor(
-						tf->bboxColor & 0xFF,          // B
-						(tf->bboxColor >> 8) & 0xFF,   // G
-						(tf->bboxColor >> 16) & 0xFF   // R
+						tf->bboxColor & 0xFF,                    // B
+						(tf->bboxColor >> 8) & 0xFF,             // G
+						(tf->bboxColor >> 16) & 0xFF,            // R
+						(tf->bboxColor >> 24) & 0xFF             // A
 					);
 
 					cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
@@ -1066,15 +1070,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 						cv::putText(outputImage,
 							labelText,
 							cv::Point(x, textY),
-							fontFace, fontScale, cv::Scalar(255, 255, 255),
+							fontFace, fontScale, cv::Scalar(255, 255, 255, 255),
 							thickness);
 					}
 				}
-			} else {
-				obs_log(LOG_INFO, "[YOLO] No detections to draw");
 			}
-		} else {
-			obs_log(LOG_INFO, "[YOLO] BBox rendering disabled");
 		}
 
 		// 绘制FOV
@@ -1082,18 +1082,16 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			int centerX = width / 2;
 			int centerY = height / 2;
 			int radius = tf->fovRadius;
-			obs_log(LOG_INFO, "[YOLO] Drawing FOV: center=(%d,%d), radius=%d", centerX, centerY, radius);
 
 			cv::Scalar fovColor(
-				tf->fovColor & 0xFF,          // B
-				(tf->fovColor >> 8) & 0xFF,   // G
-				(tf->fovColor >> 16) & 0xFF   // R
+				tf->fovColor & 0xFF,                    // B
+				(tf->fovColor >> 8) & 0xFF,             // G
+				(tf->fovColor >> 16) & 0xFF,            // R
+				(tf->fovColor >> 24) & 0xFF             // A
 			);
 
 			cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
 			cv::circle(outputImage, cv::Point(centerX, centerY), 1, fovColor, -1);
-		} else {
-			obs_log(LOG_INFO, "[YOLO] FOV rendering disabled");
 		}
 
 		// 确保数据连续
@@ -1101,12 +1099,25 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			outputImage = outputImage.clone();
 		}
 
-		// 创建纹理用于绘制
-		obs_log(LOG_INFO, "[YOLO] Starting overlay rendering: width=%d, height=%d", width, height);
+		// 纹理缓存：只在尺寸变化时才重新创建纹理
 		gs_texture_t *renderTexture = nullptr;
-		const uint8_t *data_ptr = outputImage.data;
+		bool needCreateTexture = false;
+
 		obs_enter_graphics();
-		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, GS_DYNAMIC);
+		if (!tf->overlayTexture || tf->overlayWidth != width || tf->overlayHeight != height) {
+			// 需要创建新纹理
+			if (tf->overlayTexture) {
+				gs_texture_destroy(tf->overlayTexture);
+			}
+			const uint8_t *data_ptr = outputImage.data;
+			tf->overlayTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, GS_DYNAMIC);
+			tf->overlayWidth = width;
+			tf->overlayHeight = height;
+		} else {
+			// 更新现有纹理数据
+			gs_texture_set_image(tf->overlayTexture, outputImage.data, width * 4, false);
+		}
+		renderTexture = tf->overlayTexture;
 		obs_leave_graphics();
 
 		if (!renderTexture) {
@@ -1115,69 +1126,36 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			return;
 		}
 
-		obs_log(LOG_INFO, "[YOLO] Texture created successfully, starting OBS filter process");
-
-		// 使用新的直接叠加渲染方案
+		// 使用滤镜系统正确叠加 overlay - 不要双重渲染
 		if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
-			obs_log(LOG_INFO, "[YOLO] obs_source_process_filter_begin successful");
-			
-			// 第一步：先渲染原始源画面
-			obs_log(LOG_INFO, "[YOLO] Rendering original source");
-			obs_source_video_render(target);
-			
-			// 第二步：叠加 overlay
-			obs_log(LOG_INFO, "[YOLO] Rendering overlay");
-			
 			// 获取基础效果
 			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 			if (effect) {
-				obs_log(LOG_INFO, "[YOLO] Got base effect successfully");
-
 				gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
 				if (param) {
-					obs_log(LOG_INFO, "[YOLO] Got 'image' parameter successfully");
 					// 设置纹理参数
 					gs_effect_set_texture(param, renderTexture);
-					obs_log(LOG_INFO, "[YOLO] Set texture parameter successfully");
 
-					// 保存并重置混合状态
+					// 重置混合状态为默认（OBS 默认应该已经是正确的 alpha 混合）
 					gs_blend_state_push();
 					gs_reset_blend_state();
-					obs_log(LOG_INFO, "[YOLO] Reset blend state to default");
 
 					// 执行渲染
-					int drawCount = 0;
 					while (gs_effect_loop(effect, "Draw")) {
-						// 绘制 overlay
 						gs_draw_sprite(nullptr, 0, width, height);
-						drawCount++;
 					}
-					obs_log(LOG_INFO, "[YOLO] Overlay render executed %d times", drawCount);
 
 					// 恢复混合状态
 					gs_blend_state_pop();
-					obs_log(LOG_INFO, "[YOLO] Restored blend state");
-				} else {
-					obs_log(LOG_ERROR, "[YOLO] Failed to get 'image' parameter from effect");
 				}
-			} else {
-				obs_log(LOG_ERROR, "[YOLO] Failed to get base effect");
 			}
 
-			// 结束滤镜处理
-			obs_source_process_filter_end(tf->source, nullptr, width, height);
-			obs_log(LOG_INFO, "[YOLO] obs_source_process_filter_end completed");
+			// 结束滤镜处理 - 传入正确的 effect 参数！
+			obs_source_process_filter_end(tf->source, effect, width, height);
 		} else {
 			// 如果无法开始滤镜处理，直接渲染原始画面
-			obs_log(LOG_WARNING, "[YOLO] obs_source_process_filter_begin failed, skipping filter");
 			obs_source_skip_video_filter(tf->source);
 		}
-
-		// 清理纹理资源
-		obs_enter_graphics();
-		gs_texture_destroy(renderTexture);
-		obs_leave_graphics();
-		obs_log(LOG_INFO, "[YOLO] Texture destroyed, overlay rendering completed");
 	}
 
 #ifdef _WIN32
