@@ -1094,13 +1094,18 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		gs_texture_t *renderTexture = nullptr;
 		const uint8_t *data_ptr = outputImage.data;
 		obs_enter_graphics();
-		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, 0);
+		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, GS_DYNAMIC);
 		obs_leave_graphics();
 
+		if (!renderTexture) {
+			obs_log(LOG_ERROR, "[YOLO] Failed to create overlay texture");
+		}
+
 		if (renderTexture) {
-			// 正确做法：直接用 OBS 传给我们的 _effect！
+			// 终极简单版本：直接用 OBS 的标准滤镜流程，正确使用 effect！
 			if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
-				gs_eparam_t *param = gs_effect_get_param_by_name(_effect, "image");
+				gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+				gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
 
 				if (param) {
 					gs_effect_set_texture(param, renderTexture);
@@ -1108,14 +1113,14 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					gs_blend_state_push();
 					gs_reset_blend_state();
 
-					while (gs_effect_loop(_effect, "Draw")) {
-						gs_draw_sprite(nullptr, 0, width, height);
+					while (gs_effect_loop(effect, "Draw")) {
+						gs_draw_sprite(renderTexture, 0, width, height);
 					}
 
 					gs_blend_state_pop();
 				}
 
-				obs_source_process_filter_end(tf->source, _effect, width, height);
+				obs_source_process_filter_end(tf->source, effect, width, height);
 			} else {
 				obs_source_skip_video_filter(tf->source);
 			}
