@@ -1014,9 +1014,9 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					int h = static_cast<int>(det.height * height);
 
 					cv::Scalar bboxColor(
-						(tf->bboxColor >> 16) & 0xFF,
-						(tf->bboxColor >> 8) & 0xFF,
-						tf->bboxColor & 0xFF
+						tf->bboxColor & 0xFF,          // B - 正确！
+						(tf->bboxColor >> 8) & 0xFF,   // G
+						(tf->bboxColor >> 16) & 0xFF   // R
 					);
 
 					cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
@@ -1070,9 +1070,9 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			int radius = tf->fovRadius;
 
 			cv::Scalar fovColor(
-				(tf->fovColor >> 16) & 0xFF,
-				(tf->fovColor >> 8) & 0xFF,
-				tf->fovColor & 0xFF
+				tf->fovColor & 0xFF,          // B - 正确！
+				(tf->fovColor >> 8) & 0xFF,   // G
+				(tf->fovColor >> 16) & 0xFF   // R
 			);
 
 			cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
@@ -1081,8 +1081,21 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 
 	// 第三步：创建渲染纹理
+	// 确保 cv::Mat 数据是连续的
+	if (!outputImage.isContinuous()) {
+		outputImage = outputImage.clone();
+	}
+
+	// 正确传递数据指针
+	const uint8_t *data_ptr = outputImage.data;
 	obs_enter_graphics();
-	renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
+	renderTexture = gs_texture_create(
+		width, height,
+		GS_BGRA,
+		1,
+		&data_ptr,    // ✅ 传递指针的地址
+		0
+	);
 	obs_leave_graphics();
 
 	// 第四步：安全的 begin/end 渲染流程
@@ -1107,25 +1120,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		} else {
 			obs_source_video_render(target);
 		}
-
-		// ===== 强制画一条红色对角线 =====
-		gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
-		gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
-		gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
-
-		struct vec4 red = {1.0f, 0.0f, 0.0f, 1.0f};
-		gs_effect_set_vec4(color, &red);
-
-		gs_technique_begin(tech);
-		gs_technique_begin_pass(tech, 0);
-
-		gs_render_start(true);
-		gs_vertex2f(0.0f, 0.0f);
-		gs_vertex2f((float)width, (float)height);
-		gs_render_stop(GS_LINES);
-
-		gs_technique_end_pass(tech);
-		gs_technique_end(tech);
 
 		gs_blend_state_pop();
 		obs_source_process_filter_end(tf->source, effect, width, height);
