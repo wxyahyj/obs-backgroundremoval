@@ -1108,6 +1108,25 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			obs_source_video_render(target);
 		}
 
+		// ===== 强制画一条红色对角线 =====
+		gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+		gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+		gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
+
+		struct vec4 red = {1.0f, 0.0f, 0.0f, 1.0f};
+		gs_effect_set_vec4(color, &red);
+
+		gs_technique_begin(tech);
+		gs_technique_begin_pass(tech, 0);
+
+		gs_render_start(true);
+		gs_vertex2f(0.0f, 0.0f);
+		gs_vertex2f((float)width, (float)height);
+		gs_render_stop(GS_LINES);
+
+		gs_technique_end_pass(tech);
+		gs_technique_end(tech);
+
 		gs_blend_state_pop();
 		obs_source_process_filter_end(tf->source, effect, width, height);
 	}
