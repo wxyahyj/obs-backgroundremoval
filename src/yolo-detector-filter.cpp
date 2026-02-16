@@ -1146,7 +1146,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 	}
 
-	// 开始滤镜处理 - 确保源画面绝对正常
+	// 开始滤镜处理
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
 		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
@@ -1157,16 +1157,122 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
-	// 先渲染源画面，保证不会黑屏
-	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+	// 检查是否有 originalImage - 如果有，就在上面绘制所有内容
+	bool needRenderCustom = (tf->showBBox || tf->showFOV || tf->showLabel || tf->showConfidence);
+	bool customRenderSuccess = false;
 
-	// 绘制检测框和 FOV
-	if (tf->showBBox) {
-		renderDetectionBoxes(tf.get(), width, height);
+	if (needRenderCustom && !originalImage.empty()) {
+		// 复制一份用于绘制
+		cv::Mat finalImage = originalImage.clone();
+
+		std::vector<Detection> detectionsCopy;
+		{
+			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+			detectionsCopy = tf->detections;
+		}
+
+		// 1. 绘制检测框
+		if (tf->showBBox) {
+			int lineWidth = tf->bboxLineWidth;
+			float r = ((tf->bboxColor >> 16) & 0xFF) / 255.0f;
+			float g = ((tf->bboxColor >> 8) & 0xFF) / 255.0f;
+			float b = (tf->bboxColor & 0xFF) / 255.0f;
+			cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
+
+			for (const auto& det : detectionsCopy) {
+				int x = static_cast<int>(det.x * originalImage.cols);
+				int y = static_cast<int>(det.y * originalImage.rows);
+				int w = static_cast<int>(det.width * originalImage.cols);
+				int h = static_cast<int>(det.height * originalImage.rows);
+				
+				cv::rectangle(finalImage, 
+					cv::Point(x, y), 
+					cv::Point(x + w, y + h), 
+					bboxColor, 
+					lineWidth);
+			}
+		}
+
+		// 2. 绘制 FOV
+		if (tf->showFOV) {
+			float fovCenterX = originalImage.cols / 2.0f;
+			float fovCenterY = originalImage.rows / 2.0f;
+			float fovRadius = static_cast<float>(tf->fovRadius);
+			float crossLineLength = fovRadius * 0.3f;
+			
+			float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
+			float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
+			float b = (tf->fovColor & 0xFF) / 255.0f;
+			cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
+
+			// 绘制缩小的十字线
+			cv::line(finalImage, 
+				cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
+				cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
+				fovColor, 2);
+			cv::line(finalImage, 
+				cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
+				cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
+				fovColor, 2);
+
+			// 绘制圆
+			cv::circle(finalImage, 
+				cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
+				static_cast<int>(fovRadius),
+				fovColor, 2);
+		}
+
+		// 3. 绘制标签和置信度
+		if (tf->showLabel || tf->showConfidence) {
+			int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+			double fontScale = 0.5;
+			int thickness = 2;
+			int baseline = 0;
+			
+			for (const auto& det : detectionsCopy) {
+				int x = static_cast<int>(det.x * originalImage.cols);
+				int y = static_cast<int>(det.y * originalImage.rows);
+				
+				// 构建标签文本
+				char labelText[64];
+				snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
+				
+				// 获取文本大小
+				cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
+				
+				// 绘制标签背景
+				cv::Point textOrg(x, y - 5);
+				cv::rectangle(finalImage, 
+					cv::Point(textOrg.x, textOrg.y - textSize.height - 5),
+					cv::Point(textOrg.x + textSize.width + 10, textOrg.y + baseline),
+					cv::Scalar(0, 0, 0, 200),
+					-1);
+				
+				// 绘制文本
+				cv::putText(finalImage, labelText, 
+					cv::Point(textOrg.x + 5, textOrg.y),
+					fontFace, fontScale, 
+					cv::Scalar(0, 255, 0, 255), 
+					thickness);
+			}
+		}
+
+		// 现在渲染这个完整的图像
+		obs_enter_graphics();
+		gs_texture_t *tempTexture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, 0);
+		if (tempTexture) {
+			gs_texture_set_image(tempTexture, finalImage.data, static_cast<uint32_t>(finalImage.step), false);
+			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
+			gs_draw_sprite(tempTexture, 0, 0, 0);
+			gs_texture_destroy(tempTexture);
+			customRenderSuccess = true;
+		}
+		obs_leave_graphics();
 	}
 
-	if (tf->showFOV) {
-		renderFOV(tf.get(), width, height);
+	// 如果没有自定义渲染成功，就渲染默认源画面
+	if (!customRenderSuccess) {
+		obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 	}
 
 	gs_blend_state_pop();
@@ -1195,6 +1301,60 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
 				detectionCount = tf->detections.size();
 				detectionsCopy = tf->detections;
+			}
+
+			// 如果需要显示检测框
+			if (tf->showBBox) {
+				int lineWidth = tf->bboxLineWidth;
+				float r = ((tf->bboxColor >> 16) & 0xFF) / 255.0f;
+				float g = ((tf->bboxColor >> 8) & 0xFF) / 255.0f;
+				float b = (tf->bboxColor & 0xFF) / 255.0f;
+				cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
+
+				for (const auto& det : detectionsCopy) {
+					int x = static_cast<int>(det.x * originalImage.cols) - cropX;
+					int y = static_cast<int>(det.y * originalImage.rows) - cropY;
+					int w = static_cast<int>(det.width * originalImage.cols);
+					int h = static_cast<int>(det.height * originalImage.rows);
+					
+					// 确保在裁剪区域内
+					if (x + w >= 0 && y + h >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
+						cv::rectangle(croppedFrame, 
+							cv::Point(x, y), 
+							cv::Point(x + w, y + h), 
+							bboxColor, 
+							lineWidth);
+					}
+				}
+			}
+
+			// 如果需要显示 FOV
+			if (tf->showFOV) {
+				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
+				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
+				float fovRadius = static_cast<float>(tf->fovRadius);
+				float crossLineLength = fovRadius * 0.3f;
+				
+				float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
+				float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
+				float b = (tf->fovColor & 0xFF) / 255.0f;
+				cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
+
+				// 绘制缩小的十字线（只有半径的30%）
+				cv::line(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
+					cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
+					fovColor, 2);
+				cv::line(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
+					fovColor, 2);
+
+				// 绘制圆
+				cv::circle(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
+					static_cast<int>(fovRadius),
+					fovColor, 2);
 			}
 
 			// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
