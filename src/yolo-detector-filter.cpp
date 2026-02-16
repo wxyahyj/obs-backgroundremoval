@@ -1114,7 +1114,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 
 	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_SRC_ALPHA, GS_BLEND_ONE_MINUS_SRC_ALPHA);
+	gs_blend_function(GS_BLEND_NORMAL);
 
 	// 先渲染源画面
 	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
