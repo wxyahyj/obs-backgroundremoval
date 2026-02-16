@@ -12,7 +12,6 @@
 struct MouseControllerConfig {
     bool enableMouseControl;
     int hotkeyVirtualKey;
-    int moveDurationMs;
     int fovRadiusPixels;
     float sourceCanvasPosX;
     float sourceCanvasPosY;
@@ -20,12 +19,13 @@ struct MouseControllerConfig {
     float sourceCanvasScaleY;
     int sourceWidth;
     int sourceHeight;
-    int algorithmType;
     float pidP;
     float pidI;
     float pidD;
     float bezierMinRadius;
     float bezierMaxRadius;
+    float filterSmoothing;
+    float maxSpeedPixelsPerSec;
 };
 
 class MouseController {
@@ -45,7 +45,6 @@ private:
     std::vector<Detection> currentDetections;
     
     bool isMoving;
-    float currentT;
     POINT startPos;
     POINT targetPos;
     POINT controlPoint;
@@ -58,6 +57,8 @@ private:
     float pidPreviousErrorY;
     float pidIntegralX;
     float pidIntegralY;
+    POINT filteredTarget;
+    POINT previousOutput;
 
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);

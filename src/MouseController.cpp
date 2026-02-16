@@ -6,7 +6,6 @@
 
 MouseController::MouseController()
     : isMoving(false)
-    , currentT(0.0f)
     , bezierT(0.0f)
     , rng(std::random_device{}())
     , pidPreviousErrorX(0.0f)
@@ -18,6 +17,8 @@ MouseController::MouseController()
     targetPos = { 0, 0 };
     controlPoint = { 0, 0 };
     bezierPathPoint = { 0, 0 };
+    filteredTarget = { 0, 0 };
+    previousOutput = { 0, 0 };
 }
 
 MouseController::~MouseController()
@@ -45,67 +46,54 @@ void MouseController::tick()
     }
 
     if (isMoving) {
-        if (config.algorithmType == 0) {
-            currentT += 1.0f / (config.moveDurationMs / 16.666f);
-            if (currentT >= 1.0f) {
-                moveMouseTo(targetPos);
-                isMoving = false;
-                currentT = 0.0f;
-            } else {
-                float easedT = easeOut(currentT);
-                POINT currentPos = calculateBezierPoint(easedT, startPos, controlPoint, targetPos);
-                moveMouseTo(currentPos);
-            }
-        } else if (config.algorithmType == 1) {
+        bezierT += 0.02f;
+        if (bezierT >= 1.0f) {
+            moveMouseTo(targetPos);
+            isMoving = false;
+            bezierT = 0.0f;
+            resetPidState();
+        } else {
+            float easedT = easeOut(bezierT);
+            bezierPathPoint = calculateBezierPoint(easedT, startPos, controlPoint, targetPos);
+            
+            float alpha = config.filterSmoothing;
+            float filteredTargetX = alpha * static_cast<float>(bezierPathPoint.x) + (1.0f - alpha) * static_cast<float>(filteredTarget.x);
+            float filteredTargetY = alpha * static_cast<float>(bezierPathPoint.y) + (1.0f - alpha) * static_cast<float>(filteredTarget.y);
+            filteredTarget.x = static_cast<LONG>(filteredTargetX);
+            filteredTarget.y = static_cast<LONG>(filteredTargetY);
+            
             POINT currentPos;
             GetCursorPos(&currentPos);
-            float errorX = static_cast<float>(currentPos.x - targetPos.x);
-            float errorY = static_cast<float>(currentPos.y - targetPos.y);
-            if (std::abs(errorX) < 1.0f && std::abs(errorY) < 1.0f) {
-                moveMouseTo(targetPos);
-                isMoving = false;
-                resetPidState();
+            
+            float maxDelta = config.maxSpeedPixelsPerSec * (16.67f / 1000.0f);
+            float deltaX = filteredTarget.x - previousOutput.x;
+            float deltaY = filteredTarget.y - previousOutput.y;
+            float distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+            
+            POINT speedLimitedTarget;
+            if (distance > maxDelta && distance > 0.0f) {
+                float scale = maxDelta / distance;
+                speedLimitedTarget.x = static_cast<LONG>(previousOutput.x + deltaX * scale);
+                speedLimitedTarget.y = static_cast<LONG>(previousOutput.y + deltaY * scale);
             } else {
-                float derivativeX = errorX - pidPreviousErrorX;
-                float derivativeY = errorY - pidPreviousErrorY;
-                pidIntegralX += errorX;
-                pidIntegralY += errorY;
-                float outputX = config.pidP * errorX + config.pidI * pidIntegralX + config.pidD * derivativeX;
-                float outputY = config.pidP * errorY + config.pidI * pidIntegralY + config.pidD * derivativeY;
-                POINT newPos;
-                newPos.x = static_cast<LONG>(currentPos.x - outputX);
-                newPos.y = static_cast<LONG>(currentPos.y - outputY);
-                moveMouseTo(newPos);
-                pidPreviousErrorX = errorX;
-                pidPreviousErrorY = errorY;
+                speedLimitedTarget = filteredTarget;
             }
-        } else if (config.algorithmType == 2) {
-            bezierT += 1.0f / (config.moveDurationMs / 16.666f);
-            if (bezierT >= 1.0f) {
-                moveMouseTo(targetPos);
-                isMoving = false;
-                bezierT = 0.0f;
-                resetPidState();
-            } else {
-                float easedT = easeOut(bezierT);
-                bezierPathPoint = calculateBezierPoint(easedT, startPos, controlPoint, targetPos);
-                POINT currentPos;
-                GetCursorPos(&currentPos);
-                float errorX = static_cast<float>(currentPos.x - bezierPathPoint.x);
-                float errorY = static_cast<float>(currentPos.y - bezierPathPoint.y);
-                float derivativeX = errorX - pidPreviousErrorX;
-                float derivativeY = errorY - pidPreviousErrorY;
-                pidIntegralX += errorX;
-                pidIntegralY += errorY;
-                float outputX = config.pidP * errorX + config.pidI * pidIntegralX + config.pidD * derivativeX;
-                float outputY = config.pidP * errorY + config.pidI * pidIntegralY + config.pidD * derivativeY;
-                POINT newPos;
-                newPos.x = static_cast<LONG>(currentPos.x - outputX);
-                newPos.y = static_cast<LONG>(currentPos.y - outputY);
-                moveMouseTo(newPos);
-                pidPreviousErrorX = errorX;
-                pidPreviousErrorY = errorY;
-            }
+            
+            float errorX = static_cast<float>(currentPos.x - speedLimitedTarget.x);
+            float errorY = static_cast<float>(currentPos.y - speedLimitedTarget.y);
+            float derivativeX = errorX - pidPreviousErrorX;
+            float derivativeY = errorY - pidPreviousErrorY;
+            pidIntegralX += errorX;
+            pidIntegralY += errorY;
+            float outputX = config.pidP * errorX + config.pidI * pidIntegralX + config.pidD * derivativeX;
+            float outputY = config.pidP * errorY + config.pidI * pidIntegralY + config.pidD * derivativeY;
+            POINT newPos;
+            newPos.x = static_cast<LONG>(currentPos.x - outputX);
+            newPos.y = static_cast<LONG>(currentPos.y - outputY);
+            moveMouseTo(newPos);
+            previousOutput = newPos;
+            pidPreviousErrorX = errorX;
+            pidPreviousErrorY = errorY;
         }
         return;
     }
@@ -213,25 +201,25 @@ void MouseController::startMouseMovement(const POINT& target)
     isMoving = true;
     resetPidState();
 
-    if (config.algorithmType == 0 || config.algorithmType == 2) {
-        currentT = 0.0f;
-        bezierT = 0.0f;
-        int dx = targetPos.x - startPos.x;
-        int dy = targetPos.y - startPos.y;
-        float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+    bezierT = 0.0f;
+    int dx = targetPos.x - startPos.x;
+    int dy = targetPos.y - startPos.y;
+    float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
 
-        std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * 3.1415926f);
-        std::uniform_real_distribution<float> radiusDist(distance * config.bezierMinRadius, distance * config.bezierMaxRadius);
+    std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * 3.1415926f);
+    std::uniform_real_distribution<float> radiusDist(distance * config.bezierMinRadius, distance * config.bezierMaxRadius);
 
-        float angle = angleDist(rng);
-        float radius = radiusDist(rng);
+    float angle = angleDist(rng);
+    float radius = radiusDist(rng);
 
-        float midX = (startPos.x + targetPos.x) / 2.0f;
-        float midY = (startPos.y + targetPos.y) / 2.0f;
+    float midX = (startPos.x + targetPos.x) / 2.0f;
+    float midY = (startPos.y + targetPos.y) / 2.0f;
 
-        controlPoint.x = static_cast<int>(midX + std::cos(angle) * radius);
-        controlPoint.y = static_cast<int>(midY + std::sin(angle) * radius);
-    }
+    controlPoint.x = static_cast<int>(midX + std::cos(angle) * radius);
+    controlPoint.y = static_cast<int>(midY + std::sin(angle) * radius);
+    
+    filteredTarget = startPos;
+    previousOutput = startPos;
 }
 
 void MouseController::resetPidState()
