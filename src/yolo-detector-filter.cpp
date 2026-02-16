@@ -79,6 +79,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int fpsFrameCount;
 	double currentFps;
 
+	gs_effect_t *solidEffect;
+
 #ifdef _WIN32
 	bool showFloatingWindow;
 	int floatingWindowWidth;
@@ -96,6 +98,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 };
 
 void inferenceThreadWorker(yolo_detector_filter *filter);
+static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
@@ -686,6 +689,105 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread stopped");
 }
 
+static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+{
+	std::lock_guard<std::mutex> lock(filter->detectionsMutex);
+
+	if (filter->detections.empty()) {
+		return;
+	}
+
+	gs_effect_t *solid = filter->solidEffect;
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+
+	for (const auto& det : filter->detections) {
+		float x = det.x * frameWidth;
+		float y = det.y * frameHeight;
+		float w = det.width * frameWidth;
+		float h = det.height * frameHeight;
+
+		struct vec4 color;
+		float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
+		float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
+		float b = (filter->bboxColor & 0xFF) / 255.0f;
+		float a = ((filter->bboxColor >> 24) & 0xFF) / 255.0f;
+		vec4_set(&color, r, g, b, a);
+		gs_effect_set_vec4(colorParam, &color);
+
+		gs_render_start(true);
+
+		gs_vertex2f(x, y);
+		gs_vertex2f(x + w, y);
+
+		gs_vertex2f(x + w, y);
+		gs_vertex2f(x + w, y + h);
+
+		gs_vertex2f(x + w, y + h);
+		gs_vertex2f(x, y + h);
+
+		gs_vertex2f(x, y + h);
+		gs_vertex2f(x, y);
+
+		gs_render_stop(GS_LINES);
+	}
+
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+}
+
+static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+{
+	if (!filter->showFOV) {
+		return;
+	}
+
+	gs_effect_t *solid = filter->solidEffect;
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	float centerX = frameWidth / 2.0f;
+	float centerY = frameHeight / 2.0f;
+	float radius = static_cast<float>(filter->fovRadius);
+
+	struct vec4 color;
+	float r = ((filter->fovColor >> 16) & 0xFF) / 255.0f;
+	float g = ((filter->fovColor >> 8) & 0xFF) / 255.0f;
+	float b = (filter->fovColor & 0xFF) / 255.0f;
+	float a = ((filter->fovColor >> 24) & 0xFF) / 255.0f;
+	vec4_set(&color, r, g, b, a);
+
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+	gs_effect_set_vec4(colorParam, &color);
+
+	gs_render_start(true);
+
+	gs_vertex2f(centerX - radius, centerY);
+	gs_vertex2f(centerX + radius, centerY);
+
+	gs_vertex2f(centerX, centerY - radius);
+	gs_vertex2f(centerX, centerY + radius);
+
+	gs_render_stop(GS_LINES);
+
+	const int circleSegments = 64;
+	gs_render_start(true);
+	for (int i = 0; i <= circleSegments; ++i) {
+		float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(circleSegments);
+		float x = centerX + radius * cosf(angle);
+		float y = centerY + radius * sinf(angle);
+		gs_vertex2f(x, y);
+	}
+	gs_render_stop(GS_LINESTRIP);
+
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+}
+
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (filter->coordinateOutputPath.empty()) {
@@ -759,9 +861,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->source = source;
 		instance->texrender = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
 		instance->stagesurface = nullptr;
-		instance->overlayTexture = nullptr;
-		instance->overlayWidth = 0;
-		instance->overlayHeight = 0;
 
 		// Initialize ORT environment
 		std::string instanceName{"yolo-detector-inference"};
@@ -777,6 +876,10 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->lastFpsTime = std::chrono::high_resolution_clock::now();
 		instance->fpsFrameCount = 0;
 		instance->currentFps = 0.0;
+
+		obs_enter_graphics();
+		instance->solidEffect = obs_get_base_effect(OBS_EFFECT_SOLID);
+		obs_leave_graphics();
 
 #ifdef _WIN32
 		instance->showFloatingWindow = false;
@@ -919,6 +1022,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 
 void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 {
+	UNUSED_PARAMETER(_effect);
+
 	auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
 	if (!ptr) {
 		return;
@@ -940,18 +1045,19 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
-	uint32_t width = obs_source_get_width(target);
-	uint32_t height = obs_source_get_height(target);
+	uint32_t width = obs_source_get_base_width(target);
+	uint32_t height = obs_source_get_base_height(target);
 
 	if (width == 0 || height == 0) {
-		obs_source_skip_video_filter(tf->source);
+		if (tf->source) {
+			obs_source_skip_video_filter(tf->source);
+		}
 		return;
 	}
 
-	bool needRenderOverlay = tf->showBBox || tf->showFOV;
-	bool needCapture = tf->showFloatingWindow || needRenderOverlay;
+	bool needCapture = tf->showFloatingWindow || tf->isInferencing;
 
-	// 第一步：捕获原始帧（用于推理和悬浮窗）
+	// 捕获原始帧（用于推理和悬浮窗）
 	cv::Mat originalImage;
 	if (needCapture) {
 		obs_enter_graphics();
@@ -992,7 +1098,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		obs_leave_graphics();
 	}
 
-	// 第二步：保存原始帧用于推理线程
+	// 保存原始帧用于推理线程
 	if (!originalImage.empty()) {
 		std::unique_lock<std::mutex> lock(tf->inputBGRALock, std::try_to_lock);
 		if (lock.owns_lock()) {
@@ -1000,156 +1106,30 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 	}
 
-	// 第三步：决定渲染路径
-	if (!needRenderOverlay) {
-		// 不需要画overlay，直接跳过滤镜
-		obs_source_skip_video_filter(tf->source);
-	} else {
-		// 需要画overlay，用OpenCV绘制后贴回去
-		if (originalImage.empty()) {
-			// 捕获失败，直接渲染原画面
-			obs_source_skip_video_filter(tf->source);
-			return;
-		}
-
-		// 从原始图像开始绘制 overlay（能确保可见）
-		cv::Mat outputImage = originalImage.clone();
-
-		// 绘制BBox
-		if (tf->showBBox) {
-			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-			if (!tf->detections.empty()) {
-				for (size_t i = 0; i < tf->detections.size(); ++i) {
-					const auto& det = tf->detections[i];
-					int x = static_cast<int>(det.x * width);
-					int y = static_cast<int>(det.y * height);
-					int w = static_cast<int>(det.width * width);
-					int h = static_cast<int>(det.height * height);
-
-					// OBS 颜色是 0xAARRGGBB，OpenCV 用 BGRA - 强制 Alpha=255（完全不透明）
-					cv::Scalar bboxColor(
-						tf->bboxColor & 0xFF,                    // B
-						(tf->bboxColor >> 8) & 0xFF,             // G
-						(tf->bboxColor >> 16) & 0xFF,            // R
-						255                                       // A - 强制完全不透明
-					);
-
-					cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
-
-					std::string labelText;
-					if (tf->showLabel) {
-						labelText = std::to_string(det.classId);
-					}
-					if (tf->showLabel && tf->showConfidence) {
-						labelText += " ";
-					}
-					if (tf->showConfidence) {
-						char confidenceStr[32];
-						snprintf(confidenceStr, sizeof(confidenceStr), "%.2f", det.confidence);
-						labelText += confidenceStr;
-					}
-
-					if (!labelText.empty()) {
-						int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-						double fontScale = 0.5;
-						int thickness = 2;
-						int baseline = 0;
-
-						cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
-
-						int textY = y - 5;
-						if (textY < 0) {
-							textY = y + textSize.height + 5;
-						}
-
-						cv::rectangle(outputImage,
-							cv::Rect(x, textY - textSize.height - 5, textSize.width, textSize.height + 10),
-							bboxColor,
-							-1);
-
-						cv::putText(outputImage,
-							labelText,
-							cv::Point(x, textY),
-							fontFace, fontScale, cv::Scalar(255, 255, 255, 255),
-							thickness);
-					}
-				}
-			}
-		}
-
-		// 绘制FOV
-		if (tf->showFOV) {
-			int centerX = width / 2;
-			int centerY = height / 2;
-			int radius = tf->fovRadius;
-
-			cv::Scalar fovColor(
-				tf->fovColor & 0xFF,                    // B
-				(tf->fovColor >> 8) & 0xFF,             // G
-				(tf->fovColor >> 16) & 0xFF,            // R
-				255                                       // A - 强制完全不透明
-			);
-
-			cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
-			cv::circle(outputImage, cv::Point(centerX, centerY), 1, fovColor, -1);
-		}
-
-		// 确保数据连续
-		if (!outputImage.isContinuous()) {
-			outputImage = outputImage.clone();
-		}
-
-		// 纹理缓存：只在尺寸变化时才重新创建纹理
-		gs_texture_t *renderTexture = nullptr;
-		bool needCreateTexture = false;
-
-		obs_enter_graphics();
-		if (!tf->overlayTexture || tf->overlayWidth != width || tf->overlayHeight != height) {
-			// 需要创建新纹理
-			if (tf->overlayTexture) {
-				gs_texture_destroy(tf->overlayTexture);
-			}
-			const uint8_t *data_ptr = outputImage.data;
-			tf->overlayTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, GS_DYNAMIC);
-			tf->overlayWidth = width;
-			tf->overlayHeight = height;
-		} else {
-			// 更新现有纹理数据
-			gs_texture_set_image(tf->overlayTexture, outputImage.data, width * 4, false);
-		}
-		renderTexture = tf->overlayTexture;
-		obs_leave_graphics();
-
-		if (!renderTexture) {
-			obs_log(LOG_ERROR, "[YOLO] Failed to create overlay texture");
-			obs_source_skip_video_filter(tf->source);
-			return;
-		}
-
-		// 使用滤镜系统渲染完整图像（包含 overlay）
-		if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
-			// 获取基础效果
-			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-			if (effect) {
-				gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
-				if (param) {
-					// 设置纹理参数
-					gs_effect_set_texture(param, renderTexture);
-
-					// 执行渲染
-					while (gs_effect_loop(effect, "Draw")) {
-						gs_draw_sprite(nullptr, 0, width, height);
-					}
-				}
-			}
-
-			// 结束滤镜处理 - 传入正确的 effect 参数！
-			obs_source_process_filter_end(tf->source, effect, width, height);
-		} else {
-			// 如果无法开始滤镜处理，直接渲染原始画面
+	// 开始滤镜处理 - 使用修复指南中的正确实现！
+	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
+		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
 		}
+		return;
 	}
+
+	gs_blend_state_push();
+	gs_reset_blend_state();
+
+	// 先渲染源画面
+	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+
+	// 然后在上面绘制检测框和 FOV
+	if (tf->showBBox) {
+		renderDetectionBoxes(tf.get(), width, height);
+	}
+
+	if (tf->showFOV) {
+		renderFOV(tf.get(), width, height);
+	}
+
+	gs_blend_state_pop();
 
 #ifdef _WIN32
 	// 更新浮动窗口
