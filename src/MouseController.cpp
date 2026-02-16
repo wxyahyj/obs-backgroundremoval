@@ -102,11 +102,14 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     float canvasPixelY = config.sourceCanvasPosY + sourcePixelY * config.sourceCanvasScaleY;
 
     POINT result;
-    result.x = static_cast<int>(canvasPixelX);
-    result.y = static_cast<int>(canvasPixelY);
+    result.x = static_cast<LONG>(canvasPixelX);
+    result.y = static_cast<LONG>(canvasPixelY);
 
-    result.x = std::max(0, std::min(result.x, screenWidth - 1));
-    result.y = std::max(0, std::min(result.y, screenHeight - 1));
+    LONG maxX = static_cast<LONG>(screenWidth - 1);
+    LONG maxY = static_cast<LONG>(screenHeight - 1);
+    
+    result.x = std::max(0L, std::min(result.x, maxX));
+    result.y = std::max(0L, std::min(result.y, maxY));
 
     return result;
 }
