@@ -1090,27 +1090,38 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			outputImage = outputImage.clone();
 		}
 
-		// 创建纹理
+		// 创建纹理用于绘制
 		gs_texture_t *renderTexture = nullptr;
 		const uint8_t *data_ptr = outputImage.data;
 		obs_enter_graphics();
 		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, 0);
 		obs_leave_graphics();
 
-		// 标准的OBS滤镜渲染流程 - 最稳妥的方式：不使用 effect，直接 blit
 		if (renderTexture) {
+			// 终极简单版本：直接用 OBS 的标准滤镜流程，正确使用 effect！
 			if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
-				gs_blend_state_push();
-				gs_reset_blend_state();
+				gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+				gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
 
-				// 直接画纹理，不用任何 effect，最安全
-				gs_draw_sprite(renderTexture, 0, width, height);
+				if (param) {
+					gs_effect_set_texture(param, renderTexture);
 
-				gs_blend_state_pop();
-				obs_source_process_filter_end(tf->source, _effect, width, height);
+					gs_blend_state_push();
+					gs_reset_blend_state();
+
+					while (gs_effect_loop(effect, "Draw")) {
+						gs_draw_sprite(nullptr, 0, width, height);
+					}
+
+					gs_blend_state_pop();
+				}
+
+				obs_source_process_filter_end(tf->source, effect, width, height);
+			} else {
+				obs_source_skip_video_filter(tf->source);
 			}
 
-			// 清理纹理
+			// 清理
 			obs_enter_graphics();
 			gs_texture_destroy(renderTexture);
 			obs_leave_graphics();
