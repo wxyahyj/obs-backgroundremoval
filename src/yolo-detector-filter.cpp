@@ -1017,10 +1017,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					int w = static_cast<int>(det.width * width);
 					int h = static_cast<int>(det.height * height);
 
+					// OBS 颜色是 0xAARRGGBB，OpenCV 用 BGR
 					cv::Scalar bboxColor(
-						tf->bboxColor & 0xFF,
-						(tf->bboxColor >> 8) & 0xFF,
-						(tf->bboxColor >> 16) & 0xFF
+						tf->bboxColor & 0xFF,          // B
+						(tf->bboxColor >> 8) & 0xFF,   // G
+						(tf->bboxColor >> 16) & 0xFF   // R
 					);
 
 					cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
@@ -1075,9 +1076,9 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			int radius = tf->fovRadius;
 
 			cv::Scalar fovColor(
-				tf->fovColor & 0xFF,
-				(tf->fovColor >> 8) & 0xFF,
-				(tf->fovColor >> 16) & 0xFF
+				tf->fovColor & 0xFF,          // B
+				(tf->fovColor >> 8) & 0xFF,   // G
+				(tf->fovColor >> 16) & 0xFF   // R
 			);
 
 			cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
@@ -1096,16 +1097,16 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, &data_ptr, 0);
 		obs_leave_graphics();
 
-		// 标准的OBS滤镜渲染流程
+		// 标准的OBS滤镜渲染流程 - 最稳妥的方式：不使用 effect，直接 blit
 		if (renderTexture) {
-			if (obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
-				gs_effect_t *drawEffect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-				gs_effect_set_texture(gs_effect_get_param_by_name(drawEffect, "image"), renderTexture);
+			if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
+				gs_blend_state_push();
+				gs_reset_blend_state();
 
-				while (gs_effect_loop(drawEffect, "Draw")) {
-					gs_draw_sprite(nullptr, 0, width, height);
-				}
+				// 直接画纹理，不用任何 effect，最安全
+				gs_draw_sprite(renderTexture, 0, width, height);
 
+				gs_blend_state_pop();
 				obs_source_process_filter_end(tf->source, _effect, width, height);
 			}
 
