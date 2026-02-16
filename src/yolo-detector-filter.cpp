@@ -1139,11 +1139,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				gs_effect_set_texture(param, renderTexture);
 				obs_log(LOG_INFO, "[YOLO] Set texture parameter successfully");
 
-				// 保存并设置混合状态
+				// 保存并重置混合状态
 				gs_blend_state_push();
-				// 使用适合叠加的混合模式
-				gs_blend_function(GS_BLEND_SRC_ALPHA, GS_BLEND_ONE_MINUS_SRC_ALPHA);
-				obs_log(LOG_INFO, "[YOLO] Set blend state to alpha blending");
+				// 使用默认混合状态
+				gs_reset_blend_state();
+				obs_log(LOG_INFO, "[YOLO] Reset blend state to default");
 
 				// 执行渲染循环
 				int drawCount = 0;
