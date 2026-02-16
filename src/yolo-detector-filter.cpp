@@ -353,10 +353,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	}
 	
 	bool showDetectionResults = obs_data_get_bool(settings, "show_detection_results");
-	tf-&gt;showDetectionResults = showDetectionResults;
-	tf-&gt;showBBox = showDetectionResults;
-	tf-&gt;showLabel = showDetectionResults;
-	tf-&gt;showConfidence = showDetectionResults;
+	tf->showDetectionResults = showDetectionResults;
+	tf->showBBox = showDetectionResults;
+	tf->showLabel = showDetectionResults;
+	tf->showConfidence = showDetectionResults;
 	tf->bboxLineWidth = (int)obs_data_get_int(settings, "bbox_line_width");
 	tf->bboxColor = (uint32_t)obs_data_get_int(settings, "bbox_color");
 	
