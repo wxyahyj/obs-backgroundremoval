@@ -1012,8 +1012,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			return;
 		}
 
-		// 创建完全透明的 overlay 图像（全 0 = 完全透明）
-		cv::Mat outputImage(height, width, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+		// 从原始图像开始绘制 overlay（能确保可见）
+		cv::Mat outputImage = originalImage.clone();
 
 		// 绘制BBox
 		if (tf->showBBox) {
@@ -1026,12 +1026,12 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					int w = static_cast<int>(det.width * width);
 					int h = static_cast<int>(det.height * height);
 
-					// OBS 颜色是 0xAARRGGBB，OpenCV 用 BGRA
+					// OBS 颜色是 0xAARRGGBB，OpenCV 用 BGRA - 强制 Alpha=255（完全不透明）
 					cv::Scalar bboxColor(
 						tf->bboxColor & 0xFF,                    // B
 						(tf->bboxColor >> 8) & 0xFF,             // G
 						(tf->bboxColor >> 16) & 0xFF,            // R
-						(tf->bboxColor >> 24) & 0xFF             // A
+						255                                       // A - 强制完全不透明
 					);
 
 					cv::rectangle(outputImage, cv::Rect(x, y, w, h), bboxColor, tf->bboxLineWidth);
@@ -1087,7 +1087,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				tf->fovColor & 0xFF,                    // B
 				(tf->fovColor >> 8) & 0xFF,             // G
 				(tf->fovColor >> 16) & 0xFF,            // R
-				(tf->fovColor >> 24) & 0xFF             // A
+				255                                       // A - 强制完全不透明
 			);
 
 			cv::circle(outputImage, cv::Point(centerX, centerY), radius, fovColor, 2);
@@ -1126,7 +1126,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			return;
 		}
 
-		// 使用滤镜系统正确叠加 overlay - 不要双重渲染
+		// 使用滤镜系统渲染完整图像（包含 overlay）
 		if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
 			// 获取基础效果
 			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
@@ -1136,17 +1136,10 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					// 设置纹理参数
 					gs_effect_set_texture(param, renderTexture);
 
-					// 重置混合状态为默认（OBS 默认应该已经是正确的 alpha 混合）
-					gs_blend_state_push();
-					gs_reset_blend_state();
-
 					// 执行渲染
 					while (gs_effect_loop(effect, "Draw")) {
 						gs_draw_sprite(nullptr, 0, width, height);
 					}
-
-					// 恢复混合状态
-					gs_blend_state_pop();
 				}
 			}
 
