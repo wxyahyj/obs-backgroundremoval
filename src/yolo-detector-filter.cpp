@@ -318,13 +318,13 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 
 	obs_data_set_default_bool(settings, "enable_mouse_control", false);
 	obs_data_set_default_int(settings, "mouse_control_hotkey", VK_XBUTTON1);
-	obs_data_set_default_double(settings, "mouse_control_p", 0.1);
+	obs_data_set_default_double(settings, "mouse_control_p", 0.05);
 	obs_data_set_default_double(settings, "mouse_control_i", 0.0);
-	obs_data_set_default_double(settings, "mouse_control_d", 0.01);
+	obs_data_set_default_double(settings, "mouse_control_d", 0.005);
 	obs_data_set_default_double(settings, "bezier_control_min_radius", 0.2);
 	obs_data_set_default_double(settings, "bezier_control_max_radius", 0.5);
 	obs_data_set_default_double(settings, "filter_smoothing", 0.5);
-	obs_data_set_default_int(settings, "max_speed_pixels_per_sec", 5000);
+	obs_data_set_default_int(settings, "max_speed_pixels_per_sec", 2000);
 #endif
 }
 
@@ -1045,13 +1045,13 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 
 		instance->enableMouseControl = false;
 		instance->mouseControlHotkey = VK_XBUTTON1;
-		instance->mouseControlP = 0.1f;
+		instance->mouseControlP = 0.05f;
 		instance->mouseControlI = 0.0f;
-		instance->mouseControlD = 0.01f;
+		instance->mouseControlD = 0.005f;
 		instance->bezierControlMinRadius = 0.2f;
 		instance->bezierControlMaxRadius = 0.5f;
 		instance->filterSmoothing = 0.5f;
-		instance->maxSpeedPixelsPerSec = 5000.0f;
+		instance->maxSpeedPixelsPerSec = 2000.0f;
 		instance->mouseController = std::make_unique<MouseController>();
 #endif
 

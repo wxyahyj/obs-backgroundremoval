@@ -46,6 +46,13 @@ void MouseController::tick()
     }
 
     if (isMoving) {
+        if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
+            isMoving = false;
+            bezierT = 0.0f;
+            resetPidState();
+            return;
+        }
+        
         bezierT += 0.02f;
         if (bezierT >= 1.0f) {
             moveMouseTo(targetPos);
@@ -79,8 +86,8 @@ void MouseController::tick()
                 speedLimitedTarget = filteredTarget;
             }
             
-            float errorX = static_cast<float>(currentPos.x - speedLimitedTarget.x);
-            float errorY = static_cast<float>(currentPos.y - speedLimitedTarget.y);
+            float errorX = static_cast<float>(speedLimitedTarget.x - currentPos.x);
+            float errorY = static_cast<float>(speedLimitedTarget.y - currentPos.y);
             float derivativeX = errorX - pidPreviousErrorX;
             float derivativeY = errorY - pidPreviousErrorY;
             pidIntegralX += errorX;
@@ -88,8 +95,8 @@ void MouseController::tick()
             float outputX = config.pidP * errorX + config.pidI * pidIntegralX + config.pidD * derivativeX;
             float outputY = config.pidP * errorY + config.pidI * pidIntegralY + config.pidD * derivativeY;
             POINT newPos;
-            newPos.x = static_cast<LONG>(currentPos.x - outputX);
-            newPos.y = static_cast<LONG>(currentPos.y - outputY);
+            newPos.x = static_cast<LONG>(currentPos.x + outputX);
+            newPos.y = static_cast<LONG>(currentPos.y + outputY);
             moveMouseTo(newPos);
             previousOutput = newPos;
             pidPreviousErrorX = errorX;
