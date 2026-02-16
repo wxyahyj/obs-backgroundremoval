@@ -823,11 +823,9 @@ static void renderLabels(yolo_detector_filter *filter, uint32_t frameWidth, uint
 		gs_render_start(true);
 		gs_vertex2f(x, y - 20);
 		gs_vertex2f(x + w, y - 20);
-		gs_vertex2f(x, y);
-		gs_vertex2f(x + w, y - 20);
 		gs_vertex2f(x + w, y);
 		gs_vertex2f(x, y);
-		gs_render_stop(GS_TRIANGLES);
+		gs_render_stop(GS_QUADS);
 
 		gs_technique_end_pass(tech);
 		gs_technique_end(tech);
