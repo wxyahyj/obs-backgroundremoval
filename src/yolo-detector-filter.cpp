@@ -1146,7 +1146,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 	}
 
-	// 开始滤镜处理
+	// 开始滤镜处理 - 确保源画面绝对正常
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
 		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
@@ -1157,26 +1157,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
-	// 如果需要显示标签，并且我们有 originalImage
-	if (needShowLabels && !originalImage.empty()) {
-		// 复制一份用于绘制
-		cv::Mat labeledImage = originalImage.clone();
-		renderLabelsWithOpenCV(labeledImage, tf.get());
-
-		// 创建一个临时纹理并渲染
-		obs_enter_graphics();
-		gs_texture_t *tempTexture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, 0);
-		if (tempTexture) {
-			gs_texture_set_image(tempTexture, labeledImage.data, static_cast<uint32_t>(labeledImage.step), false);
-			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
-			gs_draw_sprite(tempTexture, 0, 0, 0);
-			gs_texture_destroy(tempTexture);
-		}
-		obs_leave_graphics();
-	} else {
-		// 渲染默认效果
-		obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
-	}
+	// 先渲染源画面，保证不会黑屏
+	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 
 	// 绘制检测框和 FOV
 	if (tf->showBBox) {
@@ -1208,11 +1190,52 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			cv::Mat croppedFrame = originalImage(cv::Rect(cropX, cropY, actualCropWidth, actualCropHeight)).clone();
 
 			size_t detectionCount = 0;
+			std::vector<Detection> detectionsCopy;
 			{
 				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
 				detectionCount = tf->detections.size();
+				detectionsCopy = tf->detections;
 			}
 
+			// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
+			if (tf->showLabel || tf->showConfidence) {
+				int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+				double fontScale = 0.5;
+				int thickness = 2;
+				int baseline = 0;
+				
+				for (const auto& det : detectionsCopy) {
+					int x = static_cast<int>(det.x * originalImage.cols) - cropX;
+					int y = static_cast<int>(det.y * originalImage.rows) - cropY;
+					
+					// 确保在裁剪区域内
+					if (x >= 0 && y >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
+						// 构建标签文本
+						char labelText[64];
+						snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
+						
+						// 获取文本大小
+						cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
+						
+						// 绘制标签背景
+						cv::Point textOrg(x, y - 5);
+						cv::rectangle(croppedFrame, 
+							cv::Point(textOrg.x, textOrg.y - textSize.height - 5),
+							cv::Point(textOrg.x + textSize.width + 10, textOrg.y + baseline),
+							cv::Scalar(0, 0, 0, 200),
+							-1);
+						
+						// 绘制文本
+						cv::putText(croppedFrame, labelText, 
+							cv::Point(textOrg.x + 5, textOrg.y),
+							fontFace, fontScale, 
+							cv::Scalar(0, 255, 0, 255), 
+							thickness);
+					}
+				}
+			}
+
+			// 绘制 FPS 和检测数量信息
 			int fontFace = cv::FONT_HERSHEY_SIMPLEX;
 			double fontScale = 0.6;
 			int thickness = 2;
