@@ -66,15 +66,15 @@ void MouseController::tick()
             GetCursorPos(&currentPos);
             
             float maxDelta = config.maxSpeedPixelsPerSec * (16.67f / 1000.0f);
-            float deltaX = filteredTarget.x - previousOutput.x;
-            float deltaY = filteredTarget.y - previousOutput.y;
+            float deltaX = static_cast<float>(filteredTarget.x - previousOutput.x);
+            float deltaY = static_cast<float>(filteredTarget.y - previousOutput.y);
             float distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
             
             POINT speedLimitedTarget;
             if (distance > maxDelta && distance > 0.0f) {
                 float scale = maxDelta / distance;
-                speedLimitedTarget.x = static_cast<LONG>(previousOutput.x + deltaX * scale);
-                speedLimitedTarget.y = static_cast<LONG>(previousOutput.y + deltaY * scale);
+                speedLimitedTarget.x = static_cast<LONG>(static_cast<float>(previousOutput.x) + deltaX * scale);
+                speedLimitedTarget.y = static_cast<LONG>(static_cast<float>(previousOutput.y) + deltaY * scale);
             } else {
                 speedLimitedTarget = filteredTarget;
             }
