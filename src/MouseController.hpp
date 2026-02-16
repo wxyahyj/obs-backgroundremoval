@@ -20,6 +20,12 @@ struct MouseControllerConfig {
     float sourceCanvasScaleY;
     int sourceWidth;
     int sourceHeight;
+    int algorithmType;
+    float pidP;
+    float pidI;
+    float pidD;
+    float bezierMinRadius;
+    float bezierMaxRadius;
 };
 
 class MouseController {
@@ -43,8 +49,15 @@ private:
     POINT startPos;
     POINT targetPos;
     POINT controlPoint;
+    POINT bezierPathPoint;
+    float bezierT;
     
     std::mt19937 rng;
+    
+    float pidPreviousErrorX;
+    float pidPreviousErrorY;
+    float pidIntegralX;
+    float pidIntegralY;
 
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
@@ -52,6 +65,7 @@ private:
     float easeOut(float t);
     void moveMouseTo(const POINT& pos);
     void startMouseMovement(const POINT& target);
+    void resetPidState();
 };
 
 #endif

@@ -7,11 +7,17 @@
 MouseController::MouseController()
     : isMoving(false)
     , currentT(0.0f)
+    , bezierT(0.0f)
     , rng(std::random_device{}())
+    , pidPreviousErrorX(0.0f)
+    , pidPreviousErrorY(0.0f)
+    , pidIntegralX(0.0f)
+    , pidIntegralY(0.0f)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
     controlPoint = { 0, 0 };
+    bezierPathPoint = { 0, 0 };
 }
 
 MouseController::~MouseController()
@@ -39,15 +45,67 @@ void MouseController::tick()
     }
 
     if (isMoving) {
-        currentT += 1.0f / (config.moveDurationMs / 16.666f);
-        if (currentT >= 1.0f) {
-            moveMouseTo(targetPos);
-            isMoving = false;
-            currentT = 0.0f;
-        } else {
-            float easedT = easeOut(currentT);
-            POINT currentPos = calculateBezierPoint(easedT, startPos, controlPoint, targetPos);
-            moveMouseTo(currentPos);
+        if (config.algorithmType == 0) {
+            currentT += 1.0f / (config.moveDurationMs / 16.666f);
+            if (currentT >= 1.0f) {
+                moveMouseTo(targetPos);
+                isMoving = false;
+                currentT = 0.0f;
+            } else {
+                float easedT = easeOut(currentT);
+                POINT currentPos = calculateBezierPoint(easedT, startPos, controlPoint, targetPos);
+                moveMouseTo(currentPos);
+            }
+        } else if (config.algorithmType == 1) {
+            POINT currentPos;
+            GetCursorPos(&currentPos);
+            float errorX = static_cast<float>(currentPos.x - targetPos.x);
+            float errorY = static_cast<float>(currentPos.y - targetPos.y);
+            if (std::abs(errorX) < 1.0f && std::abs(errorY) < 1.0f) {
+                moveMouseTo(targetPos);
+                isMoving = false;
+                resetPidState();
+            } else {
+                float derivativeX = errorX - pidPreviousErrorX;
+                float derivativeY = errorY - pidPreviousErrorY;
+                pidIntegralX += errorX;
+                pidIntegralY += errorY;
+                float outputX = config.pidP * errorX + config.pidI * pidIntegralX + config.pidD * derivativeX;
+                float outputY = config.pidP * errorY + config.pidI * pidIntegralY + config.pidD * derivativeY;
+                POINT newPos;
+                newPos.x = static_cast<LONG>(currentPos.x - outputX);
+                newPos.y = static_cast<LONG>(currentPos.y - outputY);
+                moveMouseTo(newPos);
+                pidPreviousErrorX = errorX;
+                pidPreviousErrorY = errorY;
+            }
+        } else if (config.algorithmType == 2) {
+            bezierT += 1.0f / (config.moveDurationMs / 16.666f);
+            if (bezierT >= 1.0f) {
+                moveMouseTo(targetPos);
+                isMoving = false;
+                bezierT = 0.0f;
+                resetPidState();
+            } else {
+                float easedT = easeOut(bezierT);
+                bezierPathPoint = calculateBezierPoint(easedT, startPos, controlPoint, targetPos);
+                POINT currentPos;
+                GetCursorPos(&currentPos);
+                float errorX = static_cast<float>(currentPos.x - bezierPathPoint.x);
+                float errorY = static_cast<float>(currentPos.y - bezierPathPoint.y);
+                float derivativeX = errorX - pidPreviousErrorX;
+                float derivativeY = errorY - pidPreviousErrorY;
+                pidIntegralX += errorX;
+                pidIntegralY += errorY;
+                float outputX = config.pidP * errorX + config.pidI * pidIntegralX + config.pidD * derivativeX;
+                float outputY = config.pidP * errorY + config.pidI * pidIntegralY + config.pidD * derivativeY;
+                POINT newPos;
+                newPos.x = static_cast<LONG>(currentPos.x - outputX);
+                newPos.y = static_cast<LONG>(currentPos.y - outputY);
+                moveMouseTo(newPos);
+                pidPreviousErrorX = errorX;
+                pidPreviousErrorY = errorY;
+            }
         }
         return;
     }
@@ -153,23 +211,35 @@ void MouseController::startMouseMovement(const POINT& target)
     GetCursorPos(&startPos);
     targetPos = target;
     isMoving = true;
-    currentT = 0.0f;
+    resetPidState();
 
-    int dx = targetPos.x - startPos.x;
-    int dy = targetPos.y - startPos.y;
-    float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+    if (config.algorithmType == 0 || config.algorithmType == 2) {
+        currentT = 0.0f;
+        bezierT = 0.0f;
+        int dx = targetPos.x - startPos.x;
+        int dy = targetPos.y - startPos.y;
+        float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
 
-    std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * 3.1415926f);
-    std::uniform_real_distribution<float> radiusDist(distance * 0.2f, distance * 0.5f);
+        std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * 3.1415926f);
+        std::uniform_real_distribution<float> radiusDist(distance * config.bezierMinRadius, distance * config.bezierMaxRadius);
 
-    float angle = angleDist(rng);
-    float radius = radiusDist(rng);
+        float angle = angleDist(rng);
+        float radius = radiusDist(rng);
 
-    float midX = (startPos.x + targetPos.x) / 2.0f;
-    float midY = (startPos.y + targetPos.y) / 2.0f;
+        float midX = (startPos.x + targetPos.x) / 2.0f;
+        float midY = (startPos.y + targetPos.y) / 2.0f;
 
-    controlPoint.x = static_cast<int>(midX + std::cos(angle) * radius);
-    controlPoint.y = static_cast<int>(midY + std::sin(angle) * radius);
+        controlPoint.x = static_cast<int>(midX + std::cos(angle) * radius);
+        controlPoint.y = static_cast<int>(midY + std::sin(angle) * radius);
+    }
+}
+
+void MouseController::resetPidState()
+{
+    pidPreviousErrorX = 0.0f;
+    pidPreviousErrorY = 0.0f;
+    pidIntegralX = 0.0f;
+    pidIntegralY = 0.0f;
 }
 
 #endif
