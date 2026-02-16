@@ -1117,52 +1117,55 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 		obs_log(LOG_INFO, "[YOLO] Texture created successfully, starting OBS filter process");
 
-		// 使用标准 OBS 滤镜渲染流程
+		// 使用新的直接叠加渲染方案
 		if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
 			obs_log(LOG_INFO, "[YOLO] obs_source_process_filter_begin successful");
-			// 获取叠加效果（更适合 overlay 操作）
-			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_OVERLAY);
-			if (!effect) {
-				obs_log(LOG_ERROR, "[YOLO] Failed to get base effect");
-				obs_source_process_filter_end(tf->source, nullptr, width, height);
-				obs_enter_graphics();
-				gs_texture_destroy(renderTexture);
-				obs_leave_graphics();
-				return;
-			}
-			obs_log(LOG_INFO, "[YOLO] Got base effect successfully");
+			
+			// 第一步：先渲染原始源画面
+			obs_log(LOG_INFO, "[YOLO] Rendering original source");
+			obs_source_video_render(target);
+			
+			// 第二步：叠加 overlay
+			obs_log(LOG_INFO, "[YOLO] Rendering overlay");
+			
+			// 获取基础效果
+			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+			if (effect) {
+				obs_log(LOG_INFO, "[YOLO] Got base effect successfully");
 
-			gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
-			if (param) {
-				obs_log(LOG_INFO, "[YOLO] Got 'image' parameter successfully");
-				// 设置纹理参数
-				gs_effect_set_texture(param, renderTexture);
-				obs_log(LOG_INFO, "[YOLO] Set texture parameter successfully");
+				gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
+				if (param) {
+					obs_log(LOG_INFO, "[YOLO] Got 'image' parameter successfully");
+					// 设置纹理参数
+					gs_effect_set_texture(param, renderTexture);
+					obs_log(LOG_INFO, "[YOLO] Set texture parameter successfully");
 
-				// 保存并重置混合状态
-				gs_blend_state_push();
-				// 使用默认混合状态
-				gs_reset_blend_state();
-				obs_log(LOG_INFO, "[YOLO] Reset blend state to default");
+					// 保存并设置混合状态（适合叠加）
+					gs_blend_state_push();
+					gs_blend_function(GS_BLEND_SRC_ALPHA, GS_BLEND_ONE_MINUS_SRC_ALPHA);
+					obs_log(LOG_INFO, "[YOLO] Set blend state to alpha blending");
 
-				// 执行渲染循环
-				int drawCount = 0;
-				while (gs_effect_loop(effect, "Draw")) {
-					// 使用默认效果绘制纹理
-					gs_draw_sprite(nullptr, 0, width, height);
-					drawCount++;
+					// 执行渲染
+					int drawCount = 0;
+					while (gs_effect_loop(effect, "Draw")) {
+						// 绘制 overlay
+						gs_draw_sprite(nullptr, 0, width, height);
+						drawCount++;
+					}
+					obs_log(LOG_INFO, "[YOLO] Overlay render executed %d times", drawCount);
+
+					// 恢复混合状态
+					gs_blend_state_pop();
+					obs_log(LOG_INFO, "[YOLO] Restored blend state");
+				} else {
+					obs_log(LOG_ERROR, "[YOLO] Failed to get 'image' parameter from effect");
 				}
-				obs_log(LOG_INFO, "[YOLO] Render loop executed %d times", drawCount);
-
-				// 恢复混合状态
-				gs_blend_state_pop();
-				obs_log(LOG_INFO, "[YOLO] Restored blend state");
 			} else {
-				obs_log(LOG_ERROR, "[YOLO] Failed to get 'image' parameter from effect");
+				obs_log(LOG_ERROR, "[YOLO] Failed to get base effect");
 			}
 
 			// 结束滤镜处理
-			obs_source_process_filter_end(tf->source, effect, width, height);
+			obs_source_process_filter_end(tf->source, nullptr, width, height);
 			obs_log(LOG_INFO, "[YOLO] obs_source_process_filter_end completed");
 		} else {
 			// 如果无法开始滤镜处理，直接渲染原始画面
