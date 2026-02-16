@@ -956,6 +956,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_texture_t *renderTexture = nullptr;
 	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 
+	// 第一步：捕获原始帧到 OpenCV Mat
 	obs_enter_graphics();
 	gs_texrender_reset(tf->texrender);
 	if (gs_texrender_begin(tf->texrender, width, height)) {
@@ -993,11 +994,13 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 	obs_leave_graphics();
 
+	// 如果原始帧为空，跳过滤镜
 	if (originalImage.empty()) {
 		obs_source_skip_video_filter(tf->source);
 		return;
 	}
 
+	// 第二步：进行 OpenCV 绘制
 	outputImage = originalImage.clone();
 
 	if (needRenderOverlay) {
@@ -1077,32 +1080,44 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 	}
 
+	// 第三步：创建渲染纹理
+	obs_enter_graphics();
+	renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
+	obs_leave_graphics();
+
+	// 第四步：安全的 begin/end 渲染流程
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
+		// begin 失败，直接跳过滤镜
 		obs_source_skip_video_filter(tf->source);
 	} else {
+		// begin 成功，必须调用 end
 		gs_blend_state_push();
 		gs_reset_blend_state();
 
-		obs_enter_graphics();
-		renderTexture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&outputImage.data, 0);
-		obs_leave_graphics();
-
 		if (renderTexture) {
-			gs_draw_sprite(renderTexture, 0, width, height);
+			// 正确设置 effect 后再绘制
+			gs_effect_t *drawEffect = effect ? effect : obs_get_base_effect(OBS_EFFECT_DEFAULT);
+			gs_effect_set_texture(gs_effect_get_param_by_name(drawEffect, "image"), renderTexture);
+			while (gs_effect_loop(drawEffect, "Draw")) {
+				gs_draw_sprite(renderTexture, 0, width, height);
+			}
 		} else {
+			// 纹理创建失败，直接渲染原始源
 			obs_source_video_render(target);
 		}
 
-		obs_source_process_filter_end(tf->source, effect, width, height);
 		gs_blend_state_pop();
-
-		if (renderTexture) {
-			obs_enter_graphics();
-			gs_texture_destroy(renderTexture);
-			obs_leave_graphics();
-		}
+		obs_source_process_filter_end(tf->source, effect, width, height);
 	}
 
+	// 清理渲染纹理
+	if (renderTexture) {
+		obs_enter_graphics();
+		gs_texture_destroy(renderTexture);
+		obs_leave_graphics();
+	}
+
+	// 保存原始帧用于推理线程
 	{
 		std::unique_lock<std::mutex> lock(tf->inputBGRALock, std::try_to_lock);
 		if (lock.owns_lock()) {
@@ -1111,6 +1126,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 
 #ifdef _WIN32
+	// 更新浮动窗口
 	if (tf->showFloatingWindow) {
 		int cropWidth = tf->floatingWindowWidth;
 		int cropHeight = tf->floatingWindowHeight;
