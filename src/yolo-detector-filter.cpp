@@ -1167,7 +1167,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		obs_enter_graphics();
 		gs_texture_t *tempTexture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, 0);
 		if (tempTexture) {
-			gs_texture_set_image(tempTexture, labeledImage.data, labeledImage.step, false);
+			gs_texture_set_image(tempTexture, labeledImage.data, static_cast<uint32_t>(labeledImage.step), false);
 			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
 			gs_draw_sprite(tempTexture, 0, 0, 0);
 			gs_texture_destroy(tempTexture);
