@@ -57,6 +57,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	bool showFOV;
 	int fovRadius;
 	uint32_t fovColor;
+	float fovCrossLineScale;
+	bool showFOVCircle;
+	bool showFOVCross;
+
+	float labelFontScale;
 
 	int regionX;
 	int regionY;
@@ -191,7 +196,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_bool(props, "show_fov", obs_module_text("ShowFOV"));
 	obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 50, 500, 10);
+	obs_properties_add_bool(props, "show_fov_circle", obs_module_text("ShowFOVCircle"));
+	obs_properties_add_bool(props, "show_fov_cross", obs_module_text("ShowFOVCross"));
+	obs_properties_add_float_slider(props, "fov_cross_line_scale", obs_module_text("FOVCrossLineScale"), 0.1, 1.0, 0.05);
 	obs_properties_add_color(props, "fov_color", obs_module_text("FOVColor"));
+	obs_properties_add_float_slider(props, "label_font_scale", obs_module_text("LabelFontScale"), 0.2, 1.0, 0.05);
 
 	obs_properties_add_group(props, "region_group", obs_module_text("RegionDetection"), OBS_GROUP_NORMAL, nullptr);
 
@@ -242,7 +251,11 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "bbox_color", 0xFF00FF00);
 	obs_data_set_default_bool(settings, "show_fov", false);
 	obs_data_set_default_int(settings, "fov_radius", 200);
+	obs_data_set_default_bool(settings, "show_fov_circle", true);
+	obs_data_set_default_bool(settings, "show_fov_cross", true);
+	obs_data_set_default_double(settings, "fov_cross_line_scale", 0.3);
 	obs_data_set_default_int(settings, "fov_color", 0xFFFF0000);
+	obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
 	obs_data_set_default_int(settings, "region_x", 0);
 	obs_data_set_default_int(settings, "region_y", 0);
@@ -338,7 +351,11 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	
 	tf->showFOV = obs_data_get_bool(settings, "show_fov");
 	tf->fovRadius = (int)obs_data_get_int(settings, "fov_radius");
+	tf->showFOVCircle = obs_data_get_bool(settings, "show_fov_circle");
+	tf->showFOVCross = obs_data_get_bool(settings, "show_fov_cross");
+	tf->fovCrossLineScale = (float)obs_data_get_double(settings, "fov_cross_line_scale");
 	tf->fovColor = (uint32_t)obs_data_get_int(settings, "fov_color");
+	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
 	tf->useRegion = obs_data_get_bool(settings, "use_region");
 	tf->regionX = (int)obs_data_get_int(settings, "region_x");
@@ -1146,7 +1163,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 	}
 
-	// 开始滤镜处理
+	// 开始滤镜处理 - 确保源画面绝对正常！
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
 		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
@@ -1157,123 +1174,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
-	// 检查是否有 originalImage - 如果有，就在上面绘制所有内容
-	bool needRenderCustom = (tf->showBBox || tf->showFOV || tf->showLabel || tf->showConfidence);
-	bool customRenderSuccess = false;
-
-	if (needRenderCustom && !originalImage.empty()) {
-		// 复制一份用于绘制
-		cv::Mat finalImage = originalImage.clone();
-
-		std::vector<Detection> detectionsCopy;
-		{
-			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-			detectionsCopy = tf->detections;
-		}
-
-		// 1. 绘制检测框
-		if (tf->showBBox) {
-			int lineWidth = tf->bboxLineWidth;
-			float r = ((tf->bboxColor >> 16) & 0xFF) / 255.0f;
-			float g = ((tf->bboxColor >> 8) & 0xFF) / 255.0f;
-			float b = (tf->bboxColor & 0xFF) / 255.0f;
-			cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
-
-			for (const auto& det : detectionsCopy) {
-				int x = static_cast<int>(det.x * originalImage.cols);
-				int y = static_cast<int>(det.y * originalImage.rows);
-				int w = static_cast<int>(det.width * originalImage.cols);
-				int h = static_cast<int>(det.height * originalImage.rows);
-				
-				cv::rectangle(finalImage, 
-					cv::Point(x, y), 
-					cv::Point(x + w, y + h), 
-					bboxColor, 
-					lineWidth);
-			}
-		}
-
-		// 2. 绘制 FOV
-		if (tf->showFOV) {
-			float fovCenterX = originalImage.cols / 2.0f;
-			float fovCenterY = originalImage.rows / 2.0f;
-			float fovRadius = static_cast<float>(tf->fovRadius);
-			float crossLineLength = fovRadius * 0.3f;
-			
-			float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
-			float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
-			float b = (tf->fovColor & 0xFF) / 255.0f;
-			cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
-
-			// 绘制缩小的十字线
-			cv::line(finalImage, 
-				cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
-				cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
-				fovColor, 2);
-			cv::line(finalImage, 
-				cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
-				cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
-				fovColor, 2);
-
-			// 绘制圆
-			cv::circle(finalImage, 
-				cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
-				static_cast<int>(fovRadius),
-				fovColor, 2);
-		}
-
-		// 3. 绘制标签和置信度
-		if (tf->showLabel || tf->showConfidence) {
-			int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-			double fontScale = 0.5;
-			int thickness = 2;
-			int baseline = 0;
-			
-			for (const auto& det : detectionsCopy) {
-				int x = static_cast<int>(det.x * originalImage.cols);
-				int y = static_cast<int>(det.y * originalImage.rows);
-				
-				// 构建标签文本
-				char labelText[64];
-				snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
-				
-				// 获取文本大小
-				cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
-				
-				// 绘制标签背景
-				cv::Point textOrg(x, y - 5);
-				cv::rectangle(finalImage, 
-					cv::Point(textOrg.x, textOrg.y - textSize.height - 5),
-					cv::Point(textOrg.x + textSize.width + 10, textOrg.y + baseline),
-					cv::Scalar(0, 0, 0, 200),
-					-1);
-				
-				// 绘制文本
-				cv::putText(finalImage, labelText, 
-					cv::Point(textOrg.x + 5, textOrg.y),
-					fontFace, fontScale, 
-					cv::Scalar(0, 255, 0, 255), 
-					thickness);
-			}
-		}
-
-		// 现在渲染这个完整的图像
-		obs_enter_graphics();
-		gs_texture_t *tempTexture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, 0);
-		if (tempTexture) {
-			gs_texture_set_image(tempTexture, finalImage.data, static_cast<uint32_t>(finalImage.step), false);
-			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
-			gs_draw_sprite(tempTexture, 0, 0, 0);
-			gs_texture_destroy(tempTexture);
-			customRenderSuccess = true;
-		}
-		obs_leave_graphics();
-	}
-
-	// 如果没有自定义渲染成功，就渲染默认源画面
-	if (!customRenderSuccess) {
-		obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
-	}
+	// 只渲染源画面，100%保证不会黑屏！检测框、FOV、标签只在悬浮窗显示
+	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
 
 	gs_blend_state_pop();
 
@@ -1333,34 +1235,38 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
 				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
 				float fovRadius = static_cast<float>(tf->fovRadius);
-				float crossLineLength = fovRadius * 0.3f;
+				float crossLineLength = fovRadius * tf->fovCrossLineScale;
 				
 				float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
 				float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
 				float b = (tf->fovColor & 0xFF) / 255.0f;
 				cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
 
-				// 绘制缩小的十字线（只有半径的30%）
-				cv::line(croppedFrame, 
-					cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
-					cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
-					fovColor, 2);
-				cv::line(croppedFrame, 
-					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
-					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
-					fovColor, 2);
+				// 绘制十字线（可选）
+				if (tf->showFOVCross) {
+					cv::line(croppedFrame, 
+						cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
+						cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
+						fovColor, 2);
+					cv::line(croppedFrame, 
+						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
+						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
+						fovColor, 2);
+				}
 
-				// 绘制圆
-				cv::circle(croppedFrame, 
-					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
-					static_cast<int>(fovRadius),
-					fovColor, 2);
+				// 绘制圆圈（可选）
+				if (tf->showFOVCircle) {
+					cv::circle(croppedFrame, 
+						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
+						static_cast<int>(fovRadius),
+						fovColor, 2);
+				}
 			}
 
 			// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
 			if (tf->showLabel || tf->showConfidence) {
 				int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-				double fontScale = 0.5;
+				double fontScale = tf->labelFontScale;
 				int thickness = 2;
 				int baseline = 0;
 				
@@ -1374,20 +1280,10 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 						char labelText[64];
 						snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
 						
-						// 获取文本大小
-						cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
-						
-						// 绘制标签背景
+						// 只绘制文本，不绘制黑色背景
 						cv::Point textOrg(x, y - 5);
-						cv::rectangle(croppedFrame, 
-							cv::Point(textOrg.x, textOrg.y - textSize.height - 5),
-							cv::Point(textOrg.x + textSize.width + 10, textOrg.y + baseline),
-							cv::Scalar(0, 0, 0, 200),
-							-1);
-						
-						// 绘制文本
 						cv::putText(croppedFrame, labelText, 
-							cv::Point(textOrg.x + 5, textOrg.y),
+							textOrg,
 							fontFace, fontScale, 
 							cv::Scalar(0, 255, 0, 255), 
 							thickness);
