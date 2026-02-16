@@ -1099,39 +1099,45 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 		if (!renderTexture) {
 			obs_log(LOG_ERROR, "[YOLO] Failed to create overlay texture");
+			obs_source_skip_video_filter(tf->source);
+			return;
 		}
 
-		if (renderTexture) {
-			// 终极简单版本：直接用 OBS 的标准滤镜流程，正确使用 effect！
-			if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
-				gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-				gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
+		// 使用标准 OBS 滤镜渲染流程
+		if (obs_source_process_filter_begin(tf->source, GS_BGRA, OBS_ALLOW_DIRECT_RENDERING)) {
+			// 获取基础效果
+			gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+			gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
 
-				if (param) {
-					gs_effect_set_texture(param, renderTexture);
+			if (param) {
+				// 设置纹理参数
+				gs_effect_set_texture(param, renderTexture);
 
-					gs_blend_state_push();
-					gs_reset_blend_state();
+				// 保存并重置混合状态
+				gs_blend_state_push();
+				gs_reset_blend_state();
 
-					while (gs_effect_loop(effect, "Draw")) {
-						gs_draw_sprite(renderTexture, 0, width, height);
-					}
-
-					gs_blend_state_pop();
+				// 执行渲染循环
+				while (gs_effect_loop(effect, "Draw")) {
+					// 使用默认效果绘制纹理
+					gs_draw_sprite(nullptr, 0, width, height);
 				}
 
-				obs_source_process_filter_end(tf->source, effect, width, height);
-			} else {
-				obs_source_skip_video_filter(tf->source);
+				// 恢复混合状态
+				gs_blend_state_pop();
 			}
 
-			// 清理
-			obs_enter_graphics();
-			gs_texture_destroy(renderTexture);
-			obs_leave_graphics();
+			// 结束滤镜处理
+			obs_source_process_filter_end(tf->source, effect, width, height);
 		} else {
+			// 如果无法开始滤镜处理，直接渲染原始画面
 			obs_source_skip_video_filter(tf->source);
 		}
+
+		// 清理纹理资源
+		obs_enter_graphics();
+		gs_texture_destroy(renderTexture);
+		obs_leave_graphics();
 	}
 
 #ifdef _WIN32
