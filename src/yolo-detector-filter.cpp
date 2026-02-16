@@ -1095,10 +1095,16 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		gs_reset_blend_state();
 
 		if (renderTexture) {
-			// 直接绘制整张图贴回去，最简单的情况，根本不需要 effect loop！
-			gs_draw_sprite(renderTexture, 0, width, height);
+			gs_effect_t *drawEffect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+			gs_effect_set_texture(
+				gs_effect_get_param_by_name(drawEffect, "image"),
+				renderTexture);
+
+			while (gs_effect_loop(drawEffect, "Draw")) {
+				// ❗ 注意：nullptr，不要传 texture
+				gs_draw_sprite(nullptr, 0, width, height);
+			}
 		} else {
-			// 纹理创建失败，直接渲染原始源
 			obs_source_video_render(target);
 		}
 
