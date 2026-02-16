@@ -783,7 +783,7 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 	gs_technique_end(tech);
 }
 
-static void renderLabels(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+static void renderLabelsWithOpenCV(cv::Mat &image, yolo_detector_filter *filter)
 {
 	std::vector<Detection> detectionsCopy;
 	{
@@ -794,40 +794,40 @@ static void renderLabels(yolo_detector_filter *filter, uint32_t frameWidth, uint
 		detectionsCopy = filter->detections;
 	}
 
+	int frameWidth = image.cols;
+	int frameHeight = image.rows;
+	int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+	double fontScale = 0.5;
+	int thickness = 2;
+	int baseline = 0;
+
 	for (const auto& det : detectionsCopy) {
-		float x = det.x * frameWidth;
-		float y = det.y * frameHeight;
-		float w = det.width * frameWidth;
-		float h = det.height * frameHeight;
+		int x = static_cast<int>(det.x * frameWidth);
+		int y = static_cast<int>(det.y * frameHeight);
+		int w = static_cast<int>(det.width * frameWidth);
+		int h = static_cast<int>(det.height * frameHeight);
+
+		// 构建标签文本：类别ID(0-10) + 置信度(浮点数)
+		char labelText[64];
+		snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
+
+		// 获取文本大小
+		cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
 
 		// 绘制标签背景
-		gs_effect_t *solid = filter->solidEffect;
-		gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
-		gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+		cv::Point textOrg(x, y - 5);
+		cv::rectangle(image, 
+			cv::Point(textOrg.x, textOrg.y - textSize.height - 5),
+			cv::Point(textOrg.x + textSize.width + 10, textOrg.y + baseline),
+			cv::Scalar(0, 0, 0, 200),
+			-1);
 
-		struct vec4 bgColor;
-		vec4_set(&bgColor, 0.0f, 0.0f, 0.0f, 0.8f);
-
-		gs_technique_begin(tech);
-		gs_technique_begin_pass(tech, 0);
-		gs_effect_set_vec4(colorParam, &bgColor);
-
-		gs_render_start(true);
-		gs_vertex2f(x, y - 20);
-		gs_vertex2f(x + w, y - 20);
-		gs_vertex2f(x, y);
-		gs_vertex2f(x + w, y - 20);
-		gs_vertex2f(x + w, y);
-		gs_vertex2f(x, y);
-		gs_render_stop(GS_TRIS);
-
-		gs_technique_end_pass(tech);
-		gs_technique_end(tech);
-
-		// 绘制标签文本
-		// 这里需要使用OBS的文本渲染API，或者使用OpenCV绘制文本
-		// 由于OBS的文本渲染API比较复杂，这里暂时使用OpenCV绘制文本
-		// 注意：这里的实现可能会有性能问题，建议在实际使用中使用OBS的文本渲染API
+		// 绘制文本
+		cv::putText(image, labelText, 
+			cv::Point(textOrg.x + 5, textOrg.y),
+			fontFace, fontScale, 
+			cv::Scalar(0, 255, 0, 255), 
+			thickness);
 	}
 }
 
@@ -1094,9 +1094,10 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
-	bool needCapture = tf->showFloatingWindow || tf->isInferencing;
+	bool needShowLabels = tf->showLabel || tf->showConfidence;
+	bool needCapture = tf->showFloatingWindow || tf->isInferencing || needShowLabels;
 
-	// 捕获原始帧（用于推理和悬浮窗）
+	// 捕获原始帧（用于推理、悬浮窗和标签显示）
 	cv::Mat originalImage;
 	if (needCapture) {
 		obs_enter_graphics();
@@ -1145,7 +1146,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 	}
 
-	// 开始滤镜处理 - 使用修复指南中的正确实现！
+	// 开始滤镜处理
 	if (!obs_source_process_filter_begin(tf->source, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING)) {
 		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
@@ -1156,10 +1157,28 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
-	// 先渲染源画面
-	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+	// 如果需要显示标签，并且我们有 originalImage
+	if (needShowLabels && !originalImage.empty()) {
+		// 复制一份用于绘制
+		cv::Mat labeledImage = originalImage.clone();
+		renderLabelsWithOpenCV(labeledImage, tf.get());
 
-	// 然后在上面绘制检测框和 FOV
+		// 创建一个临时纹理并渲染
+		obs_enter_graphics();
+		gs_texture_t *tempTexture = gs_texture_create(width, height, GS_BGRA, 1, nullptr, 0);
+		if (tempTexture) {
+			gs_texture_set_image(tempTexture, labeledImage.data, labeledImage.step, false);
+			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
+			gs_draw_sprite(tempTexture, 0, 0, 0);
+			gs_texture_destroy(tempTexture);
+		}
+		obs_leave_graphics();
+	} else {
+		// 渲染默认效果
+		obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+	}
+
+	// 绘制检测框和 FOV
 	if (tf->showBBox) {
 		renderDetectionBoxes(tf.get(), width, height);
 	}
