@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
+#include "MouseController.hpp"
 #endif
 
 #include <opencv2/imgproc.hpp>
@@ -100,6 +101,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	HWND floatingWindowHandle;
 	std::mutex floatingWindowMutex;
 	cv::Mat floatingWindowFrame;
+
+	bool enableMouseControl;
+	int mouseControlHotkey;
+	int mouseMoveDurationMs;
+	int mouseControlFovRadius;
+	std::unique_ptr<MouseController> mouseController;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -233,6 +240,17 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_bool(props, "show_floating_window", obs_module_text("ShowFloatingWindow"));
 	obs_properties_add_int_slider(props, "floating_window_width", obs_module_text("WindowWidth"), 320, 1920, 10);
 	obs_properties_add_int_slider(props, "floating_window_height", obs_module_text("WindowHeight"), 240, 1080, 10);
+
+	obs_properties_add_group(props, "mouse_control_group", obs_module_text("MouseControl"), OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "enable_mouse_control", obs_module_text("EnableMouseControl"));
+	obs_property_t *hotkeyList = obs_properties_add_list(props, "mouse_control_hotkey", obs_module_text("MouseControlHotkey"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(hotkeyList, "XButton1 (Mouse Side 1)", VK_XBUTTON1);
+	obs_property_list_add_int(hotkeyList, "XButton2 (Mouse Side 2)", VK_XBUTTON2);
+	obs_property_list_add_int(hotkeyList, "Space", VK_SPACE);
+	obs_property_list_add_int(hotkeyList, "Shift", VK_SHIFT);
+	obs_property_list_add_int(hotkeyList, "Control", VK_CONTROL);
+	obs_properties_add_int_slider(props, "mouse_move_duration", obs_module_text("MouseMoveDuration"), 100, 2000, 100);
+	obs_properties_add_int_slider(props, "mouse_control_fov_radius", obs_module_text("MouseControlFovRadius"), 50, 500, 10);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -276,6 +294,11 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "show_floating_window", false);
 	obs_data_set_default_int(settings, "floating_window_width", 640);
 	obs_data_set_default_int(settings, "floating_window_height", 480);
+
+	obs_data_set_default_bool(settings, "enable_mouse_control", false);
+	obs_data_set_default_int(settings, "mouse_control_hotkey", VK_XBUTTON1);
+	obs_data_set_default_int(settings, "mouse_move_duration", 500);
+	obs_data_set_default_int(settings, "mouse_control_fov_radius", 200);
 #endif
 }
 
@@ -396,6 +419,26 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		} else {
 			destroyFloatingWindow(tf.get());
 		}
+	}
+
+	tf->enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
+	tf->mouseControlHotkey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
+	tf->mouseMoveDurationMs = (int)obs_data_get_int(settings, "mouse_move_duration");
+	tf->mouseControlFovRadius = (int)obs_data_get_int(settings, "mouse_control_fov_radius");
+
+	if (tf->mouseController && tf->enableMouseControl) {
+		MouseControllerConfig mcConfig;
+		mcConfig.enableMouseControl = tf->enableMouseControl;
+		mcConfig.hotkeyVirtualKey = tf->mouseControlHotkey;
+		mcConfig.moveDurationMs = tf->mouseMoveDurationMs;
+		mcConfig.fovRadiusPixels = tf->mouseControlFovRadius;
+		mcConfig.sourceCanvasPosX = 0.0f;
+		mcConfig.sourceCanvasPosY = 0.0f;
+		mcConfig.sourceCanvasScaleX = 1.0f;
+		mcConfig.sourceCanvasScaleY = 1.0f;
+		mcConfig.sourceWidth = obs_source_get_base_width(tf->source);
+		mcConfig.sourceHeight = obs_source_get_base_height(tf->source);
+		tf->mouseController->updateConfig(mcConfig);
 	}
 #endif
 
@@ -962,6 +1005,12 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->floatingWindowY = 0;
 		instance->floatingWindowDragging = false;
 		instance->floatingWindowHandle = nullptr;
+
+		instance->enableMouseControl = false;
+		instance->mouseControlHotkey = VK_XBUTTON1;
+		instance->mouseMoveDurationMs = 500;
+		instance->mouseControlFovRadius = 200;
+		instance->mouseController = std::make_unique<MouseController>();
 #endif
 
 		// Create pointer to shared_ptr for the update call
@@ -1087,6 +1136,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		tf->frameCounter = 0;
 		tf->shouldInference = true;
 	}
+
+#ifdef _WIN32
+	if (tf->mouseController && tf->enableMouseControl) {
+		std::vector<Detection> detectionsCopy;
+		{
+			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+			detectionsCopy = tf->detections;
+		}
+		tf->mouseController->setDetections(detectionsCopy);
+		tf->mouseController->tick();
+	}
+#endif
 }
 
 void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)

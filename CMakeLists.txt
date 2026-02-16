@@ -225,6 +225,14 @@ target_sources(
     src/yolo-detector-filter.cpp
     src/models/ModelYOLO.cpp
 )
+
+if(WIN32)
+  target_sources(
+    ${CMAKE_PROJECT_NAME}
+    PRIVATE
+      src/MouseController.cpp
+  )
+endif()
 target_compile_options(
   ${CMAKE_PROJECT_NAME}
   PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-error=unused-command-line-argument>
