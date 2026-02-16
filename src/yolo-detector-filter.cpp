@@ -691,10 +691,13 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
-	std::lock_guard<std::mutex> lock(filter->detectionsMutex);
-
-	if (filter->detections.empty()) {
-		return;
+	std::vector<Detection> detectionsCopy;
+	{
+		std::lock_guard<std::mutex> lock(filter->detectionsMutex);
+		if (filter->detections.empty()) {
+			return;
+		}
+		detectionsCopy = filter->detections;
 	}
 
 	gs_effect_t *solid = filter->solidEffect;
@@ -704,7 +707,7 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 	gs_technique_begin(tech);
 	gs_technique_begin_pass(tech, 0);
 
-	for (const auto& det : filter->detections) {
+	for (const auto& det : detectionsCopy) {
 		float x = det.x * frameWidth;
 		float y = det.y * frameHeight;
 		float w = det.width * frameWidth;
@@ -945,10 +948,6 @@ void yolo_detector_filter_destroy(void *data)
 		gs_stagesurface_destroy(tf->stagesurface);
 		tf->stagesurface = nullptr;
 	}
-	if (tf->overlayTexture) {
-		gs_texture_destroy(tf->overlayTexture);
-		tf->overlayTexture = nullptr;
-	}
 	obs_leave_graphics();
 
 	delete ptr;
@@ -1115,7 +1114,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 
 	gs_blend_state_push();
-	gs_reset_blend_state();
+	gs_blend_function(GS_BLEND_SRC_ALPHA, GS_BLEND_INV_SRC_ALPHA);
 
 	// 先渲染源画面
 	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
