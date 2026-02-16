@@ -57,10 +57,13 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	bool showFOV;
 	int fovRadius;
 	uint32_t fovColor;
-	float fovCrossLineScale;
+	int fovCrossLineScale;
+	int fovCrossLineThickness;
+	int fovCircleThickness;
 	bool showFOVCircle;
 	bool showFOVCross;
 
+	bool showDetectionResults;
 	float labelFontScale;
 
 	int regionX;
@@ -182,6 +185,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_group(props, "render_group", obs_module_text("RenderConfiguration"), OBS_GROUP_NORMAL, nullptr);
 
+	obs_properties_add_bool(props, "show_detection_results", obs_module_text("ShowDetectionResults"));
 	obs_properties_add_bool(props, "show_bbox", obs_module_text("ShowBoundingBox"));
 
 	obs_properties_add_bool(props, "show_label", obs_module_text("ShowLabel"));
@@ -198,7 +202,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 50, 500, 10);
 	obs_properties_add_bool(props, "show_fov_circle", obs_module_text("ShowFOVCircle"));
 	obs_properties_add_bool(props, "show_fov_cross", obs_module_text("ShowFOVCross"));
-	obs_properties_add_float_slider(props, "fov_cross_line_scale", obs_module_text("FOVCrossLineScale"), 0.1, 1.0, 0.05);
+	obs_properties_add_int_slider(props, "fov_cross_line_scale", obs_module_text("FOVCrossLineScale"), 1, 300, 5);
+	obs_properties_add_int_slider(props, "fov_cross_line_thickness", obs_module_text("FOVCrossLineThickness"), 1, 10, 1);
+	obs_properties_add_int_slider(props, "fov_circle_thickness", obs_module_text("FOVCircleThickness"), 1, 10, 1);
 	obs_properties_add_color(props, "fov_color", obs_module_text("FOVColor"));
 	obs_properties_add_float_slider(props, "label_font_scale", obs_module_text("LabelFontScale"), 0.2, 1.0, 0.05);
 
@@ -244,6 +250,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "nms_threshold", 0.45);
 	obs_data_set_default_int(settings, "target_class", -1);
 	obs_data_set_default_int(settings, "inference_interval_frames", 1);
+	obs_data_set_default_bool(settings, "show_detection_results", true);
 	obs_data_set_default_bool(settings, "show_bbox", true);
 	obs_data_set_default_bool(settings, "show_label", true);
 	obs_data_set_default_bool(settings, "show_confidence", true);
@@ -253,7 +260,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "fov_radius", 200);
 	obs_data_set_default_bool(settings, "show_fov_circle", true);
 	obs_data_set_default_bool(settings, "show_fov_cross", true);
-	obs_data_set_default_double(settings, "fov_cross_line_scale", 0.3);
+	obs_data_set_default_int(settings, "fov_cross_line_scale", 100);
+	obs_data_set_default_int(settings, "fov_cross_line_thickness", 2);
+	obs_data_set_default_int(settings, "fov_circle_thickness", 2);
 	obs_data_set_default_int(settings, "fov_color", 0xFFFF0000);
 	obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -343,9 +352,11 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		}
 	}
 	
-	tf->showBBox = obs_data_get_bool(settings, "show_bbox");
-	tf->showLabel = obs_data_get_bool(settings, "show_label");
-	tf->showConfidence = obs_data_get_bool(settings, "show_confidence");
+	bool showDetectionResults = obs_data_get_bool(settings, "show_detection_results");
+	tf-&gt;showDetectionResults = showDetectionResults;
+	tf-&gt;showBBox = showDetectionResults;
+	tf-&gt;showLabel = showDetectionResults;
+	tf-&gt;showConfidence = showDetectionResults;
 	tf->bboxLineWidth = (int)obs_data_get_int(settings, "bbox_line_width");
 	tf->bboxColor = (uint32_t)obs_data_get_int(settings, "bbox_color");
 	
@@ -353,7 +364,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->fovRadius = (int)obs_data_get_int(settings, "fov_radius");
 	tf->showFOVCircle = obs_data_get_bool(settings, "show_fov_circle");
 	tf->showFOVCross = obs_data_get_bool(settings, "show_fov_cross");
-	tf->fovCrossLineScale = (float)obs_data_get_double(settings, "fov_cross_line_scale");
+	tf->fovCrossLineScale = (int)obs_data_get_int(settings, "fov_cross_line_scale");
+	tf->fovCrossLineThickness = (int)obs_data_get_int(settings, "fov_cross_line_thickness");
+	tf->fovCircleThickness = (int)obs_data_get_int(settings, "fov_circle_thickness");
 	tf->fovColor = (uint32_t)obs_data_get_int(settings, "fov_color");
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -932,7 +945,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->totalFrames = 0;
 		instance->inferenceCount = 0;
 		instance->avgInferenceTimeMs = 0.0;
-		instance->isInferencing = true;
+		instance->isInferencing = false;
 		instance->lastFpsTime = std::chrono::high_resolution_clock::now();
 		instance->fpsFrameCount = 0;
 		instance->currentFps = 0.0;
@@ -1235,7 +1248,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
 				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
 				float fovRadius = static_cast<float>(tf->fovRadius);
-				float crossLineLength = fovRadius * tf->fovCrossLineScale;
+				float crossLineLength = static_cast<float>(tf->fovCrossLineScale);
 				
 				float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
 				float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
@@ -1247,11 +1260,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					cv::line(croppedFrame, 
 						cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
 						cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
-						fovColor, 2);
+						fovColor, tf->fovCrossLineThickness);
 					cv::line(croppedFrame, 
 						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
 						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
-						fovColor, 2);
+						fovColor, tf->fovCrossLineThickness);
 				}
 
 				// 绘制圆圈（可选）
@@ -1259,7 +1272,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					cv::circle(croppedFrame, 
 						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
 						static_cast<int>(fovRadius),
-						fovColor, 2);
+						fovColor, tf->fovCircleThickness);
 				}
 			}
 
