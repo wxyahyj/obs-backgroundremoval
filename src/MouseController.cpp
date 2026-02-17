@@ -146,21 +146,24 @@ Detection* MouseController::selectTarget()
 
 POINT MouseController::convertToScreenCoordinates(const Detection& det)
 {
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
     float sourcePixelX = det.centerX * config.sourceWidth;
     float sourcePixelY = det.centerY * config.sourceHeight;
 
-    float canvasPixelX = config.sourceCanvasPosX + sourcePixelX * config.sourceCanvasScaleX;
-    float canvasPixelY = config.sourceCanvasPosY + sourcePixelY * config.sourceCanvasScaleY;
+    float screenScaleX = (config.screenWidth > 0) ? (float)config.screenWidth / config.sourceWidth : 1.0f;
+    float screenScaleY = (config.screenHeight > 0) ? (float)config.screenHeight / config.sourceHeight : 1.0f;
+
+    float screenPixelX = config.screenOffsetX + sourcePixelX * screenScaleX;
+    float screenPixelY = config.screenOffsetY + sourcePixelY * screenScaleY;
 
     POINT result;
-    result.x = static_cast<LONG>(canvasPixelX);
-    result.y = static_cast<LONG>(canvasPixelY);
+    result.x = static_cast<LONG>(screenPixelX);
+    result.y = static_cast<LONG>(screenPixelY);
 
-    LONG maxX = static_cast<LONG>(screenWidth - 1);
-    LONG maxY = static_cast<LONG>(screenHeight - 1);
+    LONG maxX = static_cast<LONG>(fullScreenWidth - 1);
+    LONG maxY = static_cast<LONG>(fullScreenHeight - 1);
     
     result.x = std::max(0L, std::min(result.x, maxX));
     result.y = std::max(0L, std::min(result.y, maxY));

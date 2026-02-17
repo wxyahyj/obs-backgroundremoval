@@ -117,6 +117,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float maxAcceleration;
 	float maxJerk;
 	float sCurveTime;
+	int screenOffsetX;
+	int screenOffsetY;
+	int screenWidth;
+	int screenHeight;
 	std::unique_ptr<MouseController> mouseController;
 #endif
 
@@ -284,6 +288,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_float_slider(props, "max_acceleration", obs_module_text("MaxAcceleration"), 0.0, 10000.0, 500.0);
 	obs_properties_add_float_slider(props, "max_jerk", obs_module_text("MaxJerk"), 0.0, 100000.0, 5000.0);
 	obs_properties_add_float_slider(props, "s_curve_time", obs_module_text("SCurveTime"), 0.1, 2.0, 0.1);
+	
+	obs_properties_add_int(props, "screen_offset_x", obs_module_text("ScreenOffsetX"), 0, 3840, 1);
+	obs_properties_add_int(props, "screen_offset_y", obs_module_text("ScreenOffsetY"), 0, 2160, 1);
+	obs_properties_add_int(props, "screen_width", obs_module_text("ScreenWidth"), 0, 3840, 1);
+	obs_properties_add_int(props, "screen_height", obs_module_text("ScreenHeight"), 0, 2160, 1);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -343,6 +352,10 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "max_acceleration", 5000.0);
 	obs_data_set_default_double(settings, "max_jerk", 50000.0);
 	obs_data_set_default_double(settings, "s_curve_time", 0.5);
+	obs_data_set_default_int(settings, "screen_offset_x", 0);
+	obs_data_set_default_int(settings, "screen_offset_y", 0);
+	obs_data_set_default_int(settings, "screen_width", 0);
+	obs_data_set_default_int(settings, "screen_height", 0);
 #endif
 }
 
@@ -480,6 +493,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->maxAcceleration = (float)obs_data_get_double(settings, "max_acceleration");
 	tf->maxJerk = (float)obs_data_get_double(settings, "max_jerk");
 	tf->sCurveTime = (float)obs_data_get_double(settings, "s_curve_time");
+	tf->screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
+	tf->screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
+	tf->screenWidth = (int)obs_data_get_int(settings, "screen_width");
+	tf->screenHeight = (int)obs_data_get_int(settings, "screen_height");
 
 	if (tf->mouseController && tf->enableMouseControl) {
 		MouseControllerConfig mcConfig;
@@ -505,6 +522,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		mcConfig.sourceCanvasScaleY = 1.0f;
 		mcConfig.sourceWidth = obs_source_get_base_width(tf->source);
 		mcConfig.sourceHeight = obs_source_get_base_height(tf->source);
+		mcConfig.screenOffsetX = tf->screenOffsetX;
+		mcConfig.screenOffsetY = tf->screenOffsetY;
+		mcConfig.screenWidth = tf->screenWidth;
+		mcConfig.screenHeight = tf->screenHeight;
 		tf->mouseController->updateConfig(mcConfig);
 	}
 #endif
@@ -1088,6 +1109,10 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->maxAcceleration = 5000.0f;
 		instance->maxJerk = 50000.0f;
 		instance->sCurveTime = 0.5f;
+		instance->screenOffsetX = 0;
+		instance->screenOffsetY = 0;
+		instance->screenWidth = 0;
+		instance->screenHeight = 0;
 		instance->mouseController = std::make_unique<MouseController>();
 #endif
 

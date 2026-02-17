@@ -19,6 +19,10 @@ struct MouseControllerConfig {
     float sourceCanvasScaleY;
     int sourceWidth;
     int sourceHeight;
+    int screenOffsetX;
+    int screenOffsetY;
+    int screenWidth;
+    int screenHeight;
     float pidPMin;
     float pidPMax;
     float pidPSlope;
