@@ -89,6 +89,9 @@ void MouseController::tick()
     float pdOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
     float pdOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
     
+    float baselineX = errorX * config.baselineCompensation;
+    float baselineY = errorY * config.baselineCompensation;
+    
     float moveX = pdOutputX + baselineX;
     float moveY = pdOutputY + baselineY;
     
