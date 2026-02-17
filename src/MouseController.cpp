@@ -45,74 +45,77 @@ void MouseController::tick()
         return;
     }
 
-    if (isMoving) {
-        if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
+    if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
+        if (isMoving) {
             isMoving = false;
             resetPidState();
             resetMotionState();
-            return;
         }
-        
-        POINT currentPos;
-        GetCursorPos(&currentPos);
-        
-        float errorX = static_cast<float>(targetPos.x - currentPos.x);
-        float errorY = static_cast<float>(targetPos.y - currentPos.y);
-        
-        float distance = std::sqrt(errorX * errorX + errorY * errorY);
-        
-        if (distance < config.deadZonePixels) {
-            isMoving = false;
-            resetPidState();
-            resetMotionState();
-            return;
-        }
-        
-        float dynamicP = calculateDynamicP(distance);
-        float pidOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
-        float pidOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
-        
-        float baselineX = errorX * config.baselineCompensation;
-        float baselineY = errorY * config.baselineCompensation;
-        
-        float moveX = pidOutputX + baselineX;
-        float moveY = pidOutputY + baselineY;
-        
-        float moveDist = std::sqrt(moveX * moveX + moveY * moveY);
-        if (moveDist > config.maxPixelMove && moveDist > 0.0f) {
-            float scale = config.maxPixelMove / moveDist;
-            moveX *= scale;
-            moveY *= scale;
-        }
-        
-        float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
-        float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
-        
-        previousMoveX = finalMoveX;
-        previousMoveY = finalMoveY;
-        
-        float newPosX = static_cast<float>(currentPos.x) + finalMoveX;
-        float newPosY = static_cast<float>(currentPos.y) + finalMoveY;
-        
-        POINT newPos;
-        newPos.x = static_cast<LONG>(newPosX);
-        newPos.y = static_cast<LONG>(newPosY);
-        
-        moveMouseTo(newPos);
-        
-        pidPreviousErrorX = errorX;
-        pidPreviousErrorY = errorY;
-        
         return;
     }
 
-    if (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) {
-        Detection* target = selectTarget();
-        if (target) {
-            POINT screenPos = convertToScreenCoordinates(*target);
-            startMouseMovement(screenPos);
+    Detection* target = selectTarget();
+    if (!target) {
+        if (isMoving) {
+            isMoving = false;
+            resetPidState();
+            resetMotionState();
         }
+        return;
     }
+
+    POINT targetScreenPos = convertToScreenCoordinates(*target);
+    
+    POINT currentPos;
+    GetCursorPos(&currentPos);
+    
+    float errorX = static_cast<float>(targetScreenPos.x - currentPos.x);
+    float errorY = static_cast<float>(targetScreenPos.y - currentPos.y);
+    
+    float distance = std::sqrt(errorX * errorX + errorY * errorY);
+    
+    if (distance < config.deadZonePixels) {
+        if (isMoving) {
+            isMoving = false;
+            resetPidState();
+            resetMotionState();
+        }
+        return;
+    }
+
+    isMoving = true;
+    
+    float dynamicP = calculateDynamicP(distance);
+    float pdOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
+    float pdOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
+    
+    float moveX = pdOutputX;
+    float moveY = pdOutputY;
+    
+    float moveDist = std::sqrt(moveX * moveX + moveY * moveY);
+    if (moveDist > config.maxPixelMove && moveDist > 0.0f) {
+        float scale = config.maxPixelMove / moveDist;
+        moveX *= scale;
+        moveY *= scale;
+    }
+    
+    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
+    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
+    
+    previousMoveX = finalMoveX;
+    previousMoveY = finalMoveY;
+    
+    float newPosX = static_cast<float>(currentPos.x) + finalMoveX;
+    float newPosY = static_cast<float>(currentPos.y) + finalMoveY;
+    
+    POINT newPos;
+    newPos.x = static_cast<LONG>(newPosX);
+    newPos.y = static_cast<LONG>(newPosY);
+    
+    moveMouseTo(newPos);
+    
+    pidPreviousErrorX = errorX;
+    pidPreviousErrorY = errorY;
 }
 
 Detection* MouseController::selectTarget()
