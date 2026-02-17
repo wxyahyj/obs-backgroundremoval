@@ -14,6 +14,8 @@ MouseController::MouseController()
     , currentAccelerationY(0.0f)
     , sCurveProgress(0.0f)
     , sCurveTotalTime(0.0f)
+    , previousMoveX(0.0f)
+    , previousMoveY(0.0f)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -67,80 +69,34 @@ void MouseController::tick()
         }
         
         float dynamicP = calculateDynamicP(distance);
-        float targetVelX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
-        float targetVelY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
+        float pidOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
+        float pidOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
         
-        float targetSpeed = std::sqrt(targetVelX * targetVelX + targetVelY * targetVelY);
-        if (targetSpeed > 0.0f && targetSpeed < config.baselineCompensation && distance > config.deadZonePixels) {
-            float scale = config.baselineCompensation / targetSpeed;
-            targetVelX *= scale;
-            targetVelY *= scale;
+        float baselineX = errorX * config.baselineCompensation;
+        float baselineY = errorY * config.baselineCompensation;
+        
+        float moveX = pidOutputX + baselineX;
+        float moveY = pidOutputY + baselineY;
+        
+        float moveDist = std::sqrt(moveX * moveX + moveY * moveY);
+        if (moveDist > config.maxPixelMove && moveDist > 0.0f) {
+            float scale = config.maxPixelMove / moveDist;
+            moveX *= scale;
+            moveY *= scale;
         }
         
-        targetSpeed = std::sqrt(targetVelX * targetVelX + targetVelY * targetVelY);
-        if (targetSpeed > config.maxSpeedPixelsPerSec && targetSpeed > 0.0f) {
-            float scale = config.maxSpeedPixelsPerSec / targetSpeed;
-            targetVelX *= scale;
-            targetVelY *= scale;
-        }
+        float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
+        float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
         
-        float deltaTime = 11.11f / 1000.0f;
+        previousMoveX = finalMoveX;
+        previousMoveY = finalMoveY;
         
-        float initialVelX = currentVelocityX;
-        float initialVelY = currentVelocityY;
-        
-        float accelTime = config.sCurveTime;
-        float sCurveT = sCurveProgress / accelTime;
-        sCurveT = std::max(0.0f, std::min(1.0f, sCurveT));
-        float sCurveFactor = sCurve(sCurveT);
-        
-        float blendedVelX = initialVelX + (targetVelX - initialVelX) * sCurveFactor;
-        float blendedVelY = initialVelY + (targetVelY - initialVelY) * sCurveFactor;
-        
-        float desiredAccelX = (blendedVelX - currentVelocityX) / deltaTime;
-        float desiredAccelY = (blendedVelY - currentVelocityY) / deltaTime;
-        
-        float desiredAccel = std::sqrt(desiredAccelX * desiredAccelX + desiredAccelY * desiredAccelY);
-        if (desiredAccel > config.maxAcceleration && desiredAccel > 0.0f) {
-            float scale = config.maxAcceleration / desiredAccel;
-            desiredAccelX *= scale;
-            desiredAccelY *= scale;
-        }
-        
-        float jerkX = (desiredAccelX - currentAccelerationX) / deltaTime;
-        float jerkY = (desiredAccelY - currentAccelerationY) / deltaTime;
-        
-        float jerk = std::sqrt(jerkX * jerkX + jerkY * jerkY);
-        if (jerk > config.maxJerk && jerk > 0.0f) {
-            float scale = config.maxJerk / jerk;
-            jerkX *= scale;
-            jerkY *= scale;
-        }
-        
-        currentAccelerationX += jerkX * deltaTime;
-        currentAccelerationY += jerkY * deltaTime;
-        
-        currentVelocityX += currentAccelerationX * deltaTime;
-        currentVelocityY += currentAccelerationY * deltaTime;
-        
-        float currentSpeed = std::sqrt(currentVelocityX * currentVelocityX + currentVelocityY * currentVelocityY);
-        if (currentSpeed > config.maxSpeedPixelsPerSec && currentSpeed > 0.0f) {
-            float scale = config.maxSpeedPixelsPerSec / currentSpeed;
-            currentVelocityX *= scale;
-            currentVelocityY *= scale;
-        }
-        
-        float newPosX = static_cast<float>(currentPos.x) + currentVelocityX * deltaTime;
-        float newPosY = static_cast<float>(currentPos.y) + currentVelocityY * deltaTime;
+        float newPosX = static_cast<float>(currentPos.x) + finalMoveX;
+        float newPosY = static_cast<float>(currentPos.y) + finalMoveY;
         
         POINT newPos;
         newPos.x = static_cast<LONG>(newPosX);
         newPos.y = static_cast<LONG>(newPosY);
-        
-        sCurveProgress += deltaTime;
-        if (sCurveProgress > accelTime) {
-            sCurveProgress = accelTime;
-        }
         
         moveMouseTo(newPos);
         
@@ -251,7 +207,10 @@ float MouseController::sCurve(float t)
 
 float MouseController::calculateDynamicP(float distance)
 {
-    float p = config.pidPMin + (config.pidPMax - config.pidPMin) * (1.0f - std::exp(-distance / config.pidPSlope));
+    float normalizedDistance = distance / static_cast<float>(config.fovRadiusPixels);
+    normalizedDistance = std::max(0.0f, std::min(1.0f, normalizedDistance));
+    float distancePower = std::pow(normalizedDistance, config.pidPSlope);
+    float p = config.pidPMin + (config.pidPMax - config.pidPMin) * distancePower;
     return std::max(config.pidPMin, std::min(config.pidPMax, p));
 }
 
@@ -263,6 +222,8 @@ void MouseController::resetMotionState()
     currentAccelerationY = 0.0f;
     sCurveProgress = 0.0f;
     sCurveTotalTime = 0.0f;
+    previousMoveX = 0.0f;
+    previousMoveY = 0.0f;
 }
 
 #endif

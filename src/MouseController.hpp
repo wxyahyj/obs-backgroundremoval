@@ -24,6 +24,9 @@ struct MouseControllerConfig {
     float pidPSlope;
     float pidD;
     float baselineCompensation;
+    float aimSmoothingX;
+    float aimSmoothingY;
+    float maxPixelMove;
     float maxSpeedPixelsPerSec;
     float deadZonePixels;
     float maxAcceleration;
@@ -58,6 +61,9 @@ private:
     
     float sCurveProgress;
     float sCurveTotalTime;
+    
+    float previousMoveX;
+    float previousMoveY;
     
     float pidPreviousErrorX;
     float pidPreviousErrorY;
