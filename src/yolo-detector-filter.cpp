@@ -104,13 +104,16 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	bool enableMouseControl;
 	int mouseControlHotkey;
-	float mouseControlP;
-	float mouseControlI;
+	float mouseControlPMin;
+	float mouseControlPMax;
+	float mouseControlPSlope;
 	float mouseControlD;
-	float bezierControlMinRadius;
-	float bezierControlMaxRadius;
-	float filterSmoothing;
+	float baselineCompensation;
 	float maxSpeedPixelsPerSec;
+	float deadZonePixels;
+	float maxAcceleration;
+	float maxJerk;
+	float sCurveTime;
 	std::unique_ptr<MouseController> mouseController;
 #endif
 
@@ -264,14 +267,17 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(hotkeyList, "F1", VK_F1);
 	obs_property_list_add_int(hotkeyList, "F2", VK_F2);
 	
-	obs_properties_add_float_slider(props, "mouse_control_p", obs_module_text("MouseControlP"), 0.01, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_i", obs_module_text("MouseControlI"), 0.0, 0.5, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_min", obs_module_text("MouseControlPMin"), 0.01, 1.0, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_max", obs_module_text("MouseControlPMax"), 0.1, 1.0, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_slope", obs_module_text("MouseControlPSlope"), 0.0, 200.0, 10.0);
 	obs_properties_add_float_slider(props, "mouse_control_d", obs_module_text("MouseControlD"), 0.001, 0.1, 0.001);
+	obs_properties_add_float_slider(props, "baseline_compensation", obs_module_text("BaselineCompensation"), 0.0, 500.0, 10.0);
 	
-	obs_properties_add_float_slider(props, "bezier_control_min_radius", obs_module_text("BezierControlMinRadius"), 0.1, 0.5, 0.05);
-	obs_properties_add_float_slider(props, "bezier_control_max_radius", obs_module_text("BezierControlMaxRadius"), 0.3, 0.8, 0.05);
-	obs_properties_add_float_slider(props, "filter_smoothing", obs_module_text("FilterSmoothing"), 0.1, 0.9, 0.05);
-	obs_properties_add_int_slider(props, "max_speed_pixels_per_sec", obs_module_text("MaxSpeedPixelsPerSec"), 1000, 10000, 500);
+	obs_properties_add_int_slider(props, "max_speed_pixels_per_sec", obs_module_text("MaxSpeedPixelsPerSec"), 0, 10000, 500);
+	obs_properties_add_float_slider(props, "dead_zone_pixels", obs_module_text("DeadZonePixels"), 0.0, 20.0, 0.5);
+	obs_properties_add_float_slider(props, "max_acceleration", obs_module_text("MaxAcceleration"), 0.0, 10000.0, 500.0);
+	obs_properties_add_float_slider(props, "max_jerk", obs_module_text("MaxJerk"), 0.0, 100000.0, 5000.0);
+	obs_properties_add_float_slider(props, "s_curve_time", obs_module_text("SCurveTime"), 0.1, 2.0, 0.1);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -318,13 +324,16 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 
 	obs_data_set_default_bool(settings, "enable_mouse_control", false);
 	obs_data_set_default_int(settings, "mouse_control_hotkey", VK_XBUTTON1);
-	obs_data_set_default_double(settings, "mouse_control_p", 0.05);
-	obs_data_set_default_double(settings, "mouse_control_i", 0.0);
+	obs_data_set_default_double(settings, "mouse_control_p_min", 0.02);
+	obs_data_set_default_double(settings, "mouse_control_p_max", 0.1);
+	obs_data_set_default_double(settings, "mouse_control_p_slope", 50.0);
 	obs_data_set_default_double(settings, "mouse_control_d", 0.005);
-	obs_data_set_default_double(settings, "bezier_control_min_radius", 0.2);
-	obs_data_set_default_double(settings, "bezier_control_max_radius", 0.5);
-	obs_data_set_default_double(settings, "filter_smoothing", 0.5);
+	obs_data_set_default_double(settings, "baseline_compensation", 50.0);
 	obs_data_set_default_int(settings, "max_speed_pixels_per_sec", 2000);
+	obs_data_set_default_double(settings, "dead_zone_pixels", 2.0);
+	obs_data_set_default_double(settings, "max_acceleration", 5000.0);
+	obs_data_set_default_double(settings, "max_jerk", 50000.0);
+	obs_data_set_default_double(settings, "s_curve_time", 0.5);
 #endif
 }
 
@@ -449,26 +458,32 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 
 	tf->enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
 	tf->mouseControlHotkey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
-	tf->mouseControlP = (float)obs_data_get_double(settings, "mouse_control_p");
-	tf->mouseControlI = (float)obs_data_get_double(settings, "mouse_control_i");
+	tf->mouseControlPMin = (float)obs_data_get_double(settings, "mouse_control_p_min");
+	tf->mouseControlPMax = (float)obs_data_get_double(settings, "mouse_control_p_max");
+	tf->mouseControlPSlope = (float)obs_data_get_double(settings, "mouse_control_p_slope");
 	tf->mouseControlD = (float)obs_data_get_double(settings, "mouse_control_d");
-	tf->bezierControlMinRadius = (float)obs_data_get_double(settings, "bezier_control_min_radius");
-	tf->bezierControlMaxRadius = (float)obs_data_get_double(settings, "bezier_control_max_radius");
-	tf->filterSmoothing = (float)obs_data_get_double(settings, "filter_smoothing");
+	tf->baselineCompensation = (float)obs_data_get_double(settings, "baseline_compensation");
 	tf->maxSpeedPixelsPerSec = (float)obs_data_get_int(settings, "max_speed_pixels_per_sec");
+	tf->deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
+	tf->maxAcceleration = (float)obs_data_get_double(settings, "max_acceleration");
+	tf->maxJerk = (float)obs_data_get_double(settings, "max_jerk");
+	tf->sCurveTime = (float)obs_data_get_double(settings, "s_curve_time");
 
 	if (tf->mouseController && tf->enableMouseControl) {
 		MouseControllerConfig mcConfig;
 		mcConfig.enableMouseControl = tf->enableMouseControl;
 		mcConfig.hotkeyVirtualKey = tf->mouseControlHotkey;
 		mcConfig.fovRadiusPixels = tf->fovRadius;
-		mcConfig.pidP = tf->mouseControlP;
-		mcConfig.pidI = tf->mouseControlI;
+		mcConfig.pidPMin = tf->mouseControlPMin;
+		mcConfig.pidPMax = tf->mouseControlPMax;
+		mcConfig.pidPSlope = tf->mouseControlPSlope;
 		mcConfig.pidD = tf->mouseControlD;
-		mcConfig.bezierMinRadius = tf->bezierControlMinRadius;
-		mcConfig.bezierMaxRadius = tf->bezierControlMaxRadius;
-		mcConfig.filterSmoothing = tf->filterSmoothing;
+		mcConfig.baselineCompensation = tf->baselineCompensation;
 		mcConfig.maxSpeedPixelsPerSec = tf->maxSpeedPixelsPerSec;
+		mcConfig.deadZonePixels = tf->deadZonePixels;
+		mcConfig.maxAcceleration = tf->maxAcceleration;
+		mcConfig.maxJerk = tf->maxJerk;
+		mcConfig.sCurveTime = tf->sCurveTime;
 		mcConfig.sourceCanvasPosX = 0.0f;
 		mcConfig.sourceCanvasPosY = 0.0f;
 		mcConfig.sourceCanvasScaleX = 1.0f;
@@ -1045,13 +1060,16 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 
 		instance->enableMouseControl = false;
 		instance->mouseControlHotkey = VK_XBUTTON1;
-		instance->mouseControlP = 0.05f;
-		instance->mouseControlI = 0.0f;
+		instance->mouseControlPMin = 0.02f;
+		instance->mouseControlPMax = 0.1f;
+		instance->mouseControlPSlope = 50.0f;
 		instance->mouseControlD = 0.005f;
-		instance->bezierControlMinRadius = 0.2f;
-		instance->bezierControlMaxRadius = 0.5f;
-		instance->filterSmoothing = 0.5f;
+		instance->baselineCompensation = 50.0f;
 		instance->maxSpeedPixelsPerSec = 2000.0f;
+		instance->deadZonePixels = 2.0f;
+		instance->maxAcceleration = 5000.0f;
+		instance->maxJerk = 50000.0f;
+		instance->sCurveTime = 0.5f;
 		instance->mouseController = std::make_unique<MouseController>();
 #endif
 

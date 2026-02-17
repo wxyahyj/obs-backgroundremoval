@@ -19,13 +19,16 @@ struct MouseControllerConfig {
     float sourceCanvasScaleY;
     int sourceWidth;
     int sourceHeight;
-    float pidP;
-    float pidI;
+    float pidPMin;
+    float pidPMax;
+    float pidPSlope;
     float pidD;
-    float bezierMinRadius;
-    float bezierMaxRadius;
-    float filterSmoothing;
+    float baselineCompensation;
     float maxSpeedPixelsPerSec;
+    float deadZonePixels;
+    float maxAcceleration;
+    float maxJerk;
+    float sCurveTime;
 };
 
 class MouseController {
@@ -47,26 +50,26 @@ private:
     bool isMoving;
     POINT startPos;
     POINT targetPos;
-    POINT controlPoint;
-    POINT bezierPathPoint;
-    float bezierT;
     
-    std::mt19937 rng;
+    float currentVelocityX;
+    float currentVelocityY;
+    float currentAccelerationX;
+    float currentAccelerationY;
+    
+    float sCurveProgress;
+    float sCurveTotalTime;
     
     float pidPreviousErrorX;
     float pidPreviousErrorY;
-    float pidIntegralX;
-    float pidIntegralY;
-    POINT filteredTarget;
-    POINT previousOutput;
 
+    float sCurve(float t);
+    float calculateDynamicP(float distance);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
-    POINT calculateBezierPoint(float t, const POINT& p0, const POINT& p1, const POINT& p2);
-    float easeOut(float t);
     void moveMouseTo(const POINT& pos);
     void startMouseMovement(const POINT& target);
     void resetPidState();
+    void resetMotionState();
 };
 
 #endif
