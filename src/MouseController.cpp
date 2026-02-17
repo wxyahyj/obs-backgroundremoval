@@ -89,8 +89,8 @@ void MouseController::tick()
     float pdOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
     float pdOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
     
-    float moveX = pdOutputX;
-    float moveY = pdOutputY;
+    float moveX = pdOutputX + baselineX;
+    float moveY = pdOutputY + baselineY;
     
     float moveDist = std::sqrt(moveX * moveX + moveY * moveY);
     if (moveDist > config.maxPixelMove && moveDist > 0.0f) {
