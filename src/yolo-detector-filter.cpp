@@ -1308,6 +1308,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	bool needCapture = tf->showFloatingWindow || tf->isInferencing || needShowLabels;
 
 	// 捕获原始帧（用于推理、悬浮窗和标签显示）
+	cv::Mat originalImage;
 	if (needCapture) {
 		obs_enter_graphics();
 		gs_texrender_reset(tf->texrender);
@@ -1350,6 +1351,9 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							// 直接复制数据，避免克隆
 							temp.copyTo(tf->inputBGRA);
 						}
+						
+						// 保存原始帧用于悬浮窗显示
+						originalImage = temp.clone();
 						
 						gs_stagesurface_unmap(tf->stagesurface);
 					}
