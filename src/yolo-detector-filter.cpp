@@ -257,15 +257,15 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_int_slider(props, "floating_window_width", obs_module_text("WindowWidth"), 320, 1920, 10);
 	obs_properties_add_int_slider(props, "floating_window_height", obs_module_text("WindowHeight"), 240, 1080, 10);
 
-	obs_properties_add_group(props, "mouse_control_group", obs_module_text("MouseControl"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "enable_mouse_control", obs_module_text("EnableMouseControl"));
+	obs_properties_add_group(props, "mouse_control_group", "鼠标控制", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "enable_mouse_control", "启用鼠标控制");
 	
-	obs_property_t *hotkeyList = obs_properties_add_list(props, "mouse_control_hotkey", obs_module_text("MouseControlHotkey"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(hotkeyList, "Left Mouse Button", VK_LBUTTON);
-	obs_property_list_add_int(hotkeyList, "Right Mouse Button", VK_RBUTTON);
-	obs_property_list_add_int(hotkeyList, "XButton1 (Mouse Side 1)", VK_XBUTTON1);
-	obs_property_list_add_int(hotkeyList, "XButton2 (Mouse Side 2)", VK_XBUTTON2);
-	obs_property_list_add_int(hotkeyList, "Space", VK_SPACE);
+	obs_property_t *hotkeyList = obs_properties_add_list(props, "mouse_control_hotkey", "鼠标控制热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
+	obs_property_list_add_int(hotkeyList, "鼠标右键", VK_RBUTTON);
+	obs_property_list_add_int(hotkeyList, "侧键1", VK_XBUTTON1);
+	obs_property_list_add_int(hotkeyList, "侧键2", VK_XBUTTON2);
+	obs_property_list_add_int(hotkeyList, "空格", VK_SPACE);
 	obs_property_list_add_int(hotkeyList, "Shift", VK_SHIFT);
 	obs_property_list_add_int(hotkeyList, "Control", VK_CONTROL);
 	obs_property_list_add_int(hotkeyList, "A", 'A');
@@ -275,9 +275,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(hotkeyList, "F1", VK_F1);
 	obs_property_list_add_int(hotkeyList, "F2", VK_F2);
 	
+	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
+	
 	obs_properties_add_float_slider(props, "mouse_control_p_min", obs_module_text("MouseControlPMin"), 0.01, 1.0, 0.01);
 	obs_properties_add_float_slider(props, "mouse_control_p_max", obs_module_text("MouseControlPMax"), 0.1, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_slope", obs_module_text("MouseControlPSlope"), 0.0, 200.0, 10.0);
+	obs_properties_add_float_slider(props, "mouse_control_p_slope", obs_module_text("MouseControlPSlope"), 0.0, 10.0, 0.1);
 	obs_properties_add_float_slider(props, "mouse_control_d", obs_module_text("MouseControlD"), 0.001, 0.1, 0.001);
 	obs_properties_add_float_slider(props, "baseline_compensation", obs_module_text("BaselineCompensation"), 0.0, 1.0, 0.05);
 	obs_properties_add_float_slider(props, "aim_smoothing_x", obs_module_text("AimSmoothingX"), 0.0, 1.0, 0.05);
@@ -291,10 +293,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_float_slider(props, "s_curve_time", obs_module_text("SCurveTime"), 0.1, 2.0, 0.1);
 	
 	obs_properties_add_int(props, "screen_offset_x", obs_module_text("ScreenOffsetX"), 0, 3840, 1);
-obs_properties_add_int(props, "screen_offset_y", obs_module_text("ScreenOffsetY"), 0, 2160, 1);
-obs_properties_add_int(props, "screen_width", obs_module_text("ScreenWidth"), 0, 3840, 1);
-obs_properties_add_int(props, "screen_height", obs_module_text("ScreenHeight"), 0, 2160, 1);
-obs_properties_add_float_slider(props, "target_y_offset", "Target Y Offset", -100.0, 100.0, 1.0);
+	obs_properties_add_int(props, "screen_offset_y", obs_module_text("ScreenOffsetY"), 0, 2160, 1);
+	obs_properties_add_int(props, "screen_width", obs_module_text("ScreenWidth"), 0, 3840, 1);
+	obs_properties_add_int(props, "screen_height", obs_module_text("ScreenHeight"), 0, 2160, 1);
 #endif
 
 	UNUSED_PARAMETER(data);
