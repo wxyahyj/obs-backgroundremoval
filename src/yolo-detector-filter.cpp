@@ -613,6 +613,12 @@ static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 		if (filter) {
 			std::lock_guard<std::mutex> lock(filter->floatingWindowMutex);
 			if (!filter->floatingWindowFrame.empty()) {
+				// 实现双缓冲
+				HDC memDC = CreateCompatibleDC(hdc);
+				HBITMAP memBitmap = CreateCompatibleBitmap(hdc, filter->floatingWindowFrame.cols, filter->floatingWindowFrame.rows);
+				HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
+				
+				// 在内存DC中绘制
 				BITMAPINFO bmi = {};
 				bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 				bmi.bmiHeader.biWidth = filter->floatingWindowFrame.cols;
@@ -620,8 +626,17 @@ static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 				bmi.bmiHeader.biPlanes = 1;
 				bmi.bmiHeader.biBitCount = 32;
 				bmi.bmiHeader.biCompression = BI_RGB;
-				SetDIBitsToDevice(hdc, 0, 0, filter->floatingWindowFrame.cols, filter->floatingWindowFrame.rows,
+				SetDIBitsToDevice(memDC, 0, 0, filter->floatingWindowFrame.cols, filter->floatingWindowFrame.rows,
 					0, 0, 0, filter->floatingWindowFrame.rows, filter->floatingWindowFrame.data, &bmi, DIB_RGB_COLORS);
+				
+				// 一次性复制到窗口DC
+				BitBlt(hdc, 0, 0, filter->floatingWindowFrame.cols, filter->floatingWindowFrame.rows,
+					memDC, 0, 0, SRCCOPY);
+				
+				// 清理资源
+				SelectObject(memDC, oldBitmap);
+				DeleteObject(memBitmap);
+				DeleteDC(memDC);
 			}
 		}
 		EndPaint(hwnd, &ps);
@@ -738,18 +753,26 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
 
+	int sleepTime = 5; // 初始休眠时间（毫秒）
+
 	while (filter->inferenceRunning) {
 		if (!filter->shouldInference) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			// 动态调整休眠时间
+			// 系统负载低时增加休眠时间，负载高时减少休眠时间
+			std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime));
 			continue;
 		}
 
 		filter->shouldInference = false;
 
 		if (!filter->isInferencing) {
-			// 推理被禁用了，跳过
+			// 推理被禁用了，增加休眠时间
+			sleepTime = std::min(50, sleepTime + 5);
 			continue;
 		}
+
+		// 推理启用时，减少休眠时间以提高响应速度
+		sleepTime = std::max(1, sleepTime - 2);
 
 		cv::Mat fullFrame;
 		cv::Mat frame;
@@ -1285,7 +1308,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	bool needCapture = tf->showFloatingWindow || tf->isInferencing || needShowLabels;
 
 	// 捕获原始帧（用于推理、悬浮窗和标签显示）
-	cv::Mat originalImage;
 	if (needCapture) {
 		obs_enter_graphics();
 		gs_texrender_reset(tf->texrender);
@@ -1315,22 +1337,26 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					uint8_t *video_data;
 					uint32_t linesize;
 					if (gs_stagesurface_map(tf->stagesurface, &video_data, &linesize)) {
+						// 直接使用映射数据，避免克隆
 						cv::Mat temp(height, width, CV_8UC4, video_data, linesize);
-						originalImage = temp.clone();
+						
+						// 保存原始帧用于推理线程
+						std::unique_lock<std::mutex> lock(tf->inputBGRALock, std::try_to_lock);
+						if (lock.owns_lock()) {
+							// 调整inputBGRA大小以匹配当前帧，避免重新分配
+							if (tf->inputBGRA.rows != height || tf->inputBGRA.cols != width) {
+								tf->inputBGRA = cv::Mat(height, width, CV_8UC4);
+							}
+							// 直接复制数据，避免克隆
+							temp.copyTo(tf->inputBGRA);
+						}
+						
 						gs_stagesurface_unmap(tf->stagesurface);
 					}
 				}
 			}
 		}
 		obs_leave_graphics();
-	}
-
-	// 保存原始帧用于推理线程
-	if (!originalImage.empty()) {
-		std::unique_lock<std::mutex> lock(tf->inputBGRALock, std::try_to_lock);
-		if (lock.owns_lock()) {
-			tf->inputBGRA = originalImage.clone();
-		}
 	}
 
 	// 开始滤镜处理 - 确保源画面绝对正常！

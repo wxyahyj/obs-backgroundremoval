@@ -39,10 +39,12 @@ void MouseController::tick()
 {
     std::lock_guard<std::mutex> lock(mutex);
 
+    // 快速检查：鼠标控制是否启用
     if (!config.enableMouseControl) {
         return;
     }
 
+    // 快速检查：热键是否按下
     if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
         if (isMoving) {
             isMoving = false;
@@ -52,6 +54,7 @@ void MouseController::tick()
         return;
     }
 
+    // 快速检查：是否有目标
     Detection* target = selectTarget();
     if (!target) {
         if (isMoving) {
@@ -62,17 +65,23 @@ void MouseController::tick()
         return;
     }
 
+    // 计算目标屏幕位置
     POINT targetScreenPos = convertToScreenCoordinates(*target);
     
+    // 获取当前鼠标位置
     POINT currentPos;
     GetCursorPos(&currentPos);
     
+    // 计算误差
     float errorX = static_cast<float>(targetScreenPos.x - currentPos.x);
     float errorY = static_cast<float>(targetScreenPos.y - currentPos.y);
     
-    float distance = std::sqrt(errorX * errorX + errorY * errorY);
+    // 计算距离（使用平方距离避免平方根）
+    float distanceSquared = errorX * errorX + errorY * errorY;
+    float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
     
-    if (distance < config.deadZonePixels) {
+    // 检查是否在死区内
+    if (distanceSquared < deadZoneSquared) {
         if (isMoving) {
             isMoving = false;
             resetPidState();
@@ -83,38 +92,54 @@ void MouseController::tick()
 
     isMoving = true;
     
+    // 计算实际距离（用于动态P值计算）
+    float distance = std::sqrt(distanceSquared);
+    
+    // 计算动态P值
     float dynamicP = calculateDynamicP(distance);
+    
+    // 计算PID输出
     float pdOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
     float pdOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
     
+    // 计算基线补偿
     float baselineX = errorX * config.baselineCompensation;
     float baselineY = errorY * config.baselineCompensation;
     
+    // 计算最终移动量
     float moveX = pdOutputX + baselineX;
     float moveY = pdOutputY + baselineY;
     
-    float moveDist = std::sqrt(moveX * moveX + moveY * moveY);
-    if (moveDist > config.maxPixelMove && moveDist > 0.0f) {
-        float scale = config.maxPixelMove / moveDist;
+    // 限制最大移动量
+    float moveDistSquared = moveX * moveX + moveY * moveY;
+    float maxMoveSquared = config.maxPixelMove * config.maxPixelMove;
+    if (moveDistSquared > maxMoveSquared && moveDistSquared > 0.0f) {
+        float scale = config.maxPixelMove / std::sqrt(moveDistSquared);
         moveX *= scale;
         moveY *= scale;
     }
     
+    // 应用平滑处理
     float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
     float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
     
+    // 更新历史值
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
+    // 计算新的鼠标位置
     float newPosX = static_cast<float>(currentPos.x) + finalMoveX;
     float newPosY = static_cast<float>(currentPos.y) + finalMoveY;
     
+    // 转换为整数坐标
     POINT newPos;
     newPos.x = static_cast<LONG>(newPosX);
     newPos.y = static_cast<LONG>(newPosY);
     
+    // 移动鼠标
     moveMouseTo(newPos);
     
+    // 更新PID历史误差
     pidPreviousErrorX = errorX;
     pidPreviousErrorY = errorY;
 }
@@ -127,9 +152,10 @@ Detection* MouseController::selectTarget()
 
     int fovCenterX = config.sourceWidth / 2;
     int fovCenterY = config.sourceHeight / 2;
+    float fovRadiusSquared = static_cast<float>(config.fovRadiusPixels * config.fovRadiusPixels);
 
     Detection* bestTarget = nullptr;
-    float minDistance = std::numeric_limits<float>::max();
+    float minDistanceSquared = std::numeric_limits<float>::max();
 
     for (auto& det : currentDetections) {
         int targetX = static_cast<int>(det.centerX * config.sourceWidth);
@@ -137,10 +163,10 @@ Detection* MouseController::selectTarget()
         
         float dx = static_cast<float>(targetX - fovCenterX);
         float dy = static_cast<float>(targetY - fovCenterY);
-        float distance = std::sqrt(dx * dx + dy * dy);
+        float distanceSquared = dx * dx + dy * dy;
 
-        if (distance <= static_cast<float>(config.fovRadiusPixels) && distance < minDistance) {
-            minDistance = distance;
+        if (distanceSquared <= fovRadiusSquared && distanceSquared < minDistanceSquared) {
+            minDistanceSquared = distanceSquared;
             bestTarget = &det;
         }
     }
