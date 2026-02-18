@@ -36,6 +36,7 @@ struct MouseControllerConfig {
     float maxAcceleration;
     float maxJerk;
     float sCurveTime;
+    float targetYOffset;
 };
 
 class MouseController {

@@ -127,21 +127,21 @@ Detection* MouseController::selectTarget()
         return nullptr;
     }
 
-    float fovCenterX = 0.5f;
-    float fovCenterY = 0.5f;
+    int fovCenterX = config.sourceWidth / 2;
+    int fovCenterY = config.sourceHeight / 2;
 
     Detection* bestTarget = nullptr;
     float minDistance = std::numeric_limits<float>::max();
 
     for (auto& det : currentDetections) {
-        float dx = det.centerX - fovCenterX;
-        float dy = det.centerY - fovCenterY;
+        int targetX = static_cast<int>(det.centerX * config.sourceWidth);
+        int targetY = static_cast<int>(det.centerY * config.sourceHeight);
+        
+        float dx = static_cast<float>(targetX - fovCenterX);
+        float dy = static_cast<float>(targetY - fovCenterY);
         float distance = std::sqrt(dx * dx + dy * dy);
 
-        float normalizedRadius = static_cast<float>(config.fovRadiusPixels) / 
-                                 std::min(config.sourceWidth, config.sourceHeight);
-        
-        if (distance <= normalizedRadius && distance < minDistance) {
+        if (distance <= static_cast<float>(config.fovRadiusPixels) && distance < minDistance) {
             minDistance = distance;
             bestTarget = &det;
         }
@@ -156,7 +156,7 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
     float sourcePixelX = det.centerX * config.sourceWidth;
-    float sourcePixelY = det.centerY * config.sourceHeight;
+    float sourcePixelY = det.centerY * config.sourceHeight - config.targetYOffset;
 
     float screenScaleX = (config.screenWidth > 0) ? (float)config.screenWidth / config.sourceWidth : 1.0f;
     float screenScaleY = (config.screenHeight > 0) ? (float)config.screenHeight / config.sourceHeight : 1.0f;
