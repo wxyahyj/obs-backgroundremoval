@@ -113,10 +113,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float aimSmoothingY;
 	float maxPixelMove;
 	float maxSpeedPixelsPerSec;
-	float deadZonePixels;
-	float maxAcceleration;
-	float maxJerk;
-float sCurveTime;
+float deadZonePixels;
+float maxAcceleration;
 int screenOffsetX;
 int screenOffsetY;
 int screenWidth;
@@ -275,27 +273,35 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(hotkeyList, "F1", VK_F1);
 	obs_property_list_add_int(hotkeyList, "F2", VK_F2);
 	
+	// Y轴目标偏移
 	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
 	
-	obs_properties_add_float_slider(props, "mouse_control_p_min", obs_module_text("MouseControlPMin"), 0.01, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_max", obs_module_text("MouseControlPMax"), 0.1, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_slope", obs_module_text("MouseControlPSlope"), 0.0, 10.0, 0.1);
-	obs_properties_add_float_slider(props, "mouse_control_d", obs_module_text("MouseControlD"), 0.001, 0.1, 0.001);
-	obs_properties_add_float_slider(props, "baseline_compensation", obs_module_text("BaselineCompensation"), 0.0, 1.0, 0.05);
-	obs_properties_add_float_slider(props, "aim_smoothing_x", obs_module_text("AimSmoothingX"), 0.0, 1.0, 0.05);
-	obs_properties_add_float_slider(props, "aim_smoothing_y", obs_module_text("AimSmoothingY"), 0.0, 1.0, 0.05);
-	obs_properties_add_float_slider(props, "max_pixel_move", obs_module_text("MaxPixelMove"), 0.0, 200.0, 10.0);
+	// 动态PID与平滑度参数
+	obs_properties_add_float_slider(props, "aim_smoothing_x", "X轴平滑度", 0.20, 0.90, 0.05);
+	obs_properties_add_float_slider(props, "aim_smoothing_y", "Y轴平滑度", 0.20, 0.90, 0.05);
 	
-	obs_properties_add_int_slider(props, "max_speed_pixels_per_sec", obs_module_text("MaxSpeedPixelsPerSec"), 0, 10000, 500);
-	obs_properties_add_float_slider(props, "dead_zone_pixels", obs_module_text("DeadZonePixels"), 0.0, 20.0, 0.5);
-	obs_properties_add_float_slider(props, "max_acceleration", obs_module_text("MaxAcceleration"), 0.0, 10000.0, 500.0);
-	obs_properties_add_float_slider(props, "max_jerk", obs_module_text("MaxJerk"), 0.0, 100000.0, 5000.0);
-	obs_properties_add_float_slider(props, "s_curve_time", obs_module_text("SCurveTime"), 0.1, 2.0, 0.1);
+	// P值参数
+	obs_properties_add_float_slider(props, "mouse_control_p_min", "P最小值", 0.10, 0.25, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_max", "P最大值", 0.50, 0.80, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_slope", "P增长斜率", 0.70, 1.20, 0.1);
 	
-	obs_properties_add_int(props, "screen_offset_x", obs_module_text("ScreenOffsetX"), 0, 3840, 1);
-	obs_properties_add_int(props, "screen_offset_y", obs_module_text("ScreenOffsetY"), 0, 2160, 1);
-	obs_properties_add_int(props, "screen_width", obs_module_text("ScreenWidth"), 0, 3840, 1);
-	obs_properties_add_int(props, "screen_height", obs_module_text("ScreenHeight"), 0, 2160, 1);
+	// 基线补偿
+	obs_properties_add_float_slider(props, "baseline_compensation", "基线补偿", 0.75, 0.90, 0.05);
+	
+	// 微分系数
+	obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.005, 0.015, 0.001);
+	
+	// 其他参数
+	obs_properties_add_float_slider(props, "max_pixel_move", "最大移动量", 64.0, 128.0, 10.0);
+	obs_properties_add_int_slider(props, "max_speed_pixels_per_sec", "最大速度", 0, 10000, 500);
+	obs_properties_add_float_slider(props, "dead_zone_pixels", "瞄准死区", 1.0, 12.0, 0.5);
+	obs_properties_add_float_slider(props, "max_acceleration", "最大加速度", 0.0, 10000.0, 500.0);
+	
+	// 屏幕设置
+	obs_properties_add_int(props, "screen_offset_x", "屏幕偏移X", 0, 3840, 1);
+	obs_properties_add_int(props, "screen_offset_y", "屏幕偏移Y", 0, 2160, 1);
+	obs_properties_add_int(props, "screen_width", "屏幕宽度", 0, 3840, 1);
+	obs_properties_add_int(props, "screen_height", "屏幕高度", 0, 2160, 1);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -353,8 +359,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "max_speed_pixels_per_sec", 2000);
 	obs_data_set_default_double(settings, "dead_zone_pixels", 5.0);
 	obs_data_set_default_double(settings, "max_acceleration", 5000.0);
-	obs_data_set_default_double(settings, "max_jerk", 50000.0);
-	obs_data_set_default_double(settings, "s_curve_time", 0.5);
 	obs_data_set_default_int(settings, "screen_offset_x", 0);
 obs_data_set_default_int(settings, "screen_offset_y", 0);
 obs_data_set_default_int(settings, "screen_width", 0);
@@ -495,8 +499,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->maxSpeedPixelsPerSec = (float)obs_data_get_int(settings, "max_speed_pixels_per_sec");
 	tf->deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
 	tf->maxAcceleration = (float)obs_data_get_double(settings, "max_acceleration");
-	tf->maxJerk = (float)obs_data_get_double(settings, "max_jerk");
-	tf->sCurveTime = (float)obs_data_get_double(settings, "s_curve_time");
 	tf->screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
 tf->screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
 tf->screenWidth = (int)obs_data_get_int(settings, "screen_width");
@@ -519,8 +521,6 @@ tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		mcConfig.maxSpeedPixelsPerSec = tf->maxSpeedPixelsPerSec;
 		mcConfig.deadZonePixels = tf->deadZonePixels;
 		mcConfig.maxAcceleration = tf->maxAcceleration;
-		mcConfig.maxJerk = tf->maxJerk;
-		mcConfig.sCurveTime = tf->sCurveTime;
 		mcConfig.sourceCanvasPosX = 0.0f;
 		mcConfig.sourceCanvasPosY = 0.0f;
 		mcConfig.sourceCanvasScaleX = 1.0f;
@@ -1113,8 +1113,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->maxSpeedPixelsPerSec = 2000.0f;
 		instance->deadZonePixels = 5.0f;
 		instance->maxAcceleration = 5000.0f;
-		instance->maxJerk = 50000.0f;
-		instance->sCurveTime = 0.5f;
 		instance->screenOffsetX = 0;
 instance->screenOffsetY = 0;
 instance->screenWidth = 0;

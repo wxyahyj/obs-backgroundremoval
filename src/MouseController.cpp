@@ -12,8 +12,6 @@ MouseController::MouseController()
     , currentVelocityY(0.0f)
     , currentAccelerationX(0.0f)
     , currentAccelerationY(0.0f)
-    , sCurveProgress(0.0f)
-    , sCurveTotalTime(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
 {
@@ -211,12 +209,6 @@ void MouseController::resetPidState()
     pidPreviousErrorY = 0.0f;
 }
 
-float MouseController::sCurve(float t)
-{
-    t = std::max(0.0f, std::min(1.0f, t));
-    return 3.0f * t * t - 2.0f * t * t * t;
-}
-
 float MouseController::calculateDynamicP(float distance)
 {
     float normalizedDistance = distance / static_cast<float>(config.fovRadiusPixels);
@@ -232,8 +224,6 @@ void MouseController::resetMotionState()
     currentVelocityY = 0.0f;
     currentAccelerationX = 0.0f;
     currentAccelerationY = 0.0f;
-    sCurveProgress = 0.0f;
-    sCurveTotalTime = 0.0f;
     previousMoveX = 0.0f;
     previousMoveY = 0.0f;
 }

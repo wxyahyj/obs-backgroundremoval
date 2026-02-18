@@ -34,8 +34,6 @@ struct MouseControllerConfig {
     float maxSpeedPixelsPerSec;
     float deadZonePixels;
     float maxAcceleration;
-    float maxJerk;
-    float sCurveTime;
     float targetYOffset;
 };
 
@@ -64,16 +62,11 @@ private:
     float currentAccelerationX;
     float currentAccelerationY;
     
-    float sCurveProgress;
-    float sCurveTotalTime;
-    
     float previousMoveX;
     float previousMoveY;
     
     float pidPreviousErrorX;
     float pidPreviousErrorY;
-
-    float sCurve(float t);
     float calculateDynamicP(float distance);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
