@@ -179,14 +179,17 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
 
 void MouseController::moveMouseTo(const POINT& pos)
 {
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    POINT currentPos;
+    GetCursorPos(&currentPos);
+    
+    long deltaX = pos.x - currentPos.x;
+    long deltaY = pos.y - currentPos.y;
 
     INPUT input = {};
     input.type = INPUT_MOUSE;
-    input.mi.dx = static_cast<LONG>((pos.x * 65535.0f) / (screenWidth - 1));
-    input.mi.dy = static_cast<LONG>((pos.y * 65535.0f) / (screenHeight - 1));
-    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    input.mi.dx = deltaX;
+    input.mi.dy = deltaY;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
     input.mi.time = 0;
     input.mi.dwExtraInfo = 0;
 
