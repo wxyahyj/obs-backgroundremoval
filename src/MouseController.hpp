@@ -33,7 +33,6 @@ struct MouseControllerConfig {
     float maxPixelMove;
     float maxSpeedPixelsPerSec;
     float deadZonePixels;
-    float maxAcceleration;
     float targetYOffset;
 };
 

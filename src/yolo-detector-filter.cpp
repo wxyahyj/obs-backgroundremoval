@@ -114,7 +114,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float maxPixelMove;
 	float maxSpeedPixelsPerSec;
 float deadZonePixels;
-float maxAcceleration;
 int screenOffsetX;
 int screenOffsetY;
 int screenWidth;
@@ -277,25 +276,24 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
 	
 	// 动态PID与平滑度参数
-	obs_properties_add_float_slider(props, "aim_smoothing_x", "X轴平滑度", 0.20, 0.90, 0.05);
-	obs_properties_add_float_slider(props, "aim_smoothing_y", "Y轴平滑度", 0.20, 0.90, 0.05);
+	obs_properties_add_float_slider(props, "aim_smoothing_x", "X轴平滑度", 0.01, 0.90, 0.01);
+	obs_properties_add_float_slider(props, "aim_smoothing_y", "Y轴平滑度", 0.01, 0.90, 0.01);
 	
 	// P值参数
-	obs_properties_add_float_slider(props, "mouse_control_p_min", "P最小值", 0.10, 0.25, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_max", "P最大值", 0.50, 0.80, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_slope", "P增长斜率", 0.70, 1.20, 0.1);
+	obs_properties_add_float_slider(props, "mouse_control_p_min", "P最小值", 0.01, 1.00, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_max", "P最大值", 0.01, 1.00, 0.01);
+	obs_properties_add_float_slider(props, "mouse_control_p_slope", "P增长斜率", 0.01, 10, 0.1);
 	
 	// 基线补偿
-	obs_properties_add_float_slider(props, "baseline_compensation", "基线补偿", 0.75, 0.90, 0.05);
+	obs_properties_add_float_slider(props, "baseline_compensation", "基线补偿", 0.01, 1.00, 0.01);
 	
 	// 微分系数
-	obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.005, 0.015, 0.001);
+	obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.001, 1.00, 0.001);
 	
 	// 其他参数
 	obs_properties_add_float_slider(props, "max_pixel_move", "最大移动量", 64.0, 128.0, 10.0);
 	obs_properties_add_int_slider(props, "max_speed_pixels_per_sec", "最大速度", 0, 10000, 500);
 	obs_properties_add_float_slider(props, "dead_zone_pixels", "瞄准死区", 1.0, 12.0, 0.5);
-	obs_properties_add_float_slider(props, "max_acceleration", "最大加速度", 0.0, 10000.0, 500.0);
 	
 	// 屏幕设置
 	obs_properties_add_int(props, "screen_offset_x", "屏幕偏移X", 0, 3840, 1);
@@ -358,7 +356,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "max_pixel_move", 128.0);
 	obs_data_set_default_int(settings, "max_speed_pixels_per_sec", 2000);
 	obs_data_set_default_double(settings, "dead_zone_pixels", 5.0);
-	obs_data_set_default_double(settings, "max_acceleration", 5000.0);
 	obs_data_set_default_int(settings, "screen_offset_x", 0);
 obs_data_set_default_int(settings, "screen_offset_y", 0);
 obs_data_set_default_int(settings, "screen_width", 0);
@@ -498,7 +495,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->maxPixelMove = (float)obs_data_get_double(settings, "max_pixel_move");
 	tf->maxSpeedPixelsPerSec = (float)obs_data_get_int(settings, "max_speed_pixels_per_sec");
 	tf->deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
-	tf->maxAcceleration = (float)obs_data_get_double(settings, "max_acceleration");
 	tf->screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
 tf->screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
 tf->screenWidth = (int)obs_data_get_int(settings, "screen_width");
@@ -520,7 +516,6 @@ tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		mcConfig.maxPixelMove = tf->maxPixelMove;
 		mcConfig.maxSpeedPixelsPerSec = tf->maxSpeedPixelsPerSec;
 		mcConfig.deadZonePixels = tf->deadZonePixels;
-		mcConfig.maxAcceleration = tf->maxAcceleration;
 		mcConfig.sourceCanvasPosX = 0.0f;
 		mcConfig.sourceCanvasPosY = 0.0f;
 		mcConfig.sourceCanvasScaleX = 1.0f;
@@ -1112,7 +1107,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->maxPixelMove = 128.0f;
 		instance->maxSpeedPixelsPerSec = 2000.0f;
 		instance->deadZonePixels = 5.0f;
-		instance->maxAcceleration = 5000.0f;
 		instance->screenOffsetX = 0;
 instance->screenOffsetY = 0;
 instance->screenWidth = 0;
