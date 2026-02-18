@@ -31,7 +31,6 @@ struct MouseControllerConfig {
     float aimSmoothingX;
     float aimSmoothingY;
     float maxPixelMove;
-    float maxSpeedPixelsPerSec;
     float deadZonePixels;
     float targetYOffset;
 };
