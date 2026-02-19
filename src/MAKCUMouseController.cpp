@@ -132,26 +132,26 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
 void MAKCUMouseController::move(int dx, int dy)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), "M%+d,%+d", dx, dy);
+    sprintf_s(cmd, sizeof(cmd), ".move(%d,%d,)", dx, dy);
     sendSerialCommand(cmd);
 }
 
 void MAKCUMouseController::moveTo(int x, int y)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), "G%d,%d", x, y);
+    sprintf_s(cmd, sizeof(cmd), ".moveto(%d,%d,)", x, y);
     sendSerialCommand(cmd);
 }
 
 void MAKCUMouseController::click(bool left)
 {
-    sendSerialCommand(left ? "CL" : "CR");
+    sendSerialCommand(left ? ".click(1,)" : ".click(2,)");
 }
 
 void MAKCUMouseController::wheel(int delta)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), "W%d", delta);
+    sprintf_s(cmd, sizeof(cmd), ".wheel(%d)", delta);
     sendSerialCommand(cmd);
 }
 
@@ -294,8 +294,8 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     float sourcePixelX = det.centerX * config.sourceWidth;
     float sourcePixelY = det.centerY * config.sourceHeight - config.targetYOffset;
 
-    float screenScaleX = (config.screenWidth > 0) ? (float)config.screenWidth / config.sourceWidth : 1.0f;
-    float screenScaleY = (config.screenHeight > 0) ? (float)config.screenHeight / config.sourceHeight : 1.0f;
+    float screenScaleX = (config.screenWidth > 0) ? (float)config.screenWidth / config.sourceWidth : (float)fullScreenWidth / config.sourceWidth;
+	float screenScaleY = (config.screenHeight > 0) ? (float)config.screenHeight / config.sourceHeight : (float)fullScreenHeight / config.sourceHeight;
 
     float screenPixelX = config.screenOffsetX + sourcePixelX * screenScaleX;
     float screenPixelY = config.screenOffsetY + sourcePixelY * screenScaleY;
