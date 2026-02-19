@@ -1,18 +1,19 @@
-#ifndef MOUSE_CONTROLLER_HPP
-#define MOUSE_CONTROLLER_HPP
+#ifndef MAKCU_MOUSE_CONTROLLER_HPP
+#define MAKCU_MOUSE_CONTROLLER_HPP
 
 #ifdef _WIN32
 
 #include <windows.h>
 #include <vector>
 #include <mutex>
-#include <random>
+#include <string>
 #include "MouseControllerInterface.hpp"
 
-class MouseController : public MouseControllerInterface {
+class MAKCUMouseController : public MouseControllerInterface {
 public:
-    MouseController();
-    ~MouseController();
+    MAKCUMouseController();
+    MAKCUMouseController(const std::string& port, int baud);
+    ~MAKCUMouseController();
 
     void updateConfig(const MouseControllerConfig& config) override;
     
@@ -25,27 +26,35 @@ private:
     MouseControllerConfig config;
     std::vector<Detection> currentDetections;
     
-    bool isMoving;
-    POINT startPos;
-    POINT targetPos;
+    HANDLE hSerial;
+    bool serialConnected;
+    std::string portName;
+    int baudRate;
     
+    bool isMoving;
     float currentVelocityX;
     float currentVelocityY;
     float currentAccelerationX;
     float currentAccelerationY;
-    
     float previousMoveX;
     float previousMoveY;
-    
     float pidPreviousErrorX;
     float pidPreviousErrorY;
-    float filteredDeltaErrorX; // 滤波后的X轴误差差值
-    float filteredDeltaErrorY; // 滤波后的Y轴误差差值
+    float filteredDeltaErrorX;
+    float filteredDeltaErrorY;
+    
+    bool connectSerial();
+    void disconnectSerial();
+    bool sendSerialCommand(const std::string& command);
+    
+    void move(int dx, int dy);
+    void moveTo(int x, int y);
+    void click(bool left = true);
+    void wheel(int delta);
+    
     float calculateDynamicP(float distance);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
-    void moveMouseTo(const POINT& pos);
-    void startMouseMovement(const POINT& target);
     void resetPidState();
     void resetMotionState();
 };

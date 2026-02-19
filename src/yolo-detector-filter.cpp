@@ -119,7 +119,10 @@ int screenWidth;
 	int screenHeight;
 	float derivativeFilterAlpha;
 float targetYOffset;
-std::unique_ptr<MouseController> mouseController;
+	int controllerType;
+	std::string makcuPort;
+	int makcuBaudRate;
+std::unique_ptr<MouseControllerInterface> mouseController;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -257,6 +260,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_group(props, "mouse_control_group", "鼠标控制", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_bool(props, "enable_mouse_control", "启用鼠标控制");
 	
+	obs_property_t *controllerTypeList = obs_properties_add_list(props, "controller_type", "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(controllerTypeList, "Windows API", 0);
+	obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
+	
 	obs_property_t *hotkeyList = obs_properties_add_list(props, "mouse_control_hotkey", "鼠标控制热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
 	obs_property_list_add_int(hotkeyList, "鼠标右键", VK_RBUTTON);
@@ -271,6 +278,16 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(hotkeyList, "S", 'S');
 	obs_property_list_add_int(hotkeyList, "F1", VK_F1);
 	obs_property_list_add_int(hotkeyList, "F2", VK_F2);
+	
+	// MAKCU 配置
+	obs_properties_add_text(props, "makcu_port", "MAKCU 端口", OBS_TEXT_DEFAULT);
+	obs_property_t *baudRateList = obs_properties_add_list(props, "makcu_baud_rate", "波特率", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(baudRateList, "9600", 9600);
+	obs_property_list_add_int(baudRateList, "19200", 19200);
+	obs_property_list_add_int(baudRateList, "38400", 38400);
+	obs_property_list_add_int(baudRateList, "40000", 40000);
+	obs_property_list_add_int(baudRateList, "57600", 57600);
+	obs_property_list_add_int(baudRateList, "115200", 115200);
 	
 	// Y轴目标偏移
 	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
@@ -347,6 +364,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "floating_window_height", 480);
 
 	obs_data_set_default_bool(settings, "enable_mouse_control", false);
+	obs_data_set_default_int(settings, "controller_type", 0);
+	obs_data_set_default_string(settings, "makcu_port", "COM5");
+	obs_data_set_default_int(settings, "makcu_baud_rate", 4000000);
 	obs_data_set_default_int(settings, "mouse_control_hotkey", VK_XBUTTON1);
 	obs_data_set_default_double(settings, "mouse_control_p_min", 0.153);
 	obs_data_set_default_double(settings, "mouse_control_p_max", 0.6);
@@ -486,6 +506,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	}
 
 	tf->enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
+	int newControllerType = (int)obs_data_get_int(settings, "controller_type");
+	std::string newMakcuPort = obs_data_get_string(settings, "makcu_port");
+	int newMakcuBaudRate = (int)obs_data_get_int(settings, "makcu_baud_rate");
 	tf->mouseControlHotkey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
 	tf->mouseControlPMin = (float)obs_data_get_double(settings, "mouse_control_p_min");
 	tf->mouseControlPMax = (float)obs_data_get_double(settings, "mouse_control_p_max");
@@ -502,6 +525,16 @@ tf->screenWidth = (int)obs_data_get_int(settings, "screen_width");
 tf->screenHeight = (int)obs_data_get_int(settings, "screen_height");
 tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		tf->derivativeFilterAlpha = (float)obs_data_get_double(settings, "derivative_filter_alpha");
+
+	if (newControllerType != tf->controllerType ||
+	    newMakcuPort != tf->makcuPort ||
+	    newMakcuBaudRate != tf->makcuBaudRate) {
+		tf->controllerType = newControllerType;
+		tf->makcuPort = newMakcuPort;
+		tf->makcuBaudRate = newMakcuBaudRate;
+		ControllerType type = static_cast<ControllerType>(tf->controllerType);
+		tf->mouseController = MouseControllerFactory::createController(type, tf->makcuPort, tf->makcuBaudRate);
+	}
 
 	if (tf->mouseController && tf->enableMouseControl) {
 		MouseControllerConfig mcConfig;
@@ -529,6 +562,9 @@ mcConfig.screenOffsetY = tf->screenOffsetY;
 		mcConfig.screenHeight = tf->screenHeight;
 		mcConfig.targetYOffset = tf->targetYOffset;
 		mcConfig.derivativeFilterAlpha = tf->derivativeFilterAlpha;
+		mcConfig.controllerType = static_cast<ControllerType>(tf->controllerType);
+		mcConfig.makcuPort = tf->makcuPort;
+		mcConfig.makcuBaudRate = tf->makcuBaudRate;
 		tf->mouseController->updateConfig(mcConfig);
 	}
 #endif
@@ -1121,6 +1157,9 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->floatingWindowHandle = nullptr;
 
 		instance->enableMouseControl = false;
+		instance->controllerType = 0;
+		instance->makcuPort = "COM5";
+		instance->makcuBaudRate = 40000;
 		instance->mouseControlHotkey = VK_XBUTTON1;
 		instance->mouseControlPMin = 0.153f;
 		instance->mouseControlPMax = 0.6f;
@@ -1137,7 +1176,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->screenHeight = 0;
 		instance->targetYOffset = 0.0f;
 		instance->derivativeFilterAlpha = 0.2f;
-instance->mouseController = std::make_unique<MouseController>();
+instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI);
 #endif
 
 		// Create pointer to shared_ptr for the update call

@@ -231,6 +231,8 @@ if(WIN32)
     ${CMAKE_PROJECT_NAME}
     PRIVATE
       src/MouseController.cpp
+      src/MAKCUMouseController.cpp
+      src/MouseControllerFactory.cpp
   )
 endif()
 target_compile_options(
