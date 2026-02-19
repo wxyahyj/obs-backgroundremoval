@@ -20,6 +20,8 @@ public:
     void setDetections(const std::vector<Detection>& detections) override;
     
     void tick() override;
+    
+    bool isConnected();
 
 private:
     std::mutex mutex;

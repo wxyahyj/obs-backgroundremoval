@@ -340,4 +340,9 @@ void MAKCUMouseController::resetMotionState()
     previousMoveY = 0.0f;
 }
 
+bool MAKCUMouseController::isConnected()
+{
+    return serialConnected;
+}
+
 #endif

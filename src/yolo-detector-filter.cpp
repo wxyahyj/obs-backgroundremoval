@@ -286,9 +286,12 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(baudRateList, "9600", 9600);
 	obs_property_list_add_int(baudRateList, "19200", 19200);
 	obs_property_list_add_int(baudRateList, "38400", 38400);
-	obs_property_list_add_int(baudRateList, "40000", 40000);
 	obs_property_list_add_int(baudRateList, "57600", 57600);
 	obs_property_list_add_int(baudRateList, "115200", 115200);
+	obs_property_list_add_int(baudRateList, "4000000 (4Mbps)", 4000000);
+	
+	// 测试连接按钮
+	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
 	
 	// Y轴目标偏移
 	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
@@ -535,6 +538,7 @@ tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		tf->makcuBaudRate = newMakcuBaudRate;
 		ControllerType type = static_cast<ControllerType>(tf->controllerType);
 		tf->mouseController = MouseControllerFactory::createController(type, tf->makcuPort, tf->makcuBaudRate);
+		obs_log(LOG_INFO, "Created mouse controller with type=%d, port=%s, baud=%d", type, tf->makcuPort.c_str(), tf->makcuBaudRate);
 	}
 
 	if (tf->mouseController && tf->enableMouseControl) {
@@ -633,6 +637,33 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 		char countStr[128];
 		snprintf(countStr, sizeof(countStr), "%s: %zu", obs_module_text("DetectedObjects"), count);
 		obs_property_set_description(detectedObjectsText, countStr);
+	}
+
+	return true;
+}
+
+static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data)
+{
+	auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+	if (!ptr) {
+		return true;
+	}
+
+	std::shared_ptr<yolo_detector_filter> tf = *ptr;
+	if (!tf) {
+		return true;
+	}
+
+	// 创建临时MAKCU控制器进行连接测试
+	MAKCUMouseController tempController(tf->makcuPort, tf->makcuBaudRate);
+
+	// 检查连接状态
+	bool isConnected = tempController.isConnected();
+
+	if (isConnected) {
+		MessageBox(NULL, "MAKCU连接成功", "连接测试", MB_OK | MB_ICONINFORMATION);
+	} else {
+		MessageBox(NULL, "MAKCU连接失败", "连接测试", MB_OK | MB_ICONERROR);
 	}
 
 	return true;
@@ -1312,7 +1343,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	}
 
 #ifdef _WIN32
-	if (tf->mouseController && tf->enableMouseControl) {
+	if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
 		std::vector<Detection> detectionsCopy;
 		{
 			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
