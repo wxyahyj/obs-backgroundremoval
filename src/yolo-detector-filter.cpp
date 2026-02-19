@@ -8,6 +8,7 @@
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
 #include "MouseController.hpp"
+#include "MouseControllerFactory.hpp"
 #endif
 
 #include <opencv2/imgproc.hpp>
