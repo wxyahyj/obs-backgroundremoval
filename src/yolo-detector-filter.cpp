@@ -290,6 +290,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	// 微分系数
 	obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.000, 1.00, 0.001);
 	
+	// 微分滤波系数
+	obs_properties_add_float_slider(props, "derivative_filter_alpha", "微分滤波系数", 0.01, 1.00, 0.01);
+	
 	// 其他参数
 	obs_properties_add_float_slider(props, "max_pixel_move", "最大移动量", 0.0, 200.0, 1.0);
 	obs_properties_add_float_slider(props, "dead_zone_pixels", "瞄准死区", 0.0, 20.0, 0.5);
@@ -349,6 +352,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "mouse_control_p_max", 0.6);
 	obs_data_set_default_double(settings, "mouse_control_p_slope", 1.0);
 	obs_data_set_default_double(settings, "mouse_control_d", 0.007);
+	obs_data_set_default_double(settings, "derivative_filter_alpha", 0.2);
 	obs_data_set_default_double(settings, "baseline_compensation", 0.85);
 	obs_data_set_default_double(settings, "aim_smoothing_x", 0.7);
 	obs_data_set_default_double(settings, "aim_smoothing_y", 0.5);
