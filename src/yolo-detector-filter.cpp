@@ -1174,6 +1174,13 @@ void yolo_detector_filter_destroy(void *data)
 #ifdef _WIN32
 	// Destroy floating window
 	destroyFloatingWindow(tf.get());
+	
+	// 保存悬浮窗关闭状态
+	obs_data_t *settings = obs_source_get_settings(tf->source);
+	if (settings) {
+		obs_data_set_bool(settings, "show_floating_window", false);
+		obs_data_release(settings);
+	}
 #endif
 
 	// Clean up graphics resources
