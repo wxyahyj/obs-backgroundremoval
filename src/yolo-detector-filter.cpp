@@ -135,6 +135,7 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
+static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data);
 
 #ifdef _WIN32
 static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -661,9 +662,9 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
 	bool isConnected = tempController.isConnected();
 
 	if (isConnected) {
-		MessageBox(NULL, "MAKCU连接成功", "连接测试", MB_OK | MB_ICONINFORMATION);
+		MessageBoxA(NULL, "MAKCU连接成功", "连接测试", MB_OK | MB_ICONINFORMATION);
 	} else {
-		MessageBox(NULL, "MAKCU连接失败", "连接测试", MB_OK | MB_ICONERROR);
+		MessageBoxA(NULL, "MAKCU连接失败", "连接测试", MB_OK | MB_ICONERROR);
 	}
 
 	return true;
