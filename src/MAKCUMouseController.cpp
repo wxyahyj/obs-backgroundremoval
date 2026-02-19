@@ -138,6 +138,22 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
     bool success = WriteFile(hSerial, cmd.c_str(), static_cast<DWORD>(cmd.length()), &bytesWritten, NULL);
     if (success && bytesWritten == static_cast<DWORD>(cmd.length())) {
         printf("MAKCU: Successfully sent command: %s\n", command.c_str());
+        
+        // 读取设备响应（可选）
+        char buffer[256];
+        DWORD bytesRead;
+        DWORD events;
+        if (WaitCommEvent(hSerial, &events, NULL)) {
+            if (events & EV_RXCHAR) {
+                if (ReadFile(hSerial, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
+                    if (bytesRead > 0) {
+                        buffer[bytesRead] = '\0';
+                        printf("MAKCU: Received response: %s\n", buffer);
+                    }
+                }
+            }
+        }
+        
         return true;
     } else {
         DWORD error = GetLastError();
