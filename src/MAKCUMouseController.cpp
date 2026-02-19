@@ -68,6 +68,8 @@ bool MAKCUMouseController::connectSerial()
     );
 
     if (hSerial == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        printf("MAKCU: Failed to open port %s, error: %d\n", portName.c_str(), error);
         return false;
     }
 
@@ -75,6 +77,8 @@ bool MAKCUMouseController::connectSerial()
     dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
 
     if (!GetCommState(hSerial, &dcbSerialParams)) {
+        DWORD error = GetLastError();
+        printf("MAKCU: Failed to get comm state, error: %d\n", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
@@ -86,6 +90,8 @@ bool MAKCUMouseController::connectSerial()
     dcbSerialParams.Parity = NOPARITY;
 
     if (!SetCommState(hSerial, &dcbSerialParams)) {
+        DWORD error = GetLastError();
+        printf("MAKCU: Failed to set comm state, error: %d\n", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
@@ -99,12 +105,15 @@ bool MAKCUMouseController::connectSerial()
     timeouts.WriteTotalTimeoutMultiplier = 10;
 
     if (!SetCommTimeouts(hSerial, &timeouts)) {
+        DWORD error = GetLastError();
+        printf("MAKCU: Failed to set timeouts, error: %d\n", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
     }
 
     serialConnected = true;
+    printf("MAKCU: Successfully connected to port %s at %d baud\n", portName.c_str(), baudRate);
     return true;
 }
 
@@ -120,13 +129,21 @@ void MAKCUMouseController::disconnectSerial()
 bool MAKCUMouseController::sendSerialCommand(const std::string& command)
 {
     if (!serialConnected || hSerial == INVALID_HANDLE_VALUE) {
+        printf("MAKCU: Not connected, cannot send command: %s\n", command.c_str());
         return false;
     }
 
     DWORD bytesWritten;
     std::string cmd = command + "\r\n";
-    return WriteFile(hSerial, cmd.c_str(), static_cast<DWORD>(cmd.length()), &bytesWritten, NULL) && 
-           bytesWritten == static_cast<DWORD>(cmd.length());
+    bool success = WriteFile(hSerial, cmd.c_str(), static_cast<DWORD>(cmd.length()), &bytesWritten, NULL);
+    if (success && bytesWritten == static_cast<DWORD>(cmd.length())) {
+        printf("MAKCU: Successfully sent command: %s\n", command.c_str());
+        return true;
+    } else {
+        DWORD error = GetLastError();
+        printf("MAKCU: Failed to send command: %s, error: %d, bytes written: %d\n", command.c_str(), error, bytesWritten);
+        return false;
+    }
 }
 
 void MAKCUMouseController::move(int dx, int dy)
