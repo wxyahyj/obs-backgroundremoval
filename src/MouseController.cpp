@@ -8,6 +8,8 @@ MouseController::MouseController()
     : isMoving(false)
     , pidPreviousErrorX(0.0f)
     , pidPreviousErrorY(0.0f)
+    , filteredDeltaErrorX(0.0f)
+    , filteredDeltaErrorY(0.0f)
     , currentVelocityX(0.0f)
     , currentVelocityY(0.0f)
     , currentAccelerationX(0.0f)
@@ -98,9 +100,18 @@ void MouseController::tick()
     // 计算动态P值
     float dynamicP = calculateDynamicP(distance);
     
+    // 计算误差差值
+    float deltaErrorX = errorX - pidPreviousErrorX;
+    float deltaErrorY = errorY - pidPreviousErrorY;
+    
+    // 应用一阶低通滤波
+    float alpha = config.derivativeFilterAlpha;
+    filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
+    filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
+    
     // 计算PID输出
-    float pdOutputX = dynamicP * errorX + config.pidD * (errorX - pidPreviousErrorX);
-    float pdOutputY = dynamicP * errorY + config.pidD * (errorY - pidPreviousErrorY);
+    float pdOutputX = dynamicP * errorX + config.pidD * filteredDeltaErrorX;
+    float pdOutputY = dynamicP * errorY + config.pidD * filteredDeltaErrorY;
     
     // 计算基线补偿
     float baselineX = errorX * config.baselineCompensation;
@@ -233,6 +244,8 @@ void MouseController::resetPidState()
 {
     pidPreviousErrorX = 0.0f;
     pidPreviousErrorY = 0.0f;
+    filteredDeltaErrorX = 0.0f;
+    filteredDeltaErrorY = 0.0f;
 }
 
 float MouseController::calculateDynamicP(float distance)

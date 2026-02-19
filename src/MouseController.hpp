@@ -33,6 +33,7 @@ struct MouseControllerConfig {
     float maxPixelMove;
     float deadZonePixels;
     float targetYOffset;
+    float derivativeFilterAlpha; // 一阶低通滤波系数
 };
 
 class MouseController {
@@ -65,6 +66,8 @@ private:
     
     float pidPreviousErrorX;
     float pidPreviousErrorY;
+    float filteredDeltaErrorX; // 滤波后的X轴误差差值
+    float filteredDeltaErrorY; // 滤波后的Y轴误差差值
     float calculateDynamicP(float distance);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);

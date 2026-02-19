@@ -116,7 +116,8 @@ float deadZonePixels;
 int screenOffsetX;
 int screenOffsetY;
 int screenWidth;
-int screenHeight;
+	int screenHeight;
+	float derivativeFilterAlpha;
 float targetYOffset;
 std::unique_ptr<MouseController> mouseController;
 #endif
@@ -496,6 +497,7 @@ tf->screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
 tf->screenWidth = (int)obs_data_get_int(settings, "screen_width");
 tf->screenHeight = (int)obs_data_get_int(settings, "screen_height");
 tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
+		tf->derivativeFilterAlpha = (float)obs_data_get_double(settings, "derivative_filter_alpha");
 
 	if (tf->mouseController && tf->enableMouseControl) {
 		MouseControllerConfig mcConfig;
@@ -519,10 +521,11 @@ tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		mcConfig.sourceHeight = obs_source_get_base_height(tf->source);
 		mcConfig.screenOffsetX = tf->screenOffsetX;
 mcConfig.screenOffsetY = tf->screenOffsetY;
-mcConfig.screenWidth = tf->screenWidth;
-mcConfig.screenHeight = tf->screenHeight;
-mcConfig.targetYOffset = tf->targetYOffset;
-tf->mouseController->updateConfig(mcConfig);
+		mcConfig.screenWidth = tf->screenWidth;
+		mcConfig.screenHeight = tf->screenHeight;
+		mcConfig.targetYOffset = tf->targetYOffset;
+		mcConfig.derivativeFilterAlpha = tf->derivativeFilterAlpha;
+		tf->mouseController->updateConfig(mcConfig);
 	}
 #endif
 
@@ -1125,10 +1128,11 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->maxPixelMove = 128.0f;
 		instance->deadZonePixels = 5.0f;
 		instance->screenOffsetX = 0;
-instance->screenOffsetY = 0;
-instance->screenWidth = 0;
-instance->screenHeight = 0;
-instance->targetYOffset = 0.0f;
+		instance->screenOffsetY = 0;
+		instance->screenWidth = 0;
+		instance->screenHeight = 0;
+		instance->targetYOffset = 0.0f;
+		instance->derivativeFilterAlpha = 0.2f;
 instance->mouseController = std::make_unique<MouseController>();
 #endif
 
