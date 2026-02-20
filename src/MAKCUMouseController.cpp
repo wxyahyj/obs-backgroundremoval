@@ -166,26 +166,26 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
 void MAKCUMouseController::move(int dx, int dy)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), ".move(%d,%d,)", dx, dy);
+    sprintf_s(cmd, sizeof(cmd), "km.move(%d,%d)", dx, dy);
     sendSerialCommand(cmd);
 }
 
 void MAKCUMouseController::moveTo(int x, int y)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), ".moveto(%d,%d,)", x, y);
+    sprintf_s(cmd, sizeof(cmd), "km.move(%d,%d)", x, y);
     sendSerialCommand(cmd);
 }
 
 void MAKCUMouseController::click(bool left)
 {
-    sendSerialCommand(left ? ".click(1,)" : ".click(2,)");
+    sendSerialCommand(left ? "km.left(1)" : "km.right(1)");
 }
 
 void MAKCUMouseController::wheel(int delta)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), ".wheel(%d,)", delta);
+    sprintf_s(cmd, sizeof(cmd), "km.wheel(%d)", delta);
     sendSerialCommand(cmd);
 }
 
@@ -415,7 +415,7 @@ bool MAKCUMouseController::testCommunication()
     }
 
     // 发送echo命令测试通信
-    std::string testCommand = ".echo(1,)";
+    std::string testCommand = "km.echo(1)";
     bool success = sendSerialCommand(testCommand);
     
     if (success) {
