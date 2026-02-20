@@ -22,6 +22,7 @@ public:
     void tick() override;
     
     bool isConnected();
+    bool testCommunication();
 
 private:
     std::mutex mutex;

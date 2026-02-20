@@ -70,7 +70,7 @@ bool MAKCUMouseController::connectSerial()
 
     if (hSerial == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
-        printf("MAKCU: Failed to open port %s, error: %d\n", portName.c_str(), error);
+        obs_log(LOG_INFO, "MAKCU: Failed to open port %s, error: %d", portName.c_str(), error);
         return false;
     }
 
@@ -79,7 +79,7 @@ bool MAKCUMouseController::connectSerial()
 
     if (!GetCommState(hSerial, &dcbSerialParams)) {
         DWORD error = GetLastError();
-        printf("MAKCU: Failed to get comm state, error: %d\n", error);
+        obs_log(LOG_INFO, "MAKCU: Failed to get comm state, error: %d", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
@@ -92,7 +92,7 @@ bool MAKCUMouseController::connectSerial()
 
     if (!SetCommState(hSerial, &dcbSerialParams)) {
         DWORD error = GetLastError();
-        printf("MAKCU: Failed to set comm state, error: %d\n", error);
+        obs_log(LOG_INFO, "MAKCU: Failed to set comm state, error: %d", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
@@ -107,14 +107,14 @@ bool MAKCUMouseController::connectSerial()
 
     if (!SetCommTimeouts(hSerial, &timeouts)) {
         DWORD error = GetLastError();
-        printf("MAKCU: Failed to set timeouts, error: %d\n", error);
+        obs_log(LOG_INFO, "MAKCU: Failed to set timeouts, error: %d", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
     }
 
     serialConnected = true;
-    printf("MAKCU: Successfully connected to port %s at %d baud\n", portName.c_str(), baudRate);
+    obs_log(LOG_INFO, "MAKCU: Successfully connected to port %s at %d baud", portName.c_str(), baudRate);
     return true;
 }
 
@@ -130,7 +130,7 @@ void MAKCUMouseController::disconnectSerial()
 bool MAKCUMouseController::sendSerialCommand(const std::string& command)
 {
     if (!serialConnected || hSerial == INVALID_HANDLE_VALUE) {
-        printf("MAKCU: Not connected, cannot send command: %s\n", command.c_str());
+        obs_log(LOG_INFO, "MAKCU: Not connected, cannot send command: %s", command.c_str());
         return false;
     }
 
@@ -138,7 +138,7 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
     std::string cmd = command + "\r\n";
     bool success = WriteFile(hSerial, cmd.c_str(), static_cast<DWORD>(cmd.length()), &bytesWritten, NULL);
     if (success && bytesWritten == static_cast<DWORD>(cmd.length())) {
-        printf("MAKCU: Successfully sent command: %s\n", command.c_str());
+        obs_log(LOG_INFO, "MAKCU: Successfully sent command: %s", command.c_str());
         
         // 读取设备响应（可选）
         char buffer[256];
@@ -149,7 +149,7 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
                 if (ReadFile(hSerial, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
                     if (bytesRead > 0) {
                         buffer[bytesRead] = '\0';
-                        printf("MAKCU: Received response: %s\n", buffer);
+                        obs_log(LOG_INFO, "MAKCU: Received response: %s", buffer);
                     }
                 }
             }
@@ -158,7 +158,7 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
         return true;
     } else {
         DWORD error = GetLastError();
-        printf("MAKCU: Failed to send command: %s, error: %d, bytes written: %d\n", command.c_str(), error, bytesWritten);
+        obs_log(LOG_INFO, "MAKCU: Failed to send command: %s, error: %d, bytes written: %d", command.c_str(), error, bytesWritten);
         return false;
     }
 }
@@ -185,14 +185,31 @@ void MAKCUMouseController::click(bool left)
 void MAKCUMouseController::wheel(int delta)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), ".wheel(%d)", delta);
+    sprintf_s(cmd, sizeof(cmd), ".wheel(%d,)", delta);
     sendSerialCommand(cmd);
 }
 
 void MAKCUMouseController::updateConfig(const MouseControllerConfig& newConfig)
 {
     std::lock_guard<std::mutex> lock(mutex);
+    
+    // 检查MAKCU配置是否变化
+    bool portChanged = (newConfig.makcuPort != portName);
+    bool baudChanged = (newConfig.makcuBaudRate != baudRate);
+    
     config = newConfig;
+    
+    // 如果配置变化，重新连接串口
+    if (portChanged || baudChanged) {
+        portName = newConfig.makcuPort;
+        baudRate = newConfig.makcuBaudRate;
+        
+        // 先断开旧连接
+        disconnectSerial();
+        
+        // 重新连接
+        connectSerial();
+    }
 }
 
 void MAKCUMouseController::setDetections(const std::vector<Detection>& detections)
@@ -284,7 +301,14 @@ void MAKCUMouseController::tick()
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
-    move(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
+    // 检查连接状态后再发送命令
+    if (serialConnected) {
+        move(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
+    } else {
+        // 尝试重新连接
+        obs_log(LOG_INFO, "MAKCU: Not connected, trying to reconnect...");
+        connectSerial();
+    }
     
     pidPreviousErrorX = errorX;
     pidPreviousErrorY = errorY;
@@ -381,6 +405,26 @@ void MAKCUMouseController::resetMotionState()
 bool MAKCUMouseController::isConnected()
 {
     return serialConnected;
+}
+
+bool MAKCUMouseController::testCommunication()
+{
+    if (!serialConnected || hSerial == INVALID_HANDLE_VALUE) {
+        obs_log(LOG_INFO, "MAKCU: Not connected, cannot test communication");
+        return false;
+    }
+
+    // 发送echo命令测试通信
+    std::string testCommand = ".echo(1,)";
+    bool success = sendSerialCommand(testCommand);
+    
+    if (success) {
+        obs_log(LOG_INFO, "MAKCU: Communication test successful");
+        return true;
+    } else {
+        obs_log(LOG_INFO, "MAKCU: Communication test failed");
+        return false;
+    }
 }
 
 #endif

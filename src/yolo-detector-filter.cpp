@@ -645,29 +645,35 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 
 static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data)
 {
-	auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
-	if (!ptr) {
-		return true;
-	}
+    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+    if (!ptr) {
+        return true;
+    }
 
-	std::shared_ptr<yolo_detector_filter> tf = *ptr;
-	if (!tf) {
-		return true;
-	}
+    std::shared_ptr<yolo_detector_filter> tf = *ptr;
+    if (!tf) {
+        return true;
+    }
 
-	// 创建临时MAKCU控制器进行连接测试
-	MAKCUMouseController tempController(tf->makcuPort, tf->makcuBaudRate);
+    // 创建临时MAKCU控制器进行连接测试
+    MAKCUMouseController tempController(tf->makcuPort, tf->makcuBaudRate);
 
-	// 检查连接状态
-	bool isConnected = tempController.isConnected();
+    // 检查连接状态
+    bool isConnected = tempController.isConnected();
 
-	if (isConnected) {
-		MessageBoxA(NULL, "MAKCU连接成功", "连接测试", MB_OK | MB_ICONINFORMATION);
-	} else {
-		MessageBoxA(NULL, "MAKCU连接失败", "连接测试", MB_OK | MB_ICONERROR);
-	}
+    if (isConnected) {
+        // 测试通信功能
+        bool commSuccess = tempController.testCommunication();
+        if (commSuccess) {
+            MessageBoxA(NULL, "MAKCU连接成功，通信正常", "连接测试", MB_OK | MB_ICONINFORMATION);
+        } else {
+            MessageBoxA(NULL, "MAKCU连接成功，但通信失败", "连接测试", MB_OK | MB_ICONWARNING);
+        }
+    } else {
+        MessageBoxA(NULL, "MAKCU连接失败", "连接测试", MB_OK | MB_ICONERROR);
+    }
 
-	return true;
+    return true;
 }
 
 #ifdef _WIN32
