@@ -45,6 +45,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float confidenceThreshold;
 	float nmsThreshold;
 	int targetClassId;
+	std::vector<int> targetClasses;
 	int inferenceIntervalFrames;
 
 	bool showBBox;
@@ -136,6 +137,7 @@ static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frame
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
 static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data);
+static bool target_class_modified(obs_properties_t *props, obs_property_t *property, void *data);
 
 #ifdef _WIN32
 static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -203,8 +205,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_float_slider(props, "nms_threshold", obs_module_text("NMSThreshold"), 0.01, 1.0, 0.01);
 
+	// 目标类别设置
 	obs_property_t *targetClass = obs_properties_add_list(props, "target_class", obs_module_text("TargetClass"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_set_modified_callback(targetClass, target_class_modified);
 	obs_property_list_add_int(targetClass, obs_module_text("AllClasses"), -1);
+	
+	// 多个目标类别设置
+	obs_property_t *multiTargetClassFolder = obs_properties_add_folder(props, "multi_target_class_folder", "多个目标类别");
+	obs_property_set_parent(obs_properties_add_bool(props, "enable_multi_target_class", "启用多个目标类别"), multiTargetClassFolder);
 
 	obs_properties_add_int_slider(props, "inference_interval_frames", obs_module_text("InferenceIntervalFrames"), 0, 10, 1);
 
@@ -259,12 +267,13 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_int_slider(props, "floating_window_width", obs_module_text("WindowWidth"), 320, 1920, 10);
 	obs_properties_add_int_slider(props, "floating_window_height", obs_module_text("WindowHeight"), 240, 1080, 10);
 
-	obs_properties_add_group(props, "mouse_control_group", "鼠标控制", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "enable_mouse_control", "启用鼠标控制");
-	
-	obs_property_t *controllerTypeList = obs_properties_add_list(props, "controller_type", "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(controllerTypeList, "Windows API", 0);
-	obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
+	// 创建分级菜单
+	obs_property_t *basicFolder = obs_properties_add_folder(props, "basic_settings", "基本设置");
+	obs_property_t *controlFolder = obs_properties_add_folder(props, "control_settings", "控制方式设置");
+	obs_property_t *aimFolder = obs_properties_add_folder(props, "aim_settings", "瞄准设置");
+
+	// 基本设置
+	obs_property_set_parent(obs_properties_add_bool(props, "enable_mouse_control", "启用鼠标控制"), basicFolder);
 	
 	obs_property_t *hotkeyList = obs_properties_add_list(props, "mouse_control_hotkey", "鼠标控制热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
@@ -280,9 +289,22 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(hotkeyList, "S", 'S');
 	obs_property_list_add_int(hotkeyList, "F1", VK_F1);
 	obs_property_list_add_int(hotkeyList, "F2", VK_F2);
+	obs_property_set_parent(hotkeyList, basicFolder);
+	
+	// 屏幕设置
+	obs_property_set_parent(obs_properties_add_int(props, "screen_offset_x", "屏幕偏移X", 0, 3840, 1), basicFolder);
+	obs_property_set_parent(obs_properties_add_int(props, "screen_offset_y", "屏幕偏移Y", 0, 2160, 1), basicFolder);
+	obs_property_set_parent(obs_properties_add_int(props, "screen_width", "屏幕宽度", 0, 3840, 1), basicFolder);
+	obs_property_set_parent(obs_properties_add_int(props, "screen_height", "屏幕高度", 0, 2160, 1), basicFolder);
+
+	// 控制方式设置
+	obs_property_t *controllerTypeList = obs_properties_add_list(props, "controller_type", "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(controllerTypeList, "Windows API", 0);
+	obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
+	obs_property_set_parent(controllerTypeList, controlFolder);
 	
 	// MAKCU 配置
-	obs_properties_add_text(props, "makcu_port", "MAKCU 端口", OBS_TEXT_DEFAULT);
+	obs_property_set_parent(obs_properties_add_text(props, "makcu_port", "MAKCU 端口", OBS_TEXT_DEFAULT), controlFolder);
 	obs_property_t *baudRateList = obs_properties_add_list(props, "makcu_baud_rate", "波特率", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(baudRateList, "9600", 9600);
 	obs_property_list_add_int(baudRateList, "19200", 19200);
@@ -290,40 +312,37 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(baudRateList, "57600", 57600);
 	obs_property_list_add_int(baudRateList, "115200", 115200);
 	obs_property_list_add_int(baudRateList, "4000000 (4Mbps)", 4000000);
+	obs_property_set_parent(baudRateList, controlFolder);
 	
 	// 测试连接按钮
-	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
+	obs_property_set_parent(obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection), controlFolder);
+
+	// 瞄准设置
+	obs_property_set_parent(obs_properties_add_float_slider(props, "aim_smoothing_x", "X轴平滑度", 0.00, 1.0, 0.01), aimFolder);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "aim_smoothing_y", "Y轴平滑度", 0.00, 1.0, 0.01), aimFolder);
 	
 	// Y轴目标偏移
-	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0), aimFolder);
 	
-	// 动态PID与平滑度参数
-	obs_properties_add_float_slider(props, "aim_smoothing_x", "X轴平滑度", 0.00, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "aim_smoothing_y", "Y轴平滑度", 0.00, 1.0, 0.01);
+	// 最大移动量
+	obs_property_set_parent(obs_properties_add_float_slider(props, "max_pixel_move", "最大移动量", 0.0, 200.0, 1.0), aimFolder);
+	
+	// 瞄准死区
+	obs_property_set_parent(obs_properties_add_float_slider(props, "dead_zone_pixels", "瞄准死区", 0.0, 20.0, 0.5), aimFolder);
 	
 	// P值参数
-	obs_properties_add_float_slider(props, "mouse_control_p_min", "P最小值", 0.00, 1.00, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_max", "P最大值", 0.00, 1.00, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_slope", "P增长斜率", 0.00, 10, 0.01);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "mouse_control_p_min", "P最小值", 0.00, 1.00, 0.01), aimFolder);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "mouse_control_p_max", "P最大值", 0.00, 1.00, 0.01), aimFolder);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "mouse_control_p_slope", "P增长斜率", 0.00, 10, 0.01), aimFolder);
 	
 	// 基线补偿
-	obs_properties_add_float_slider(props, "baseline_compensation", "基线补偿", 0.00, 1.00, 0.01);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "baseline_compensation", "基线补偿", 0.00, 1.00, 0.01), aimFolder);
 	
 	// 微分系数
-	obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.000, 1.00, 0.001);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.000, 1.00, 0.001), aimFolder);
 	
 	// 微分滤波系数
-	obs_properties_add_float_slider(props, "derivative_filter_alpha", "微分滤波系数", 0.01, 1.00, 0.01);
-	
-	// 其他参数
-	obs_properties_add_float_slider(props, "max_pixel_move", "最大移动量", 0.0, 200.0, 1.0);
-	obs_properties_add_float_slider(props, "dead_zone_pixels", "瞄准死区", 0.0, 20.0, 0.5);
-	
-	// 屏幕设置
-	obs_properties_add_int(props, "screen_offset_x", "屏幕偏移X", 0, 3840, 1);
-	obs_properties_add_int(props, "screen_offset_y", "屏幕偏移Y", 0, 2160, 1);
-	obs_properties_add_int(props, "screen_width", "屏幕宽度", 0, 3840, 1);
-	obs_properties_add_int(props, "screen_height", "屏幕高度", 0, 2160, 1);
+	obs_property_set_parent(obs_properties_add_float_slider(props, "derivative_filter_alpha", "微分滤波系数", 0.01, 1.00, 0.01), aimFolder);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -340,6 +359,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "confidence_threshold", 0.5);
 	obs_data_set_default_double(settings, "nms_threshold", 0.45);
 	obs_data_set_default_int(settings, "target_class", -1);
+	obs_data_set_default_bool(settings, "enable_multi_target_class", false);
 	obs_data_set_default_int(settings, "inference_interval_frames", 1);
 	obs_data_set_default_bool(settings, "show_detection_results", true);
 	obs_data_set_default_bool(settings, "show_bbox", true);
@@ -460,7 +480,28 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		if (tf->yoloModel) {
 			tf->yoloModel->setConfidenceThreshold(tf->confidenceThreshold);
 			tf->yoloModel->setNMSThreshold(tf->nmsThreshold);
-			tf->yoloModel->setTargetClass(tf->targetClassId);
+
+			// 检查是否启用多个目标类别
+			bool enableMultiTargetClass = obs_data_get_bool(settings, "enable_multi_target_class");
+			if (enableMultiTargetClass) {
+				// 收集选中的类别
+				std::vector<int> selectedClasses;
+				const auto& classNames = tf->yoloModel->getClassNames();
+				for (int i = 0; i < classNames.size(); ++i) {
+					char propName[32];
+					snprintf(propName, sizeof(propName), "class_%d", i);
+					if (obs_data_get_bool(settings, propName)) {
+						selectedClasses.push_back(i);
+					}
+				}
+				// 设置多个目标类别
+				tf->yoloModel->setTargetClasses(selectedClasses);
+				tf->targetClasses = selectedClasses;
+			} else {
+				// 使用单个目标类别
+				tf->yoloModel->setTargetClass(tf->targetClassId);
+				tf->targetClasses.clear();
+			}
 		}
 	}
 	
@@ -676,6 +717,60 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
     return true;
 }
 
+static bool target_class_modified(obs_properties_t *props, obs_property_t *property, void *data)
+{
+    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+    if (!ptr) {
+        return false;
+    }
+
+    std::shared_ptr<yolo_detector_filter> filter = *ptr;
+    if (!filter) {
+        return false;
+    }
+
+    // 清除现有类别列表（保留"所有类别"）
+    obs_property_list_clear(property);
+    obs_property_list_add_int(property, obs_module_text("AllClasses"), -1);
+
+    // 检查模型是否加载
+    if (filter->yoloModel) {
+        // 添加所有类别名称到单选列表
+        const auto& classNames = filter->yoloModel->getClassNames();
+        for (int i = 0; i < classNames.size(); ++i) {
+            obs_property_list_add_int(property, classNames[i].c_str(), i);
+        }
+
+        // 动态添加类别复选框到多个目标类别文件夹
+        obs_property_t *multiTargetClassFolder = obs_properties_get(props, "multi_target_class_folder");
+        if (multiTargetClassFolder) {
+            // 清除现有的类别复选框
+            size_t propCount = obs_properties_count(props);
+            for (size_t i = 0; i < propCount; ++i) {
+                obs_property_t *prop = obs_properties_get(props, i);
+                if (prop) {
+                    const char *propName = obs_property_name(prop);
+                    if (propName && strstr(propName, "class_") == propName) {
+                        obs_properties_remove(props, propName);
+                        i--;
+                        propCount--;
+                    }
+                }
+            }
+
+            // 添加新的类别复选框
+            for (int i = 0; i < classNames.size(); ++i) {
+                char propName[32];
+                snprintf(propName, sizeof(propName), "class_%d", i);
+                obs_property_t *classCheckbox = obs_properties_add_bool(props, propName, classNames[i].c_str());
+                obs_property_set_parent(classCheckbox, multiTargetClassFolder);
+            }
+        }
+    }
+
+    return true;
+}
+
 #ifdef _WIN32
 static yolo_detector_filter *g_floatingWindowFilter = nullptr;
 
@@ -754,12 +849,18 @@ static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 		break;
 	}
 	case WM_CLOSE: {
-		if (filter) {
-			filter->showFloatingWindow = false;
-			destroyFloatingWindow(filter);
+			if (filter) {
+				filter->showFloatingWindow = false;
+				destroyFloatingWindow(filter);
+				// 保存悬浮窗关闭状态
+				obs_data_t *settings = obs_source_get_settings(filter->source);
+				if (settings) {
+					obs_data_set_bool(settings, "show_floating_window", false);
+					obs_data_release(settings);
+				}
+			}
+			break;
 		}
-		break;
-	}
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;

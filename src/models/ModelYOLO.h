@@ -28,12 +28,14 @@ public:
     void setConfidenceThreshold(float threshold);
     void setNMSThreshold(float threshold);
     void setTargetClass(int classId);
+    void setTargetClasses(const std::vector<int>& classIds);
     void loadClassNames(const std::string& namesFile);
 
     Version getVersion() const { return version_; }
     int getInputWidth() const { return inputWidth_; }
     int getInputHeight() const { return inputHeight_; }
     int getNumClasses() const { return numClasses_; }
+    const std::vector<std::string>& getClassNames() const { return classNames_; }
 
 private:
     std::vector<Detection> postprocessYOLOv5(
@@ -75,6 +77,7 @@ private:
     float confidenceThreshold_;
     float nmsThreshold_;
     int targetClassId_;
+    std::vector<int> targetClasses_;
 
     int inputWidth_;
     int inputHeight_;

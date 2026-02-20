@@ -443,7 +443,20 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
             continue;
         }
 
-        if (targetClassId_ >= 0 && maxClassId != targetClassId_) {
+        // 检查是否在目标类别列表中
+        bool isTargetClass = false;
+        if (targetClassId_ >= 0) {
+            // 单个目标类别模式
+            isTargetClass = (maxClassId == targetClassId_);
+        } else if (!targetClasses_.empty()) {
+            // 多个目标类别模式
+            isTargetClass = (std::find(targetClasses_.begin(), targetClasses_.end(), maxClassId) != targetClasses_.end());
+        } else {
+            // 无目标类别限制
+            isTargetClass = true;
+        }
+        
+        if (!isTargetClass) {
             continue;
         }
 
@@ -529,7 +542,20 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
             continue;
         }
 
-        if (targetClassId_ >= 0 && maxClassId != targetClassId_) {
+        // 检查是否在目标类别列表中
+        bool isTargetClass = false;
+        if (targetClassId_ >= 0) {
+            // 单个目标类别模式
+            isTargetClass = (maxClassId == targetClassId_);
+        } else if (!targetClasses_.empty()) {
+            // 多个目标类别模式
+            isTargetClass = (std::find(targetClasses_.begin(), targetClasses_.end(), maxClassId) != targetClasses_.end());
+        } else {
+            // 无目标类别限制
+            isTargetClass = true;
+        }
+        
+        if (!isTargetClass) {
             continue;
         }
 
@@ -683,6 +709,24 @@ void ModelYOLO::setNMSThreshold(float threshold) {
 
 void ModelYOLO::setTargetClass(int classId) {
     targetClassId_ = classId;
+    // 同时更新目标类别向量
+    targetClasses_.clear();
+    if (classId >= 0) {
+        targetClasses_.push_back(classId);
+    }
+}
+
+void ModelYOLO::setTargetClasses(const std::vector<int>& classIds) {
+    targetClasses_ = classIds;
+    // 如果只有一个类别，也更新单个目标类别ID
+    if (classIds.size() == 1) {
+        targetClassId_ = classIds[0];
+    } else if (classIds.empty()) {
+        targetClassId_ = -1;
+    } else {
+        // 多个类别时，单个目标类别ID设为-1
+        targetClassId_ = -1;
+    }
 }
 
 void ModelYOLO::setInputResolution(int resolution) {
