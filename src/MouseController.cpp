@@ -161,16 +161,20 @@ Detection* MouseController::selectTarget()
         return nullptr;
     }
 
-    int fovCenterX = config.sourceWidth / 2;
-    int fovCenterY = config.sourceHeight / 2;
+    // 安全检查：确保sourceWidth和sourceHeight不为0
+    int safeSourceWidth = (config.sourceWidth > 0) ? config.sourceWidth : 1920;
+    int safeSourceHeight = (config.sourceHeight > 0) ? config.sourceHeight : 1080;
+
+    int fovCenterX = safeSourceWidth / 2;
+    int fovCenterY = safeSourceHeight / 2;
     float fovRadiusSquared = static_cast<float>(config.fovRadiusPixels * config.fovRadiusPixels);
 
     Detection* bestTarget = nullptr;
     float minDistanceSquared = std::numeric_limits<float>::max();
 
     for (auto& det : currentDetections) {
-        int targetX = static_cast<int>(det.centerX * config.sourceWidth);
-        int targetY = static_cast<int>(det.centerY * config.sourceHeight);
+        int targetX = static_cast<int>(det.centerX * safeSourceWidth);
+        int targetY = static_cast<int>(det.centerY * safeSourceHeight);
         
         float dx = static_cast<float>(targetX - fovCenterX);
         float dy = static_cast<float>(targetY - fovCenterY);
@@ -190,15 +194,19 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    float sourcePixelX = det.centerX * config.sourceWidth;
-    float sourcePixelY = det.centerY * config.sourceHeight - config.targetYOffset;
+    // 安全检查：确保sourceWidth和sourceHeight不为0
+    int safeSourceWidth = (config.sourceWidth > 0) ? config.sourceWidth : fullScreenWidth;
+    int safeSourceHeight = (config.sourceHeight > 0) ? config.sourceHeight : fullScreenHeight;
+
+    float sourcePixelX = det.centerX * safeSourceWidth;
+    float sourcePixelY = det.centerY * safeSourceHeight - config.targetYOffset;
 
     // 当screenWidth或screenHeight为0时，使用实际屏幕分辨率作为目标
     int targetScreenWidth = (config.screenWidth > 0) ? config.screenWidth : fullScreenWidth;
     int targetScreenHeight = (config.screenHeight > 0) ? config.screenHeight : fullScreenHeight;
 
-    float screenScaleX = (float)targetScreenWidth / config.sourceWidth;
-    float screenScaleY = (float)targetScreenHeight / config.sourceHeight;
+    float screenScaleX = (float)targetScreenWidth / safeSourceWidth;
+    float screenScaleY = (float)targetScreenHeight / safeSourceHeight;
 
     float screenPixelX = config.screenOffsetX + sourcePixelX * screenScaleX;
     float screenPixelY = config.screenOffsetY + sourcePixelY * screenScaleY;
