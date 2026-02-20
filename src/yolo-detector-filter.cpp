@@ -67,6 +67,13 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	bool showFOVCircle;
 	bool showFOVCross;
 
+	bool showFOV2;
+	int fovRadius2;
+	uint32_t fovColor2;
+	bool useDynamicFOV;
+	bool isInFOV2Mode;
+	bool hasTargetInFOV2;
+
 	bool showDetectionResults;
 	float labelFontScale;
 
@@ -238,6 +245,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_int_slider(props, "fov_cross_line_thickness", obs_module_text("FOVCrossLineThickness"), 1, 10, 1);
 	obs_properties_add_int_slider(props, "fov_circle_thickness", obs_module_text("FOVCircleThickness"), 1, 10, 1);
 	obs_properties_add_color(props, "fov_color", obs_module_text("FOVColor"));
+
+	// 第二个FOV设置（动态切换）
+	obs_properties_add_group(props, "fov2_group", "动态FOV设置", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "use_dynamic_fov", "启用动态FOV");
+	obs_properties_add_bool(props, "show_fov2", "显示第二个FOV");
+	obs_properties_add_int_slider(props, "fov_radius2", "第二个FOV半径", 10, 200, 5);
+	obs_properties_add_color(props, "fov_color2", "第二个FOV颜色");
+
 	obs_properties_add_float_slider(props, "label_font_scale", obs_module_text("LabelFontScale"), 0.2, 1.0, 0.05);
 
 	obs_properties_add_group(props, "region_group", obs_module_text("RegionDetection"), OBS_GROUP_NORMAL, nullptr);
@@ -368,6 +383,13 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "fov_cross_line_thickness", 2);
 	obs_data_set_default_int(settings, "fov_circle_thickness", 2);
 	obs_data_set_default_int(settings, "fov_color", 0xFFFF0000);
+
+	// 第二个FOV默认值
+	obs_data_set_default_bool(settings, "use_dynamic_fov", false);
+	obs_data_set_default_bool(settings, "show_fov2", true);
+	obs_data_set_default_int(settings, "fov_radius2", 50);
+	obs_data_set_default_int(settings, "fov_color2", 0xFF00FF00);
+
 	obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
 	obs_data_set_default_int(settings, "region_x", 0);
@@ -520,6 +542,15 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->fovCrossLineThickness = (int)obs_data_get_int(settings, "fov_cross_line_thickness");
 	tf->fovCircleThickness = (int)obs_data_get_int(settings, "fov_circle_thickness");
 	tf->fovColor = (uint32_t)obs_data_get_int(settings, "fov_color");
+
+	// 第二个FOV设置
+	tf->useDynamicFOV = obs_data_get_bool(settings, "use_dynamic_fov");
+	tf->showFOV2 = obs_data_get_bool(settings, "show_fov2");
+	// 确保第二个FOV的半径不超过第一个FOV的半径
+	int requestedFOV2 = (int)obs_data_get_int(settings, "fov_radius2");
+	tf->fovRadius2 = std::min(requestedFOV2, tf->fovRadius);
+	tf->fovColor2 = (uint32_t)obs_data_get_int(settings, "fov_color2");
+
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
 	tf->useRegion = obs_data_get_bool(settings, "use_region");
@@ -586,7 +617,8 @@ tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		MouseControllerConfig mcConfig;
 		mcConfig.enableMouseControl = tf->enableMouseControl;
 		mcConfig.hotkeyVirtualKey = tf->mouseControlHotkey;
-		mcConfig.fovRadiusPixels = tf->fovRadius;
+		// 根据当前FOV模式设置FOV半径
+		mcConfig.fovRadiusPixels = tf->useDynamicFOV && tf->isInFOV2Mode ? tf->fovRadius2 : tf->fovRadius;
 		mcConfig.pidPMin = tf->mouseControlPMin;
 		mcConfig.pidPMax = tf->mouseControlPMax;
 		mcConfig.pidPSlope = tf->mouseControlPSlope;
@@ -1398,14 +1430,68 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	}
 
 #ifdef _WIN32
-	if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
+	// 动态FOV切换逻辑
+	if (tf->useDynamicFOV) {
 		std::vector<Detection> detectionsCopy;
 		{
 			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
 			detectionsCopy = tf->detections;
 		}
-		tf->mouseController->setDetections(detectionsCopy);
-		tf->mouseController->tick();
+
+		// 画面中心
+		float centerX = 0.5f;
+		float centerY = 0.5f;
+
+		// 当前使用的FOV半径
+		float currentFOVRadius = tf->isInFOV2Mode ? 
+			(static_cast<float>(tf->fovRadius2) / static_cast<float>(obs_source_get_base_width(tf->source))) :
+			(static_cast<float>(tf->fovRadius) / static_cast<float>(obs_source_get_base_width(tf->source)));
+
+		// 检查FOV内是否有目标
+		bool hasTargetInCurrentFOV = false;
+		for (const auto& det : detectionsCopy) {
+			float dx = det.centerX - centerX;
+			float dy = det.centerY - centerY;
+			float distance = sqrtf(dx * dx + dy * dy);
+			if (distance <= currentFOVRadius) {
+				hasTargetInCurrentFOV = true;
+				break;
+			}
+		}
+
+		// FOV切换逻辑
+		if (!tf->isInFOV2Mode) {
+			// 模式1：使用第一个FOV检测
+			if (hasTargetInCurrentFOV) {
+				// 检测到目标，切换到第二个FOV模式
+				tf->isInFOV2Mode = true;
+			}
+		} else {
+			// 模式2：使用第二个FOV锁敌
+			if (!hasTargetInCurrentFOV) {
+				// 第二个FOV内没有目标，切换回第一个FOV模式
+				tf->isInFOV2Mode = false;
+			}
+		}
+
+		// 更新鼠标控制器的FOV半径
+		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
+			// 注意：这里我们无法直接获取当前配置，所以在update函数中会处理FOV半径
+			// 我们直接传递检测结果并tick
+			tf->mouseController->setDetections(detectionsCopy);
+			tf->mouseController->tick();
+		}
+	} else {
+		// 不使用动态FOV，正常处理
+		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
+			std::vector<Detection> detectionsCopy;
+			{
+				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+				detectionsCopy = tf->detections;
+			}
+			tf->mouseController->setDetections(detectionsCopy);
+			tf->mouseController->tick();
+		}
 	}
 #endif
 }
@@ -1602,6 +1688,24 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 						static_cast<int>(fovRadius),
 						fovColor, tf->fovCircleThickness);
 				}
+			}
+
+			// 如果需要显示第二个FOV（动态FOV）
+			if (tf->showFOV2 && tf->useDynamicFOV) {
+				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
+				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
+				float fovRadius2 = static_cast<float>(tf->fovRadius2);
+
+				float r2 = ((tf->fovColor2 >> 16) & 0xFF) / 255.0f;
+				float g2 = ((tf->fovColor2 >> 8) & 0xFF) / 255.0f;
+				float b2 = (tf->fovColor2 & 0xFF) / 255.0f;
+				cv::Scalar fovColor2(b2 * 255, g2 * 255, r2 * 255, 255);
+
+				// 绘制第二个FOV圆圈
+				cv::circle(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
+					static_cast<int>(fovRadius2),
+					fovColor2, 2);
 			}
 
 			// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
