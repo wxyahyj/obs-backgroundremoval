@@ -287,7 +287,6 @@ void MAKCUMouseController::tick()
         move(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
     } else {
         // 尝试重新连接
-        obs_log(LOG_INFO, "MAKCU: Not connected, trying to reconnect...");
         connectSerial();
     }
     
