@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
-#include <obs.h>
+#include "plugin-support.h"
 
 MAKCUMouseController::MAKCUMouseController()
     : hSerial(INVALID_HANDLE_VALUE)
