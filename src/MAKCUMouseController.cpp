@@ -69,8 +69,6 @@ bool MAKCUMouseController::connectSerial()
     );
 
     if (hSerial == INVALID_HANDLE_VALUE) {
-        DWORD error = GetLastError();
-        obs_log(LOG_INFO, "MAKCU: Failed to open port %s, error: %d", portName.c_str(), error);
         return false;
     }
 
@@ -78,8 +76,6 @@ bool MAKCUMouseController::connectSerial()
     dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
 
     if (!GetCommState(hSerial, &dcbSerialParams)) {
-        DWORD error = GetLastError();
-        obs_log(LOG_INFO, "MAKCU: Failed to get comm state, error: %d", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
@@ -91,8 +87,6 @@ bool MAKCUMouseController::connectSerial()
     dcbSerialParams.Parity = NOPARITY;
 
     if (!SetCommState(hSerial, &dcbSerialParams)) {
-        DWORD error = GetLastError();
-        obs_log(LOG_INFO, "MAKCU: Failed to set comm state, error: %d", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
@@ -106,15 +100,12 @@ bool MAKCUMouseController::connectSerial()
     timeouts.WriteTotalTimeoutMultiplier = 10;
 
     if (!SetCommTimeouts(hSerial, &timeouts)) {
-        DWORD error = GetLastError();
-        obs_log(LOG_INFO, "MAKCU: Failed to set timeouts, error: %d", error);
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
         return false;
     }
 
     serialConnected = true;
-    obs_log(LOG_INFO, "MAKCU: Successfully connected to port %s at %d baud", portName.c_str(), baudRate);
     return true;
 }
 
@@ -130,7 +121,6 @@ void MAKCUMouseController::disconnectSerial()
 bool MAKCUMouseController::sendSerialCommand(const std::string& command)
 {
     if (!serialConnected || hSerial == INVALID_HANDLE_VALUE) {
-        obs_log(LOG_INFO, "MAKCU: Not connected, cannot send command: %s", command.c_str());
         return false;
     }
 
@@ -138,27 +128,18 @@ bool MAKCUMouseController::sendSerialCommand(const std::string& command)
     std::string cmd = command + "\r\n";
     bool success = WriteFile(hSerial, cmd.c_str(), static_cast<DWORD>(cmd.length()), &bytesWritten, NULL);
     if (success && bytesWritten == static_cast<DWORD>(cmd.length())) {
-        obs_log(LOG_INFO, "MAKCU: Successfully sent command: %s", command.c_str());
-        
         // 读取设备响应（可选）
         char buffer[256];
         DWORD bytesRead;
         DWORD events;
         if (WaitCommEvent(hSerial, &events, NULL)) {
             if (events & EV_RXCHAR) {
-                if (ReadFile(hSerial, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
-                    if (bytesRead > 0) {
-                        buffer[bytesRead] = '\0';
-                        obs_log(LOG_INFO, "MAKCU: Received response: %s", buffer);
-                    }
-                }
+                ReadFile(hSerial, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
             }
         }
         
         return true;
     } else {
-        DWORD error = GetLastError();
-        obs_log(LOG_INFO, "MAKCU: Failed to send command: %s, error: %d, bytes written: %d", command.c_str(), error, bytesWritten);
         return false;
     }
 }
@@ -410,7 +391,6 @@ bool MAKCUMouseController::isConnected()
 bool MAKCUMouseController::testCommunication()
 {
     if (!serialConnected || hSerial == INVALID_HANDLE_VALUE) {
-        obs_log(LOG_INFO, "MAKCU: Not connected, cannot test communication");
         return false;
     }
 
@@ -418,13 +398,7 @@ bool MAKCUMouseController::testCommunication()
     std::string testCommand = "km.echo(1)";
     bool success = sendSerialCommand(testCommand);
     
-    if (success) {
-        obs_log(LOG_INFO, "MAKCU: Communication test successful");
-        return true;
-    } else {
-        obs_log(LOG_INFO, "MAKCU: Communication test failed");
-        return false;
-    }
+    return success;
 }
 
 #endif
