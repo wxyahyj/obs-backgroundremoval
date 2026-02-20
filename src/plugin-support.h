@@ -30,6 +30,12 @@ extern "C" {
 extern const char *PLUGIN_NAME;
 extern const char *PLUGIN_VERSION;
 
+// Log levels
+#define LOG_INFO 3
+#define LOG_WARNING 4
+#define LOG_ERROR 5
+#define LOG_DEBUG 6
+
 void obs_log(int log_level, const char *format, ...);
 
 #ifdef __cplusplus
