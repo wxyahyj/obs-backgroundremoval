@@ -193,8 +193,12 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     float sourcePixelX = det.centerX * config.sourceWidth;
     float sourcePixelY = det.centerY * config.sourceHeight - config.targetYOffset;
 
-    float screenScaleX = (config.screenWidth > 0) ? (float)config.screenWidth / config.sourceWidth : 1.0f;
-    float screenScaleY = (config.screenHeight > 0) ? (float)config.screenHeight / config.sourceHeight : 1.0f;
+    // 当screenWidth或screenHeight为0时，使用实际屏幕分辨率作为目标
+    int targetScreenWidth = (config.screenWidth > 0) ? config.screenWidth : fullScreenWidth;
+    int targetScreenHeight = (config.screenHeight > 0) ? config.screenHeight : fullScreenHeight;
+
+    float screenScaleX = (float)targetScreenWidth / config.sourceWidth;
+    float screenScaleY = (float)targetScreenHeight / config.sourceHeight;
 
     float screenPixelX = config.screenOffsetX + sourcePixelX * screenScaleX;
     float screenPixelY = config.screenOffsetY + sourcePixelY * screenScaleY;
