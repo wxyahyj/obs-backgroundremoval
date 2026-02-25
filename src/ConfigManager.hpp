@@ -24,6 +24,7 @@ class ConfigManager {
 public:
     static ConfigManager& getInstance();
     
+    void setConfigsDirectory(const std::string& dir);
     bool saveConfig(const ExtendedMouseControllerConfig& config);
     bool loadConfig(const std::string& configName, ExtendedMouseControllerConfig& config);
     bool deleteConfig(const std::string& configName);

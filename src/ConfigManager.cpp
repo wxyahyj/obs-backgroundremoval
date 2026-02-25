@@ -77,6 +77,10 @@ ConfigManager::ConfigManager() {
 ConfigManager::~ConfigManager() {
 }
 
+void ConfigManager::setConfigsDirectory(const std::string& dir) {
+    configsDir = dir;
+}
+
 std::string ConfigManager::getConfigsDirectory() {
     return configsDir;
 }
