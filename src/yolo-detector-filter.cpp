@@ -960,10 +960,10 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			fullFrame = filter->inputBGRA.clone();
 		}
 
-		if (filter->useRegion) {
-			int fullWidth = fullFrame.cols;
-			int fullHeight = fullFrame.rows;
+		int fullWidth = fullFrame.cols;
+		int fullHeight = fullFrame.rows;
 
+		if (filter->useRegion) {
 			cropX = std::max(0, filter->regionX);
 			cropY = std::max(0, filter->regionY);
 			cropWidth = std::min(filter->regionWidth, fullWidth - cropX);
@@ -975,8 +975,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				frame = std::move(fullFrame);
 				cropX = 0;
 				cropY = 0;
-				cropWidth = frame.cols;
-				cropHeight = frame.rows;
+				cropWidth = fullWidth;
+				cropHeight = fullHeight;
 			}
 		} else {
 			frame = std::move(fullFrame);
@@ -997,9 +997,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		if (filter->useRegion && cropWidth > 0 && cropHeight > 0) {
 			for (auto& det : newDetections) {
-				int fullWidth = fullFrame.cols;
-				int fullHeight = fullFrame.rows;
-				
 				float pixelX = det.x * cropWidth + cropX;
 				float pixelY = det.y * cropHeight + cropY;
 				float pixelW = det.width * cropWidth;
@@ -1028,8 +1025,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		{
 			std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
-			filter->inferenceFrameWidth = fullFrame.cols;
-			filter->inferenceFrameHeight = fullFrame.rows;
+			filter->inferenceFrameWidth = fullWidth;
+			filter->inferenceFrameHeight = fullHeight;
 			filter->cropOffsetX = cropX;
 			filter->cropOffsetY = cropY;
 		}
@@ -1038,7 +1035,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 
 		if (filter->exportCoordinates && !newDetections.empty()) {
-			exportCoordinatesToFile(filter, fullFrame.cols, fullFrame.rows);
+			exportCoordinatesToFile(filter, fullWidth, fullHeight);
 		}
 	}
 

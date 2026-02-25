@@ -92,6 +92,18 @@ void MouseController::tick()
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
 
+    static bool loggedOnce = false;
+    if (!loggedOnce) {
+        obs_log(LOG_INFO, "[MouseController] 坐标调试:");
+        obs_log(LOG_INFO, "  推理帧尺寸: %dx%d", frameWidth, frameHeight);
+        obs_log(LOG_INFO, "  目标归一化中心: (%.4f, %.4f)", target->centerX, target->centerY);
+        obs_log(LOG_INFO, "  目标像素位置: (%.1f, %.1f)", targetPixelX, targetPixelY);
+        obs_log(LOG_INFO, "  FOV中心: (%.1f, %.1f)", fovCenterX, fovCenterY);
+        obs_log(LOG_INFO, "  误差(移动量): (%.1f, %.1f)", errorX, errorY);
+        obs_log(LOG_INFO, "  屏幕偏移: (%d, %d)", config.screenOffsetX, config.screenOffsetY);
+        loggedOnce = true;
+    }
+
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
     
