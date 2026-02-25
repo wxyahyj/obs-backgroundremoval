@@ -166,7 +166,7 @@ void MAKCUMouseController::move(int dx, int dy)
 void MAKCUMouseController::moveTo(int x, int y)
 {
     char cmd[64];
-    sprintf_s(cmd, sizeof(cmd), "km.move(%d,%d)", x, y);
+    sprintf_s(cmd, sizeof(cmd), "km.moveTo(%d,%d)", x, y);
     sendSerialCommand(cmd);
 }
 
@@ -288,15 +288,10 @@ void MAKCUMouseController::tick()
         moveY *= scale;
     }
     
-    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
-    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
-    
-    previousMoveX = finalMoveX;
-    previousMoveY = finalMoveY;
-    
+    // 直接使用目标屏幕坐标进行绝对定位
     // 检查连接状态后再发送命令
     if (serialConnected) {
-        move(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
+        moveTo(targetScreenPos.x, targetScreenPos.y);
     } else {
         // 尝试重新连接
         connectSerial();

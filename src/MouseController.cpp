@@ -215,17 +215,18 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
 
 void MouseController::moveMouseTo(const POINT& pos)
 {
-    POINT currentPos;
-    GetCursorPos(&currentPos);
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
     
-    long deltaX = pos.x - currentPos.x;
-    long deltaY = pos.y - currentPos.y;
+    // 转换为绝对坐标 (0-65535 范围)
+    LONG absoluteX = static_cast<LONG>((static_cast<double>(pos.x) / screenWidth) * 65535.0);
+    LONG absoluteY = static_cast<LONG>((static_cast<double>(pos.y) / screenHeight) * 65535.0);
 
     INPUT input = {};
     input.type = INPUT_MOUSE;
-    input.mi.dx = deltaX;
-    input.mi.dy = deltaY;
-    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+    input.mi.dx = absoluteX;
+    input.mi.dy = absoluteY;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
     input.mi.time = 0;
     input.mi.dwExtraInfo = 0;
 
