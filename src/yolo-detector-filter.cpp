@@ -266,7 +266,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_group(props, "fov_group", obs_module_text("FOVSettings"), OBS_GROUP_NORMAL, nullptr);
 
 	obs_properties_add_bool(props, "show_fov", obs_module_text("ShowFOV"));
-	obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 50, 500, 10);
+	obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 1, 500, 1);
 	obs_properties_add_bool(props, "show_fov_circle", obs_module_text("ShowFOVCircle"));
 	obs_properties_add_bool(props, "show_fov_cross", obs_module_text("ShowFOVCross"));
 	obs_properties_add_int_slider(props, "fov_cross_line_scale", obs_module_text("FOVCrossLineScale"), 1, 300, 5);
@@ -278,7 +278,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_group(props, "fov2_group", "动态FOV设置", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_bool(props, "use_dynamic_fov", "启用动态FOV");
 	obs_properties_add_bool(props, "show_fov2", "显示第二个FOV");
-	obs_properties_add_int_slider(props, "fov_radius2", "第二个FOV半径", 10, 200, 5);
+	obs_properties_add_int_slider(props, "fov_radius2", "第二个FOV半径", 1, 200, 1);
 	obs_properties_add_color(props, "fov_color2", "第二个FOV颜色");
 
 	obs_properties_add_float_slider(props, "label_font_scale", obs_module_text("LabelFontScale"), 0.2, 1.0, 0.05);
