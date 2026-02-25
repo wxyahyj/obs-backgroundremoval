@@ -194,27 +194,16 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    // 安全检查：确保sourceWidth和sourceHeight不为0
-    int safeSourceWidth = (config.sourceWidth > 0) ? config.sourceWidth : fullScreenWidth;
-    int safeSourceHeight = (config.sourceHeight > 0) ? config.sourceHeight : fullScreenHeight;
-
-    float sourcePixelX = det.centerX * safeSourceWidth;
-    float sourcePixelY = det.centerY * safeSourceHeight - config.targetYOffset;
-
-    // 当screenWidth或screenHeight为0时，使用实际屏幕分辨率作为目标
-    int targetScreenWidth = (config.screenWidth > 0) ? config.screenWidth : fullScreenWidth;
-    int targetScreenHeight = (config.screenHeight > 0) ? config.screenHeight : fullScreenHeight;
-
-    float screenScaleX = (float)targetScreenWidth / safeSourceWidth;
-    float screenScaleY = (float)targetScreenHeight / safeSourceHeight;
-
-    float screenPixelX = config.screenOffsetX + sourcePixelX * screenScaleX;
-    float screenPixelY = config.screenOffsetY + sourcePixelY * screenScaleY;
+    // 直接使用屏幕坐标，因为检测坐标已经是相对于整个屏幕的归一化坐标
+    // 这样可以避免OBS源大小与屏幕大小不一致导致的缩放错误
+    float screenPixelX = det.centerX * fullScreenWidth + config.screenOffsetX;
+    float screenPixelY = det.centerY * fullScreenHeight - config.targetYOffset + config.screenOffsetY;
 
     POINT result;
     result.x = static_cast<LONG>(screenPixelX);
     result.y = static_cast<LONG>(screenPixelY);
 
+    // 确保坐标在屏幕范围内
     LONG maxX = static_cast<LONG>(fullScreenWidth - 1);
     LONG maxY = static_cast<LONG>(fullScreenHeight - 1);
     
