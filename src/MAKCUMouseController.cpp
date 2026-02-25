@@ -257,14 +257,20 @@ void MAKCUMouseController::tick()
         return;
     }
 
-    POINT targetScreenPos = convertToScreenCoordinates(*target);
-    
-    POINT currentPos;
-    GetCursorPos(&currentPos);
-    
-    float errorX = static_cast<float>(targetScreenPos.x - currentPos.x);
-    float errorY = static_cast<float>(targetScreenPos.y - currentPos.y);
-    
+    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
+                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
+    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
+                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
+
+    float fovCenterX = frameWidth / 2.0f;
+    float fovCenterY = frameHeight / 2.0f;
+
+    float targetPixelX = target->centerX * frameWidth;
+    float targetPixelY = target->centerY * frameHeight - config.targetYOffset;
+
+    float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
+    float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
+
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
     
@@ -313,11 +319,9 @@ void MAKCUMouseController::tick()
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
-    // 检查连接状态后再发送命令
     if (serialConnected) {
         move(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
     } else {
-        // 尝试重新连接
         connectSerial();
     }
     

@@ -55,12 +55,10 @@ void MouseController::tick()
 {
     std::lock_guard<std::mutex> lock(mutex);
 
-    // 快速检查：鼠标控制是否启用
     if (!config.enableMouseControl) {
         return;
     }
 
-    // 快速检查：热键是否按下
     if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
         if (isMoving) {
             isMoving = false;
@@ -70,7 +68,6 @@ void MouseController::tick()
         return;
     }
 
-    // 快速检查：是否有目标
     Detection* target = selectTarget();
     if (!target) {
         if (isMoving) {
@@ -81,22 +78,23 @@ void MouseController::tick()
         return;
     }
 
-    // 计算目标屏幕位置
-    POINT targetScreenPos = convertToScreenCoordinates(*target);
-    
-    // 获取当前鼠标位置
-    POINT currentPos;
-    GetCursorPos(&currentPos);
-    
-    // 计算误差
-    float errorX = static_cast<float>(targetScreenPos.x - currentPos.x);
-    float errorY = static_cast<float>(targetScreenPos.y - currentPos.y);
-    
-    // 计算距离（使用平方距离避免平方根）
+    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
+                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
+    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
+                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
+
+    float fovCenterX = frameWidth / 2.0f;
+    float fovCenterY = frameHeight / 2.0f;
+
+    float targetPixelX = target->centerX * frameWidth;
+    float targetPixelY = target->centerY * frameHeight - config.targetYOffset;
+
+    float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
+    float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
+
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
     
-    // 检查是否在死区内
     if (distanceSquared < deadZoneSquared) {
         if (isMoving) {
             isMoving = false;
@@ -108,34 +106,26 @@ void MouseController::tick()
 
     isMoving = true;
     
-    // 计算实际距离（用于动态P值计算）
     float distance = std::sqrt(distanceSquared);
     
-    // 计算动态P值
     float dynamicP = calculateDynamicP(distance);
     
-    // 计算误差差值
     float deltaErrorX = errorX - pidPreviousErrorX;
     float deltaErrorY = errorY - pidPreviousErrorY;
     
-    // 应用一阶低通滤波
     float alpha = config.derivativeFilterAlpha;
     filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
     filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
     
-    // 计算PID输出
     float pdOutputX = dynamicP * errorX + config.pidD * filteredDeltaErrorX;
     float pdOutputY = dynamicP * errorY + config.pidD * filteredDeltaErrorY;
     
-    // 计算基线补偿
     float baselineX = errorX * config.baselineCompensation;
     float baselineY = errorY * config.baselineCompensation;
     
-    // 计算最终移动量
     float moveX = pdOutputX + baselineX;
     float moveY = pdOutputY + baselineY;
     
-    // 限制最大移动量
     float moveDistSquared = moveX * moveX + moveY * moveY;
     float maxMoveSquared = config.maxPixelMove * config.maxPixelMove;
     if (moveDistSquared > maxMoveSquared && moveDistSquared > 0.0f) {
@@ -144,27 +134,21 @@ void MouseController::tick()
         moveY *= scale;
     }
     
-    // 应用平滑处理
     float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
     float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
     
-    // 更新历史值
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
-    // 计算新的鼠标位置
-    float newPosX = static_cast<float>(currentPos.x) + finalMoveX;
-    float newPosY = static_cast<float>(currentPos.y) + finalMoveY;
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.dx = static_cast<LONG>(finalMoveX);
+    input.mi.dy = static_cast<LONG>(finalMoveY);
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+    input.mi.time = 0;
+    input.mi.dwExtraInfo = 0;
+    SendInput(1, &input, sizeof(INPUT));
     
-    // 转换为整数坐标
-    POINT newPos;
-    newPos.x = static_cast<LONG>(newPosX);
-    newPos.y = static_cast<LONG>(newPosY);
-    
-    // 移动鼠标
-    moveMouseTo(newPos);
-    
-    // 更新PID历史误差
     pidPreviousErrorX = errorX;
     pidPreviousErrorY = errorY;
 }
