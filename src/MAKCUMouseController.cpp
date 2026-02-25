@@ -366,21 +366,16 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
                       ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
-    float framePixelX = det.centerX * frameWidth;
-    float framePixelY = det.centerY * frameHeight;
-
-    float screenPixelX = framePixelX + config.cropOffsetX + config.screenOffsetX;
-    float screenPixelY = framePixelY + config.cropOffsetY - config.targetYOffset + config.screenOffsetY;
+    float screenPixelX = det.centerX * frameWidth + config.screenOffsetX;
+    float screenPixelY = det.centerY * frameHeight - config.targetYOffset + config.screenOffsetY;
 
     static bool loggedOnce = false;
     if (!loggedOnce) {
         obs_log(LOG_INFO, "[MAKCU] 坐标转换调试信息:");
         obs_log(LOG_INFO, "[MAKCU]   屏幕尺寸: %dx%d", fullScreenWidth, fullScreenHeight);
         obs_log(LOG_INFO, "[MAKCU]   推理帧尺寸: %dx%d", frameWidth, frameHeight);
-        obs_log(LOG_INFO, "[MAKCU]   裁切偏移: %d, %d", config.cropOffsetX, config.cropOffsetY);
-        obs_log(LOG_INFO, "[MAKCU]   屏幕偏移: %d, %d", config.screenOffsetX, config.screenOffsetY);
         obs_log(LOG_INFO, "[MAKCU]   检测中心(归一化): %.4f, %.4f", det.centerX, det.centerY);
-        obs_log(LOG_INFO, "[MAKCU]   帧像素坐标: %.1f, %.1f", framePixelX, framePixelY);
+        obs_log(LOG_INFO, "[MAKCU]   屏幕偏移: %d, %d", config.screenOffsetX, config.screenOffsetY);
         obs_log(LOG_INFO, "[MAKCU]   最终屏幕坐标: %.1f, %.1f", screenPixelX, screenPixelY);
         loggedOnce = true;
     }

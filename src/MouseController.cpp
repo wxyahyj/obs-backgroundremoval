@@ -214,11 +214,8 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
                       ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
-    float framePixelX = det.centerX * frameWidth;
-    float framePixelY = det.centerY * frameHeight;
-
-    float screenPixelX = framePixelX + config.cropOffsetX + config.screenOffsetX;
-    float screenPixelY = framePixelY + config.cropOffsetY - config.targetYOffset + config.screenOffsetY;
+    float screenPixelX = det.centerX * frameWidth + config.screenOffsetX;
+    float screenPixelY = det.centerY * frameHeight - config.targetYOffset + config.screenOffsetY;
 
     POINT result;
     result.x = static_cast<LONG>(screenPixelX);
