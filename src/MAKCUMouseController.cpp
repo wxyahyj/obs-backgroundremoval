@@ -211,12 +211,14 @@ void MAKCUMouseController::setDetections(const std::vector<Detection>& detection
     currentDetections = detections;
 }
 
-void MAKCUMouseController::setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight)
+void MAKCUMouseController::setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY)
 {
     std::lock_guard<std::mutex> lock(mutex);
     currentDetections = detections;
     config.inferenceFrameWidth = frameWidth;
     config.inferenceFrameHeight = frameHeight;
+    config.cropOffsetX = cropX;
+    config.cropOffsetY = cropY;
 }
 
 void MAKCUMouseController::tick()
@@ -358,39 +360,34 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    // 使用推理帧的实际尺寸
     int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
                      ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
                       ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
-    // 检测坐标是相对于推理帧的归一化坐标
-    // 首先转换为推理帧中的像素坐标
     float framePixelX = det.centerX * frameWidth;
     float framePixelY = det.centerY * frameHeight;
 
-    // 然后从推理帧坐标转换到屏幕坐标
-    // 如果推理帧尺寸与屏幕尺寸相同，直接使用
-    // 如果不同，需要按比例缩放
-    float screenPixelX, screenPixelY;
-    
-    if (frameWidth == fullScreenWidth && frameHeight == fullScreenHeight) {
-        // 推理帧尺寸与屏幕尺寸相同，直接使用
-        screenPixelX = framePixelX + config.screenOffsetX;
-        screenPixelY = framePixelY - config.targetYOffset + config.screenOffsetY;
-    } else {
-        // 推理帧尺寸与屏幕尺寸不同，需要缩放
-        float scaleX = static_cast<float>(fullScreenWidth) / frameWidth;
-        float scaleY = static_cast<float>(fullScreenHeight) / frameHeight;
-        screenPixelX = framePixelX * scaleX + config.screenOffsetX;
-        screenPixelY = framePixelY * scaleY - config.targetYOffset + config.screenOffsetY;
+    float screenPixelX = framePixelX + config.cropOffsetX + config.screenOffsetX;
+    float screenPixelY = framePixelY + config.cropOffsetY - config.targetYOffset + config.screenOffsetY;
+
+    static bool loggedOnce = false;
+    if (!loggedOnce) {
+        obs_log(LOG_INFO, "[MAKCU] 坐标转换调试信息:");
+        obs_log(LOG_INFO, "[MAKCU]   屏幕尺寸: %dx%d", fullScreenWidth, fullScreenHeight);
+        obs_log(LOG_INFO, "[MAKCU]   推理帧尺寸: %dx%d", frameWidth, frameHeight);
+        obs_log(LOG_INFO, "[MAKCU]   裁切偏移: %d, %d", config.cropOffsetX, config.cropOffsetY);
+        obs_log(LOG_INFO, "[MAKCU]   屏幕偏移: %d, %d", config.screenOffsetX, config.screenOffsetY);
+        obs_log(LOG_INFO, "[MAKCU]   检测中心(归一化): %.4f, %.4f", det.centerX, det.centerY);
+        obs_log(LOG_INFO, "[MAKCU]   帧像素坐标: %.1f, %.1f", framePixelX, framePixelY);
+        obs_log(LOG_INFO, "[MAKCU]   最终屏幕坐标: %.1f, %.1f", screenPixelX, screenPixelY);
+        loggedOnce = true;
     }
 
     POINT result;
     result.x = static_cast<LONG>(screenPixelX);
     result.y = static_cast<LONG>(screenPixelY);
 
-    // 确保坐标在屏幕范围内
     LONG maxX = static_cast<LONG>(fullScreenWidth - 1);
     LONG maxY = static_cast<LONG>(fullScreenHeight - 1);
     

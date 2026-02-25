@@ -37,12 +37,14 @@ void MouseController::setDetections(const std::vector<Detection>& detections)
     currentDetections = detections;
 }
 
-void MouseController::setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight)
+void MouseController::setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY)
 {
     std::lock_guard<std::mutex> lock(mutex);
     currentDetections = detections;
     config.inferenceFrameWidth = frameWidth;
     config.inferenceFrameHeight = frameHeight;
+    config.cropOffsetX = cropX;
+    config.cropOffsetY = cropY;
 }
 
 void MouseController::tick()
@@ -207,39 +209,21 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    // 使用推理帧的实际尺寸
     int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
                      ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
                       ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
-    // 检测坐标是相对于推理帧的归一化坐标
-    // 首先转换为推理帧中的像素坐标
     float framePixelX = det.centerX * frameWidth;
     float framePixelY = det.centerY * frameHeight;
 
-    // 然后从推理帧坐标转换到屏幕坐标
-    // 如果推理帧尺寸与屏幕尺寸相同，直接使用
-    // 如果不同，需要按比例缩放
-    float screenPixelX, screenPixelY;
-    
-    if (frameWidth == fullScreenWidth && frameHeight == fullScreenHeight) {
-        // 推理帧尺寸与屏幕尺寸相同，直接使用
-        screenPixelX = framePixelX + config.screenOffsetX;
-        screenPixelY = framePixelY - config.targetYOffset + config.screenOffsetY;
-    } else {
-        // 推理帧尺寸与屏幕尺寸不同，需要缩放
-        float scaleX = static_cast<float>(fullScreenWidth) / frameWidth;
-        float scaleY = static_cast<float>(fullScreenHeight) / frameHeight;
-        screenPixelX = framePixelX * scaleX + config.screenOffsetX;
-        screenPixelY = framePixelY * scaleY - config.targetYOffset + config.screenOffsetY;
-    }
+    float screenPixelX = framePixelX + config.cropOffsetX + config.screenOffsetX;
+    float screenPixelY = framePixelY + config.cropOffsetY - config.targetYOffset + config.screenOffsetY;
 
     POINT result;
     result.x = static_cast<LONG>(screenPixelX);
     result.y = static_cast<LONG>(screenPixelY);
 
-    // 确保坐标在屏幕范围内
     LONG maxX = static_cast<LONG>(fullScreenWidth - 1);
     LONG maxY = static_cast<LONG>(fullScreenHeight - 1);
     

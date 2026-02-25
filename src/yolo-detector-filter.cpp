@@ -90,6 +90,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	int inferenceFrameWidth;
 	int inferenceFrameHeight;
+	int cropOffsetX;
+	int cropOffsetY;
 	std::mutex inferenceFrameSizeMutex;
 
 	uint64_t totalFrames;
@@ -1028,6 +1030,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
 			filter->inferenceFrameWidth = fullFrame.cols;
 			filter->inferenceFrameHeight = fullFrame.rows;
+			filter->cropOffsetX = cropX;
+			filter->cropOffsetY = cropY;
 		}
 
 		filter->inferenceCount++;
@@ -1265,8 +1269,10 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->shouldInference = false;
 		instance->frameCounter = 0;
 		instance->inferenceFrameWidth = 0;
-		instance->inferenceFrameHeight = 0;
-		instance->totalFrames = 0;
+    instance->inferenceFrameHeight = 0;
+    instance->cropOffsetX = 0;
+    instance->cropOffsetY = 0;
+    instance->totalFrames = 0;
 		instance->inferenceCount = 0;
 		instance->avgInferenceTimeMs = 0.0;
 		instance->isInferencing = false;
@@ -1490,20 +1496,22 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
 			// 注意：这里我们无法直接获取当前配置，所以在update函数中会处理FOV半径
 			// 我们直接传递检测结果并tick
-			int frameWidth = 0, frameHeight = 0;
+			int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
 			{
 				std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
 				frameWidth = tf->inferenceFrameWidth;
 				frameHeight = tf->inferenceFrameHeight;
+				cropX = tf->cropOffsetX;
+				cropY = tf->cropOffsetY;
 			}
-			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight);
+			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
 			tf->mouseController->tick();
 		}
 	} else {
 		// 不使用动态FOV，正常处理
 		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
 			std::vector<Detection> detectionsCopy;
-			int frameWidth = 0, frameHeight = 0;
+			int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
 			{
 				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
 				detectionsCopy = tf->detections;
@@ -1512,8 +1520,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
 				frameWidth = tf->inferenceFrameWidth;
 				frameHeight = tf->inferenceFrameHeight;
+				cropX = tf->cropOffsetX;
+				cropY = tf->cropOffsetY;
 			}
-			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight);
+			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
 			tf->mouseController->tick();
 		}
 	}

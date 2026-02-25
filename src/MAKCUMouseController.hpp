@@ -19,7 +19,7 @@ public:
     
     void setDetections(const std::vector<Detection>& detections) override;
 
-    void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight) override;
+    void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY) override;
     
     void tick() override;
     
