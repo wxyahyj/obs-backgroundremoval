@@ -288,10 +288,15 @@ void MAKCUMouseController::tick()
         moveY *= scale;
     }
     
-    // 直接使用目标屏幕坐标进行绝对定位
+    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
+    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
+    
+    previousMoveX = finalMoveX;
+    previousMoveY = finalMoveY;
+    
     // 检查连接状态后再发送命令
     if (serialConnected) {
-        moveTo(targetScreenPos.x, targetScreenPos.y);
+        move(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
     } else {
         // 尝试重新连接
         connectSerial();
