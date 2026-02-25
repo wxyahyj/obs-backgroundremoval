@@ -93,7 +93,44 @@ int createOrtSession(filter_data *tf)
 #endif
 #ifdef HAVE_ONNXRUNTIME_TENSORRT_EP
 		if (tf->useGPU == USEGPU_TENSORRT) {
-			Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Tensorrt(sessionOptions, 0));
+			obs_log(LOG_INFO, "Enabling TensorRT execution provider with engine cache...");
+			
+			OrtTensorRTProviderOptions trt_options;
+			memset(&trt_options, 0, sizeof(trt_options));
+			
+			trt_options.trt_engine_cache_enable = 1;
+			trt_options.trt_fp16_enable = 1;
+			
+#ifdef _WIN32
+			std::wstring modelPathW = tf->modelFilepath;
+			size_t lastSlash = modelPathW.find_last_of(L"\\/");
+			if (lastSlash != std::wstring::npos) {
+				std::wstring cachePathW = modelPathW.substr(0, lastSlash) + L"\\trt_cache";
+				CreateDirectoryW(cachePathW.c_str(), NULL);
+				
+				std::string cachePathNarrow;
+				int len = WideCharToMultiByte(CP_ACP, 0, cachePathW.c_str(), -1, NULL, 0, NULL, NULL);
+				cachePathNarrow.resize(len);
+				WideCharToMultiByte(CP_ACP, 0, cachePathW.c_str(), -1, &cachePathNarrow[0], len, NULL, NULL);
+				cachePathNarrow.pop_back();
+				
+				trt_options.trt_engine_cache_path = _strdup(cachePathNarrow.c_str());
+				
+				obs_log(LOG_INFO, "TensorRT cache path: %s", cachePathNarrow.c_str());
+			}
+#else
+			std::string modelPath = tf->modelFilepath;
+			size_t lastSlash = modelPath.find_last_of("/");
+			if (lastSlash != std::string::npos) {
+				char cachePath[1024];
+				snprintf(cachePath, sizeof(cachePath), "%s/trt_cache", modelPath.substr(0, lastSlash).c_str());
+				mkdir(cachePath, 0755);
+				trt_options.trt_engine_cache_path = strdup(cachePath);
+				obs_log(LOG_INFO, "TensorRT cache path: %s", cachePath);
+			}
+#endif
+			sessionOptions.AppendExecutionProvider_TensorRT(trt_options);
+			obs_log(LOG_INFO, "TensorRT execution provider enabled with cache");
 		}
 #endif
 #ifdef HAVE_ONNXRUNTIME_DML_EP
