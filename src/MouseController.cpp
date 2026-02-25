@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "MouseController.hpp"
+#include <obs-module.h>
 #include <plugin-support.h>
 #include <cmath>
 #include <algorithm>
