@@ -18,6 +18,7 @@ struct Detection {
     float centerY;
 
     int trackId = -1;
+    int lostFrames = 0;
 
     cv::Rect getPixelBBox(int imageWidth, int imageHeight) const {
         return cv::Rect(

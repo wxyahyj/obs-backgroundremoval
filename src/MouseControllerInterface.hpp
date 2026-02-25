@@ -42,6 +42,11 @@ struct MouseControllerConfig {
     ControllerType controllerType;
     std::string makcuPort;
     int makcuBaudRate;
+    int yUnlockDelayMs;
+    bool yUnlockEnabled;
+    bool autoTriggerEnabled;
+    int autoTriggerRadius;
+    int autoTriggerCooldownMs;
 };
 
 class MouseControllerInterface {

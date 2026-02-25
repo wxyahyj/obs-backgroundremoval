@@ -233,6 +233,10 @@ if(WIN32)
       src/MouseController.cpp
       src/MAKCUMouseController.cpp
       src/MouseControllerFactory.cpp
+      src/ConfigManager.cpp
+      src/HungarianAlgorithm.cpp
+      src/LogitechMacroConverter.cpp
+      src/RecoilPatternManager.cpp
   )
 endif()
 target_compile_options(

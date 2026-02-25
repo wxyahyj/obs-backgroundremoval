@@ -7,6 +7,7 @@
 #include <vector>
 #include <mutex>
 #include <random>
+#include <chrono>
 #include "MouseControllerInterface.hpp"
 
 class MouseController : public MouseControllerInterface {
@@ -21,6 +22,10 @@ public:
     void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY) override;
     
     void tick() override;
+    
+    void setCurrentWeapon(const std::string& weaponName);
+    
+    std::string getCurrentWeapon() const;
 
 private:
     std::mutex mutex;
@@ -44,8 +49,8 @@ private:
     
     float pidPreviousErrorX;
     float pidPreviousErrorY;
-    float filteredDeltaErrorX; // 滤波后的X轴误差差值
-    float filteredDeltaErrorY; // 滤波后的Y轴误差差值
+    float filteredDeltaErrorX;
+    float filteredDeltaErrorY;
     float calculateDynamicP(float distance);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
@@ -53,6 +58,19 @@ private:
     void startMouseMovement(const POINT& target);
     void resetPidState();
     void resetMotionState();
+    void performAutoClick();
+    
+    std::chrono::steady_clock::time_point hotkeyPressStartTime;
+    bool yUnlockActive;
+    std::chrono::steady_clock::time_point lastAutoTriggerTime;
+    
+    std::string currentWeapon_;
+    int recoilPatternIndex_;
+    std::chrono::steady_clock::time_point recoilStartTime_;
+    bool recoilActive_;
+    
+    void applyRecoilCompensation(float& moveX, float& moveY);
+    void resetRecoilState();
 };
 
 #endif

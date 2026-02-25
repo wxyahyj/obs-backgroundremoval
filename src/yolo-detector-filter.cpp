@@ -6,9 +6,12 @@
 #include <wchar.h>
 #include <windows.h>
 #include <gdiplus.h>
+#include <commdlg.h>
 #pragma comment(lib, "gdiplus.lib")
 #include "MouseController.hpp"
 #include "MouseControllerFactory.hpp"
+#include "LogitechMacroConverter.hpp"
+#include "RecoilPatternManager.hpp"
 #endif
 
 #include <opencv2/imgproc.hpp>
@@ -27,6 +30,7 @@
 #include <plugin-support.h>
 #include "models/ModelYOLO.h"
 #include "models/Detection.h"
+#include "HungarianAlgorithm.hpp"
 #include "FilterData.h"
 #include "ort-utils/ort-session-utils.h"
 #include "obs-utils/obs-utils.h"
@@ -40,6 +44,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	std::vector<Detection> detections;
 	std::mutex detectionsMutex;
+
+	std::vector<Detection> trackedTargets;
+	std::mutex trackedTargetsMutex;
+	int nextTrackId;
+	int maxLostFrames;
 
 	std::string modelPath;
 	int inputResolution;
@@ -139,6 +148,14 @@ float targetYOffset;
 	std::string makcuPort;
 	int makcuBaudRate;
 std::unique_ptr<MouseControllerInterface> mouseController;
+
+	std::string configName;
+	std::string configList;
+	bool enableYAxisUnlock;
+	int yAxisUnlockDelay;
+	bool enableAutoTrigger;
+	int triggerRadius;
+	int triggerCooldown;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -151,6 +168,11 @@ static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frame
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
 static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data);
+#ifdef _WIN32
+static bool importRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data);
+static bool deleteRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data);
+static bool refreshWeaponList(obs_properties_t *props, obs_property_t *property, void *data);
+#endif
 
 
 #ifdef _WIN32
@@ -358,6 +380,34 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	
 	// 微分滤波系数
 	obs_properties_add_float_slider(props, "derivative_filter_alpha", "微分滤波系数", 0.01, 1.00, 0.01);
+
+	// 配置管理
+	obs_properties_add_group(props, "config_management_group", "配置管理", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_text(props, "config_name", "配置名称", OBS_TEXT_DEFAULT);
+	obs_properties_add_button(props, "save_config", "保存配置", nullptr);
+	obs_property_t *configListProp = obs_properties_add_list(props, "config_list", "配置列表", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_property_list_add_string(configListProp, "-- 选择配置 --", "");
+	obs_properties_add_button(props, "load_config", "加载配置", nullptr);
+	obs_properties_add_button(props, "delete_config", "删除配置", nullptr);
+
+	// Y轴解锁配置
+	obs_properties_add_group(props, "y_axis_unlock_group", "Y轴解锁设置", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "enable_y_axis_unlock", "启用长按解锁Y轴");
+	obs_properties_add_int_slider(props, "y_axis_unlock_delay", "Y轴解锁延迟(ms)", 100, 2000, 50);
+
+	// 自动扳机配置
+	obs_properties_add_group(props, "auto_trigger_group", "自动扳机设置", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_bool(props, "enable_auto_trigger", "启用自动扳机");
+	obs_properties_add_int_slider(props, "trigger_radius", "扳机触发半径(像素)", 1, 50, 1);
+	obs_properties_add_int_slider(props, "trigger_cooldown", "扳机冷却时间(ms)", 50, 1000, 50);
+
+	// 压枪配置
+	obs_properties_add_group(props, "recoil_pattern_group", "压枪配置", OBS_GROUP_NORMAL, nullptr);
+	obs_properties_add_text(props, "weapon_name_input", "武器名称", OBS_TEXT_DEFAULT);
+	obs_properties_add_button(props, "import_recoil_pattern", "导入压枪宏", importRecoilPattern);
+	obs_properties_add_list(props, "weapon_select", "选择武器", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_properties_add_button(props, "delete_recoil_pattern", "删除武器配置", deleteRecoilPattern);
+	obs_properties_add_button(props, "refresh_weapon_list", "刷新武器列表", refreshWeaponList);
 #endif
 
 	UNUSED_PARAMETER(data);
@@ -429,6 +479,14 @@ obs_data_set_default_int(settings, "screen_offset_y", 0);
 obs_data_set_default_int(settings, "screen_width", 0);
 obs_data_set_default_int(settings, "screen_height", 0);
 obs_data_set_default_double(settings, "target_y_offset", 0.0);
+
+	obs_data_set_default_string(settings, "config_name", "");
+	obs_data_set_default_string(settings, "config_list", "");
+	obs_data_set_default_bool(settings, "enable_y_axis_unlock", false);
+	obs_data_set_default_int(settings, "y_axis_unlock_delay", 500);
+	obs_data_set_default_bool(settings, "enable_auto_trigger", false);
+	obs_data_set_default_int(settings, "trigger_radius", 5);
+	obs_data_set_default_int(settings, "trigger_cooldown", 200);
 #endif
 }
 
@@ -641,7 +699,7 @@ tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
 		mcConfig.sourceWidth = obs_source_get_base_width(tf->source);
 		mcConfig.sourceHeight = obs_source_get_base_height(tf->source);
 		mcConfig.screenOffsetX = tf->screenOffsetX;
-mcConfig.screenOffsetY = tf->screenOffsetY;
+		mcConfig.screenOffsetY = tf->screenOffsetY;
 		mcConfig.screenWidth = tf->screenWidth;
 		mcConfig.screenHeight = tf->screenHeight;
 		mcConfig.targetYOffset = tf->targetYOffset;
@@ -649,7 +707,27 @@ mcConfig.screenOffsetY = tf->screenOffsetY;
 		mcConfig.controllerType = static_cast<ControllerType>(tf->controllerType);
 		mcConfig.makcuPort = tf->makcuPort;
 		mcConfig.makcuBaudRate = tf->makcuBaudRate;
+		mcConfig.yUnlockEnabled = tf->enableYAxisUnlock;
+		mcConfig.yUnlockDelayMs = tf->yAxisUnlockDelay;
+		mcConfig.autoTriggerEnabled = tf->enableAutoTrigger;
+		mcConfig.autoTriggerRadius = tf->triggerRadius;
+		mcConfig.autoTriggerCooldownMs = tf->triggerCooldown;
 		tf->mouseController->updateConfig(mcConfig);
+	}
+
+	tf->configName = obs_data_get_string(settings, "config_name");
+	tf->configList = obs_data_get_string(settings, "config_list");
+	tf->enableYAxisUnlock = obs_data_get_bool(settings, "enable_y_axis_unlock");
+	tf->yAxisUnlockDelay = (int)obs_data_get_int(settings, "y_axis_unlock_delay");
+	tf->enableAutoTrigger = obs_data_get_bool(settings, "enable_auto_trigger");
+	tf->triggerRadius = (int)obs_data_get_int(settings, "trigger_radius");
+	tf->triggerCooldown = (int)obs_data_get_int(settings, "trigger_cooldown");
+	
+	const char* selectedWeapon = obs_data_get_string(settings, "weapon_select");
+	if (selectedWeapon && strlen(selectedWeapon) > 0) {
+		tf->mouseController->setCurrentWeapon(selectedWeapon);
+	} else {
+		tf->mouseController->setCurrentWeapon("");
 	}
 #endif
 
@@ -733,14 +811,11 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
         return true;
     }
 
-    // 创建临时MAKCU控制器进行连接测试
     MAKCUMouseController tempController(tf->makcuPort, tf->makcuBaudRate);
 
-    // 检查连接状态
     bool isConnected = tempController.isConnected();
 
     if (isConnected) {
-        // 测试通信功能
         bool commSuccess = tempController.testCommunication();
         if (commSuccess) {
             MessageBoxA(NULL, "MAKCU连接成功，通信正常", "连接测试", MB_OK | MB_ICONINFORMATION);
@@ -754,6 +829,126 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
     return true;
 }
 
+static bool importRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data)
+{
+    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+    if (!ptr) {
+        return true;
+    }
+
+    std::shared_ptr<yolo_detector_filter> tf = *ptr;
+    if (!tf) {
+        return true;
+    }
+
+    obs_data_t *settings = obs_source_get_settings(tf->source);
+    std::string weaponName;
+    if (settings) {
+        weaponName = obs_data_get_string(settings, "weapon_name_input");
+        obs_data_release(settings);
+    }
+    
+    if (weaponName.empty()) {
+        MessageBoxA(NULL, "请先输入武器名称！", "提示", MB_OK | MB_ICONWARNING);
+        return true;
+    }
+
+    OPENFILENAMEA ofn = {};
+    char szFile[MAX_PATH] = "";
+
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFilter = "XML Files (*.xml)\0*.xml\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = "选择罗技压枪宏文件";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn)) {
+        if (RecoilPatternManager::getInstance().importFromLogitechMacro(szFile, weaponName)) {
+            const RecoilPattern* pattern = RecoilPatternManager::getInstance().getPattern(weaponName);
+            
+            char infoMsg[1024];
+            snprintf(infoMsg, sizeof(infoMsg),
+                "压枪配置导入成功！\n\n"
+                "武器名称: %s\n"
+                "移动步数: %zu\n"
+                "总移动X: %d\n"
+                "总移动Y: %d\n"
+                "总持续时间: %d ms\n\n"
+                "请在\"选择武器\"下拉框中选择此武器。",
+                weaponName.c_str(),
+                pattern->moves.size(),
+                pattern->totalMoveX,
+                pattern->totalMoveY,
+                pattern->totalDurationMs);
+
+            MessageBoxA(NULL, infoMsg, "导入成功", MB_OK | MB_ICONINFORMATION);
+            
+            refreshWeaponList(props, property, data);
+        } else {
+            MessageBoxA(NULL, "无法解析宏文件，请确保文件格式正确。", "解析失败", MB_OK | MB_ICONERROR);
+        }
+    }
+
+    return true;
+}
+
+static bool deleteRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data)
+{
+    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+    if (!ptr) {
+        return true;
+    }
+
+    std::shared_ptr<yolo_detector_filter> tf = *ptr;
+    if (!tf) {
+        return true;
+    }
+
+    obs_data_t *settings = obs_source_get_settings(tf->source);
+    std::string weaponName;
+    if (settings) {
+        weaponName = obs_data_get_string(settings, "weapon_select");
+        obs_data_release(settings);
+    }
+    
+    if (weaponName.empty()) {
+        MessageBoxA(NULL, "请先选择要删除的武器！", "提示", MB_OK | MB_ICONWARNING);
+        return true;
+    }
+
+    char confirmMsg[256];
+    snprintf(confirmMsg, sizeof(confirmMsg), "确定要删除武器 \"%s\" 的压枪配置吗？", weaponName.c_str());
+    
+    int result = MessageBoxA(NULL, confirmMsg, "确认删除", MB_YESNO | MB_ICONQUESTION);
+    if (result == IDYES) {
+        RecoilPatternManager::getInstance().removePattern(weaponName);
+        MessageBoxA(NULL, "删除成功！", "提示", MB_OK | MB_ICONINFORMATION);
+        refreshWeaponList(props, property, data);
+    }
+
+    return true;
+}
+
+static bool refreshWeaponList(obs_properties_t *props, obs_property_t *property, void *data)
+{
+    obs_property_t *weaponList = obs_properties_get(props, "weapon_select");
+    if (!weaponList) {
+        return true;
+    }
+    
+    obs_property_list_clear(weaponList);
+    
+    obs_property_list_add_string(weaponList, "-- 无武器 --", "");
+    
+    auto weaponNames = RecoilPatternManager::getInstance().getWeaponNames();
+    for (const auto& name : weaponNames) {
+        obs_property_list_add_string(weaponList, name.c_str(), name.c_str());
+    }
+
+    return true;
+}
 
 
 #ifdef _WIN32
@@ -1018,9 +1213,86 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			endTime - startTime
 		).count();
 
+		std::vector<Detection> trackedDetections;
+		{
+			std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
+			
+			std::vector<Detection>& trackedTargets = filter->trackedTargets;
+			
+			if (trackedTargets.empty()) {
+				for (auto& det : newDetections) {
+					det.trackId = filter->nextTrackId++;
+					det.lostFrames = 0;
+					trackedDetections.push_back(det);
+				}
+			} else {
+				int n = static_cast<int>(newDetections.size());
+				int m = static_cast<int>(trackedTargets.size());
+				
+				std::vector<std::vector<float>> costMatrix(n, std::vector<float>(m, 1.0f));
+				
+				for (int i = 0; i < n; ++i) {
+					cv::Rect2f detBox(
+						newDetections[i].x,
+						newDetections[i].y,
+						newDetections[i].width,
+						newDetections[i].height
+					);
+					
+					for (int j = 0; j < m; ++j) {
+						cv::Rect2f trackBox(
+							trackedTargets[j].x,
+							trackedTargets[j].y,
+							trackedTargets[j].width,
+							trackedTargets[j].height
+						);
+						
+						costMatrix[i][j] = HungarianAlgorithm::calculateIoUDistance(detBox, trackBox);
+					}
+				}
+				
+				std::vector<int> assignment = HungarianAlgorithm::solve(costMatrix);
+				
+				std::vector<bool> detectionMatched(n, false);
+				std::vector<bool> trackMatched(m, false);
+				
+				const float iouThreshold = 0.3f;
+				
+				for (int i = 0; i < n; ++i) {
+					int j = assignment[i];
+					if (j >= 0 && j < m && costMatrix[i][j] < (1.0f - iouThreshold)) {
+						newDetections[i].trackId = trackedTargets[j].trackId;
+						newDetections[i].lostFrames = 0;
+						trackedDetections.push_back(newDetections[i]);
+						detectionMatched[i] = true;
+						trackMatched[j] = true;
+					}
+				}
+				
+				for (int i = 0; i < n; ++i) {
+					if (!detectionMatched[i]) {
+						newDetections[i].trackId = filter->nextTrackId++;
+						newDetections[i].lostFrames = 0;
+						trackedDetections.push_back(newDetections[i]);
+					}
+				}
+				
+				for (int j = 0; j < m; ++j) {
+					if (!trackMatched[j]) {
+						trackedTargets[j].lostFrames++;
+						if (trackedTargets[j].lostFrames <= filter->maxLostFrames) {
+							trackedDetections.push_back(trackedTargets[j]);
+						}
+					}
+				}
+			}
+			
+			filter->trackedTargets = trackedDetections;
+		}
+
 		{
 			std::lock_guard<std::mutex> lock(filter->detectionsMutex);
-			filter->detections = std::move(newDetections);
+			filter->detections = std::move(trackedDetections);
 		}
 
 		{
@@ -1276,6 +1548,8 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->lastFpsTime = std::chrono::high_resolution_clock::now();
 		instance->fpsFrameCount = 0;
 		instance->currentFps = 0.0;
+		instance->nextTrackId = 0;
+		instance->maxLostFrames = 10;
 
 		obs_enter_graphics();
 		instance->solidEffect = obs_get_base_effect(OBS_EFFECT_SOLID);
@@ -1311,6 +1585,14 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->targetYOffset = 0.0f;
 		instance->derivativeFilterAlpha = 0.2f;
 instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI);
+
+		instance->configName = "";
+		instance->configList = "";
+		instance->enableYAxisUnlock = false;
+		instance->yAxisUnlockDelay = 500;
+		instance->enableAutoTrigger = false;
+		instance->triggerRadius = 5;
+		instance->triggerCooldown = 200;
 #endif
 
 		// Create pointer to shared_ptr for the update call

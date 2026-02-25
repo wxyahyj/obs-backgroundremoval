@@ -25,14 +25,15 @@ MAKCUMouseController::MAKCUMouseController()
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , yUnlockActive(false)
+    , lastAutoTriggerTime(std::chrono::steady_clock::now())
 {
+    hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
     
-    // 初始化MAKCU板子状态
     if (serialConnected) {
-        // 发送一个小幅度的移动命令来重置板子状态
         move(0, 0);
     }
 }
@@ -55,14 +56,15 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , yUnlockActive(false)
+    , lastAutoTriggerTime(std::chrono::steady_clock::now())
 {
+    hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
     
-    // 初始化MAKCU板子状态
     if (serialConnected) {
-        // 发送一个小幅度的移动命令来重置板子状态
         move(0, 0);
     }
 }
@@ -238,13 +240,31 @@ void MAKCUMouseController::tick()
         return;
     }
 
-    if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
+    bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
+
+    if (!hotkeyPressed) {
         if (isMoving) {
             isMoving = false;
             resetPidState();
             resetMotionState();
         }
+        yUnlockActive = false;
         return;
+    }
+
+    static bool wasHotkeyPressed = false;
+    if (!wasHotkeyPressed && hotkeyPressed) {
+        hotkeyPressStartTime = std::chrono::steady_clock::now();
+        yUnlockActive = false;
+    }
+    wasHotkeyPressed = hotkeyPressed;
+
+    if (config.yUnlockEnabled) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - hotkeyPressStartTime).count();
+        if (elapsed >= config.yUnlockDelayMs) {
+            yUnlockActive = true;
+        }
     }
 
     Detection* target = selectTarget();
@@ -283,9 +303,20 @@ void MAKCUMouseController::tick()
         return;
     }
 
-    isMoving = true;
-    
     float distance = std::sqrt(distanceSquared);
+
+    if (config.autoTriggerEnabled) {
+        if (distance < config.autoTriggerRadius) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
+            if (elapsed >= config.autoTriggerCooldownMs) {
+                click(true);
+                lastAutoTriggerTime = now;
+            }
+        }
+    }
+
+    isMoving = true;
     
     float dynamicP = calculateDynamicP(distance);
     
@@ -311,6 +342,10 @@ void MAKCUMouseController::tick()
         float scale = config.maxPixelMove / std::sqrt(moveDistSquared);
         moveX *= scale;
         moveY *= scale;
+    }
+    
+    if (yUnlockActive) {
+        moveY = 0.0f;
     }
     
     float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;

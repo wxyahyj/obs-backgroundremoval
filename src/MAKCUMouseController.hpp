@@ -7,6 +7,7 @@
 #include <vector>
 #include <mutex>
 #include <string>
+#include <chrono>
 #include "MouseControllerInterface.hpp"
 
 class MAKCUMouseController : public MouseControllerInterface {
@@ -65,6 +66,10 @@ private:
     POINT convertToScreenCoordinates(const Detection& det);
     void resetPidState();
     void resetMotionState();
+    
+    std::chrono::steady_clock::time_point hotkeyPressStartTime;
+    bool yUnlockActive;
+    std::chrono::steady_clock::time_point lastAutoTriggerTime;
 };
 
 #endif

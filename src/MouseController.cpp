@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "MouseController.hpp"
+#include "RecoilPatternManager.hpp"
 #include <obs-module.h>
 #include <plugin-support.h>
 #include <cmath>
@@ -20,9 +21,14 @@ MouseController::MouseController()
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , yUnlockActive(false)
+    , lastAutoTriggerTime(std::chrono::steady_clock::now())
+    , recoilPatternIndex_(0)
+    , recoilActive_(false)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
+    hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 }
@@ -61,13 +67,31 @@ void MouseController::tick()
         return;
     }
 
-    if (!(GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000)) {
+    bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
+
+    if (!hotkeyPressed) {
         if (isMoving) {
             isMoving = false;
             resetPidState();
             resetMotionState();
         }
+        yUnlockActive = false;
         return;
+    }
+
+    static bool wasHotkeyPressed = false;
+    if (!wasHotkeyPressed && hotkeyPressed) {
+        hotkeyPressStartTime = std::chrono::steady_clock::now();
+        yUnlockActive = false;
+    }
+    wasHotkeyPressed = hotkeyPressed;
+
+    if (config.yUnlockEnabled) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - hotkeyPressStartTime).count();
+        if (elapsed >= config.yUnlockDelayMs) {
+            yUnlockActive = true;
+        }
     }
 
     Detection* target = selectTarget();
@@ -118,9 +142,20 @@ void MouseController::tick()
         return;
     }
 
-    isMoving = true;
-    
     float distance = std::sqrt(distanceSquared);
+
+    if (config.autoTriggerEnabled) {
+        if (distance < config.autoTriggerRadius) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
+            if (elapsed >= config.autoTriggerCooldownMs) {
+                performAutoClick();
+                lastAutoTriggerTime = now;
+            }
+        }
+    }
+
+    isMoving = true;
     
     float dynamicP = calculateDynamicP(distance);
     
@@ -147,6 +182,12 @@ void MouseController::tick()
         moveX *= scale;
         moveY *= scale;
     }
+    
+    if (yUnlockActive) {
+        moveY = 0.0f;
+    }
+    
+    applyRecoilCompensation(moveX, moveY);
     
     float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
     float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
@@ -282,6 +323,79 @@ void MouseController::resetMotionState()
     currentAccelerationY = 0.0f;
     previousMoveX = 0.0f;
     previousMoveY = 0.0f;
+}
+
+void MouseController::performAutoClick()
+{
+    INPUT inputs[3] = {};
+    
+    inputs[0].type = INPUT_MOUSE;
+    inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    
+    inputs[1].type = INPUT_MOUSE;
+    inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    
+    SendInput(2, inputs, sizeof(INPUT));
+}
+
+void MouseController::setCurrentWeapon(const std::string& weaponName)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    currentWeapon_ = weaponName;
+    resetRecoilState();
+}
+
+std::string MouseController::getCurrentWeapon() const
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    return currentWeapon_;
+}
+
+void MouseController::applyRecoilCompensation(float& moveX, float& moveY)
+{
+    if (currentWeapon_.empty()) {
+        return;
+    }
+    
+    const RecoilPattern* pattern = RecoilPatternManager::getInstance().getPattern(currentWeapon_);
+    if (!pattern || pattern->moves.empty()) {
+        return;
+    }
+    
+    if (!recoilActive_) {
+        recoilActive_ = true;
+        recoilStartTime_ = std::chrono::steady_clock::now();
+        recoilPatternIndex_ = 0;
+    }
+    
+    auto now = std::chrono::steady_clock::now();
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - recoilStartTime_).count();
+    
+    int accumulatedTime = 0;
+    int targetIndex = 0;
+    
+    for (size_t i = 0; i < pattern->moves.size(); ++i) {
+        accumulatedTime += pattern->moves[i].delayMs;
+        if (accumulatedTime >= elapsedMs) {
+            targetIndex = static_cast<int>(i);
+            break;
+        }
+        if (i == pattern->moves.size() - 1) {
+            targetIndex = static_cast<int>(i);
+        }
+    }
+    
+    if (targetIndex < pattern->moves.size()) {
+        const RecoilMove& recoilMove = pattern->moves[targetIndex];
+        moveX += static_cast<float>(recoilMove.dx);
+        moveY -= static_cast<float>(recoilMove.dy);
+    }
+}
+
+void MouseController::resetRecoilState()
+{
+    recoilPatternIndex_ = 0;
+    recoilActive_ = false;
 }
 
 #endif
