@@ -8,6 +8,7 @@
 #include <dml_provider_factory.h>
 #endif
 #ifdef _WIN32
+#define NOMINMAX
 #include <windows.h>
 #else
 #include <sys/stat.h>
