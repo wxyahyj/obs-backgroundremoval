@@ -42,7 +42,7 @@ private:
         const float* rawOutput,
         int numBoxes,
         int numClasses,
-        const cv::Size& modelInputSize,
+        const LetterboxInfo& letterboxInfo,
         const cv::Size& originalImageSize
     );
 
@@ -50,7 +50,7 @@ private:
         const float* rawOutput,
         int numBoxes,
         int numClasses,
-        const cv::Size& modelInputSize,
+        const LetterboxInfo& letterboxInfo,
         const cv::Size& originalImageSize
     );
 
@@ -58,7 +58,7 @@ private:
         const float* rawOutput,
         int numBoxes,
         int numClasses,
-        const cv::Size& modelInputSize,
+        const LetterboxInfo& letterboxInfo,
         const cv::Size& originalImageSize
     );
 
@@ -72,6 +72,14 @@ private:
 
     void xywhToxyxy(float cx, float cy, float w, float h,
                     float& x1, float& y1, float& x2, float& y2);
+
+    struct LetterboxInfo {
+        float scale;
+        int padX;
+        int padY;
+    };
+
+    LetterboxInfo letterbox(const cv::Mat& input, cv::Mat& output);
 
     Version version_;
     float confidenceThreshold_;

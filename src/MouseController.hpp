@@ -27,6 +27,9 @@ private:
     MouseControllerConfig config;
     std::vector<Detection> currentDetections;
     
+    int cachedScreenWidth;
+    int cachedScreenHeight;
+    
     bool isMoving;
     POINT startPos;
     POINT targetPos;

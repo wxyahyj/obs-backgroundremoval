@@ -972,14 +972,14 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			if (cropWidth > 0 && cropHeight > 0) {
 				frame = fullFrame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).clone();
 			} else {
-				frame = fullFrame.clone();
+				frame = std::move(fullFrame);
 				cropX = 0;
 				cropY = 0;
-				cropWidth = fullWidth;
-				cropHeight = fullHeight;
+				cropWidth = frame.cols;
+				cropHeight = frame.rows;
 			}
 		} else {
-			frame = fullFrame.clone();
+			frame = std::move(fullFrame);
 		}
 
 		auto startTime = std::chrono::high_resolution_clock::now();
@@ -1038,7 +1038,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 
 		if (filter->exportCoordinates && !newDetections.empty()) {
-			exportCoordinatesToFile(filter, frame.cols, frame.rows);
+			exportCoordinatesToFile(filter, fullFrame.cols, fullFrame.rows);
 		}
 	}
 

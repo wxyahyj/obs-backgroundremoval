@@ -31,6 +31,9 @@ private:
     MouseControllerConfig config;
     std::vector<Detection> currentDetections;
     
+    int cachedScreenWidth;
+    int cachedScreenHeight;
+    
     HANDLE hSerial;
     bool serialConnected;
     std::string portName;

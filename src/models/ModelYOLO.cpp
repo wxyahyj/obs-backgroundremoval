@@ -8,6 +8,28 @@
 #include <dml_provider_factory.h>
 #endif
 
+ModelYOLO::LetterboxInfo ModelYOLO::letterbox(const cv::Mat& input, cv::Mat& output) {
+    LetterboxInfo info;
+    
+    float scaleX = static_cast<float>(inputWidth_) / input.cols;
+    float scaleY = static_cast<float>(inputHeight_) / input.rows;
+    info.scale = std::min(scaleX, scaleY);
+    
+    int newWidth = static_cast<int>(input.cols * info.scale);
+    int newHeight = static_cast<int>(input.rows * info.scale);
+    
+    info.padX = (inputWidth_ - newWidth) / 2;
+    info.padY = (inputHeight_ - newHeight) / 2;
+    
+    cv::Mat resized;
+    cv::resize(input, resized, cv::Size(newWidth, newHeight), 0, 0, cv::INTER_LINEAR);
+    
+    output = cv::Mat(inputHeight_, inputWidth_, input.type(), cv::Scalar(114, 114, 114, 114));
+    resized.copyTo(output(cv::Rect(info.padX, info.padY, newWidth, newHeight)));
+    
+    return info;
+}
+
 ModelYOLO::ModelYOLO(Version version)
     : ModelBCHW(),
       version_(version),
@@ -189,40 +211,29 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
 }
 
 void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
-    cv::Mat resized;
-    cv::resize(input, resized, cv::Size(inputWidth_, inputHeight_));
-
     cv::Mat rgb;
     if (input.channels() == 4) {
-        cv::cvtColor(resized, rgb, cv::COLOR_BGRA2RGB);
+        cv::cvtColor(input, rgb, cv::COLOR_BGRA2RGB);
     } else if (input.channels() == 3) {
-        cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+        cv::cvtColor(input, rgb, cv::COLOR_BGR2RGB);
     } else {
-        rgb = resized.clone();
+        rgb = input;
     }
 
-    cv::Mat rgb8u;
-    if (rgb.depth() != CV_8U) {
-        rgb.convertTo(rgb8u, CV_8U);
-    } else {
-        rgb8u = rgb;
-    }
+    cv::Mat floatMat;
+    rgb.convertTo(floatMat, CV_32F, 1.0f / 255.0f);
+
+    std::vector<cv::Mat> channels(3);
+    cv::split(floatMat, channels);
 
     const int channelSize = inputWidth_ * inputHeight_;
-
     for (int c = 0; c < 3; ++c) {
-        for (int h = 0; h < inputHeight_; ++h) {
-            for (int w = 0; w < inputWidth_; ++w) {
-                int outputIdx = c * channelSize + h * inputWidth_ + w;
-                outputBuffer[outputIdx] = rgb8u.at<cv::Vec3b>(h, w)[c] / 255.0f;
-            }
-        }
+        std::memcpy(outputBuffer + c * channelSize, channels[c].data, channelSize * sizeof(float));
     }
 }
 
 std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
     
-    // 输入验证
     if (input.empty()) {
         obs_log(LOG_ERROR, "[ModelYOLO] Input image is empty");
         return {};
@@ -239,8 +250,10 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
     }
     
     try {
-        // 使用预分配的输入缓冲区
-        preprocessInput(input, inputBuffer_.data());
+        cv::Mat letterboxed;
+        LetterboxInfo letterboxInfo = letterbox(input, letterboxed);
+        
+        preprocessInput(letterboxed, inputBuffer_.data());
         
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         
@@ -354,15 +367,11 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             return {};
         }
         
-        // 验证输出参数
         if (numBoxes <= 0 || numElements <= 0) {
             obs_log(LOG_ERROR, "[ModelYOLO] Invalid output parameters: numBoxes=%d, numElements=%d", numBoxes, numElements);
             return {};
         }
         
-
-        
-        cv::Size modelSize(inputWidth_, inputHeight_);
         cv::Size originalSize(input.cols, input.rows);
         
         std::vector<Detection> detections;
@@ -371,15 +380,15 @@ std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
             switch (version_) {
                 case Version::YOLOv5:
                     detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, 
-                                                  modelSize, originalSize);
+                                                  letterboxInfo, originalSize);
                     break;
                 case Version::YOLOv8:
                     detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, 
-                                                  modelSize, originalSize);
+                                                  letterboxInfo, originalSize);
                     break;
                 case Version::YOLOv11:
                     detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, 
-                                                   modelSize, originalSize);
+                                                   letterboxInfo, originalSize);
                     break;
             }
         } catch (const std::exception& e) {
@@ -405,7 +414,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
     const float* rawOutput,
     int numBoxes,
     int numClasses,
-    const cv::Size& modelInputSize,
+    const LetterboxInfo& letterboxInfo,
     const cv::Size& originalImageSize
 ) {
     std::vector<Detection> detections;
@@ -414,9 +423,6 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
     std::vector<int> classIds;
 
     const int numElements = 5 + numClasses;
-
-    float scaleX = static_cast<float>(originalImageSize.width) / modelInputSize.width;
-    float scaleY = static_cast<float>(originalImageSize.height) / modelInputSize.height;
 
     for (int i = 0; i < numBoxes; ++i) {
         const float* detection = rawOutput + i * numElements;
@@ -443,16 +449,12 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
             continue;
         }
 
-        // 检查是否在目标类别列表中
         bool isTargetClass = false;
         if (targetClassId_ >= 0) {
-            // 单个目标类别模式
             isTargetClass = (maxClassId == targetClassId_);
         } else if (!targetClasses_.empty()) {
-            // 多个目标类别模式
             isTargetClass = (std::find(targetClasses_.begin(), targetClasses_.end(), maxClassId) != targetClasses_.end());
         } else {
-            // 无目标类别限制
             isTargetClass = true;
         }
         
@@ -465,10 +467,10 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         float w = detection[2];
         float h = detection[3];
 
-        float x1 = (cx - w / 2.0f) * scaleX;
-        float y1 = (cy - h / 2.0f) * scaleY;
-        float x2 = (cx + w / 2.0f) * scaleX;
-        float y2 = (cy + h / 2.0f) * scaleY;
+        float x1 = (cx - w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
+        float y1 = (cy - h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
+        float x2 = (cx + w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
+        float y2 = (cy + h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
 
         x1 = std::max(0.0f, std::min(x1, static_cast<float>(originalImageSize.width)));
         y1 = std::max(0.0f, std::min(y1, static_cast<float>(originalImageSize.height)));
@@ -508,16 +510,13 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
     const float* rawOutput,
     int numBoxes,
     int numClasses,
-    const cv::Size& modelInputSize,
+    const LetterboxInfo& letterboxInfo,
     const cv::Size& originalImageSize
 ) {
     std::vector<Detection> detections;
     std::vector<cv::Rect2f> boxes;
     std::vector<float> scores;
     std::vector<int> classIds;
-
-    float scaleX = static_cast<float>(originalImageSize.width) / modelInputSize.width;
-    float scaleY = static_cast<float>(originalImageSize.height) / modelInputSize.height;
 
     for (int i = 0; i < numBoxes; ++i) {
         float cx = rawOutput[0 * numBoxes + i];
@@ -542,16 +541,12 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
             continue;
         }
 
-        // 检查是否在目标类别列表中
         bool isTargetClass = false;
         if (targetClassId_ >= 0) {
-            // 单个目标类别模式
             isTargetClass = (maxClassId == targetClassId_);
         } else if (!targetClasses_.empty()) {
-            // 多个目标类别模式
             isTargetClass = (std::find(targetClasses_.begin(), targetClasses_.end(), maxClassId) != targetClasses_.end());
         } else {
-            // 无目标类别限制
             isTargetClass = true;
         }
         
@@ -559,10 +554,10 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
             continue;
         }
 
-        float x1 = (cx - w / 2.0f) * scaleX;
-        float y1 = (cy - h / 2.0f) * scaleY;
-        float x2 = (cx + w / 2.0f) * scaleX;
-        float y2 = (cy + h / 2.0f) * scaleY;
+        float x1 = (cx - w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
+        float y1 = (cy - h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
+        float x2 = (cx + w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
+        float y2 = (cy + h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
 
         x1 = std::max(0.0f, std::min(x1, static_cast<float>(originalImageSize.width)));
         y1 = std::max(0.0f, std::min(y1, static_cast<float>(originalImageSize.height)));
@@ -602,10 +597,10 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv11(
     const float* rawOutput,
     int numBoxes,
     int numClasses,
-    const cv::Size& modelInputSize,
+    const LetterboxInfo& letterboxInfo,
     const cv::Size& originalImageSize
 ) {
-    return postprocessYOLOv8(rawOutput, numBoxes, numClasses, modelInputSize, originalImageSize);
+    return postprocessYOLOv8(rawOutput, numBoxes, numClasses, letterboxInfo, originalImageSize);
 }
 
 std::vector<int> ModelYOLO::performNMS(

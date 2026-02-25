@@ -8,7 +8,9 @@
 #include "plugin-support.h"
 
 MAKCUMouseController::MAKCUMouseController()
-    : hSerial(INVALID_HANDLE_VALUE)
+    : cachedScreenWidth(0)
+    , cachedScreenHeight(0)
+    , hSerial(INVALID_HANDLE_VALUE)
     , serialConnected(false)
     , portName("COM5")
     , baudRate(4000000)
@@ -24,6 +26,8 @@ MAKCUMouseController::MAKCUMouseController()
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
 {
+    cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
     
     // 初始化MAKCU板子状态
@@ -34,7 +38,9 @@ MAKCUMouseController::MAKCUMouseController()
 }
 
 MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
-    : hSerial(INVALID_HANDLE_VALUE)
+    : cachedScreenWidth(0)
+    , cachedScreenHeight(0)
+    , hSerial(INVALID_HANDLE_VALUE)
     , serialConnected(false)
     , portName(port)
     , baudRate(baud)
@@ -50,6 +56,8 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
 {
+    cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
     
     // 初始化MAKCU板子状态
@@ -358,9 +366,6 @@ Detection* MAKCUMouseController::selectTarget()
 
 POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
 {
-    int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
-
     int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
                      ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
@@ -372,7 +377,7 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     static bool loggedOnce = false;
     if (!loggedOnce) {
         obs_log(LOG_INFO, "[MAKCU] 坐标转换调试信息:");
-        obs_log(LOG_INFO, "[MAKCU]   屏幕尺寸: %dx%d", fullScreenWidth, fullScreenHeight);
+        obs_log(LOG_INFO, "[MAKCU]   屏幕尺寸: %dx%d", cachedScreenWidth, cachedScreenHeight);
         obs_log(LOG_INFO, "[MAKCU]   推理帧尺寸: %dx%d", frameWidth, frameHeight);
         obs_log(LOG_INFO, "[MAKCU]   检测中心(归一化): %.4f, %.4f", det.centerX, det.centerY);
         obs_log(LOG_INFO, "[MAKCU]   屏幕偏移: %d, %d", config.screenOffsetX, config.screenOffsetY);
@@ -384,8 +389,8 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     result.x = static_cast<LONG>(screenPixelX);
     result.y = static_cast<LONG>(screenPixelY);
 
-    LONG maxX = static_cast<LONG>(fullScreenWidth - 1);
-    LONG maxY = static_cast<LONG>(fullScreenHeight - 1);
+    LONG maxX = static_cast<LONG>(cachedScreenWidth - 1);
+    LONG maxY = static_cast<LONG>(cachedScreenHeight - 1);
     
     result.x = std::max(0L, std::min(result.x, maxX));
     result.y = std::max(0L, std::min(result.y, maxY));

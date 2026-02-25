@@ -5,7 +5,9 @@
 #include <algorithm>
 
 MouseController::MouseController()
-    : isMoving(false)
+    : cachedScreenWidth(0)
+    , cachedScreenHeight(0)
+    , isMoving(false)
     , pidPreviousErrorX(0.0f)
     , pidPreviousErrorY(0.0f)
     , filteredDeltaErrorX(0.0f)
@@ -19,6 +21,8 @@ MouseController::MouseController()
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
+    cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 }
 
 MouseController::~MouseController()
@@ -206,9 +210,6 @@ Detection* MouseController::selectTarget()
 
 POINT MouseController::convertToScreenCoordinates(const Detection& det)
 {
-    int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
-
     int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
                      ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
@@ -221,8 +222,8 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
     result.x = static_cast<LONG>(screenPixelX);
     result.y = static_cast<LONG>(screenPixelY);
 
-    LONG maxX = static_cast<LONG>(fullScreenWidth - 1);
-    LONG maxY = static_cast<LONG>(fullScreenHeight - 1);
+    LONG maxX = static_cast<LONG>(cachedScreenWidth - 1);
+    LONG maxY = static_cast<LONG>(cachedScreenHeight - 1);
     
     result.x = std::max(0L, std::min(result.x, maxX));
     result.y = std::max(0L, std::min(result.y, maxY));
