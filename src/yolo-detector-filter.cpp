@@ -1221,7 +1221,7 @@ static void createFloatingWindow(yolo_detector_filter *filter)
 	wc.hInstance = GetModuleHandle(NULL);
 	wc.lpszClassName = L"YOLODetectorFloatingWindow";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground = NULL;
+	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
 
 	RegisterClass(&wc);
 
@@ -1229,7 +1229,7 @@ static void createFloatingWindow(yolo_detector_filter *filter)
 	int y = GetSystemMetrics(SM_CYSCREEN) / 2 - filter->floatingWindowHeight / 2;
 
 	filter->floatingWindowHandle = CreateWindowEx(
-		WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+		WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
 		L"YOLODetectorFloatingWindow",
 		L"YOLO Detector",
 		WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
@@ -1237,8 +1237,6 @@ static void createFloatingWindow(yolo_detector_filter *filter)
 		filter->floatingWindowWidth, filter->floatingWindowHeight,
 		NULL, NULL, GetModuleHandle(NULL), filter
 	);
-
-	SetLayeredWindowAttributes(filter->floatingWindowHandle, RGB(1, 0, 1), 0, LWA_COLORKEY);
 
 	filter->floatingWindowX = x;
 	filter->floatingWindowY = y;
@@ -2094,7 +2092,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		int actualCropHeight = std::min(cropHeight, originalImage.rows - cropY);
 
 		if (actualCropWidth > 0 && actualCropHeight > 0) {
-			cv::Mat croppedFrame(cropHeight, cropWidth, CV_8UC4, cv::Scalar(1, 0, 1, 255));
+			cv::Mat croppedFrame = originalImage(cv::Rect(cropX, cropY, actualCropWidth, actualCropHeight)).clone();
 
 			size_t detectionCount = 0;
 			std::vector<Detection> detectionsCopy;
@@ -2109,9 +2107,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				float r = ((tf->bboxColor >> 16) & 0xFF) / 255.0f;
 				float g = ((tf->bboxColor >> 8) & 0xFF) / 255.0f;
 				float b = (tf->bboxColor & 0xFF) / 255.0f;
-				if (r < 0.01f && g < 0.01f && b < 0.01f) {
-					r = 0.01f;
-				}
 				cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
 
 				for (const auto& det : detectionsCopy) {
@@ -2120,7 +2115,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					int w = static_cast<int>(det.width * originalImage.cols);
 					int h = static_cast<int>(det.height * originalImage.rows);
 					
-					if (x + w >= 0 && y + h >= 0 && x < cropWidth && y < cropHeight) {
+					if (x + w >= 0 && y + h >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
 						cv::rectangle(croppedFrame, 
 							cv::Point(x, y), 
 							cv::Point(x + w, y + h), 
@@ -2140,9 +2135,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
 				float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
 				float b = (tf->fovColor & 0xFF) / 255.0f;
-				if (r < 0.01f && g < 0.01f && b < 0.01f) {
-					r = 0.01f;
-				}
 				cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
 
 				if (tf->showFOVCross) {
@@ -2172,9 +2164,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				float r2 = ((tf->fovColor2 >> 16) & 0xFF) / 255.0f;
 				float g2 = ((tf->fovColor2 >> 8) & 0xFF) / 255.0f;
 				float b2 = (tf->fovColor2 & 0xFF) / 255.0f;
-				if (r2 < 0.01f && g2 < 0.01f && b2 < 0.01f) {
-					r2 = 0.01f;
-				}
 				cv::Scalar fovColor2(b2 * 255, g2 * 255, r2 * 255, 255);
 
 				cv::circle(croppedFrame, 
