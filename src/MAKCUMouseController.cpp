@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <obs-module.h>
 #include "plugin-support.h"
 
 MAKCUMouseController::MAKCUMouseController()
