@@ -1708,6 +1708,28 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					fovColor2, 2);
 			}
 
+			// 绘制从中心点到目标的连接线
+			float centerX = (originalImage.cols / 2.0f) - cropX;
+			float centerY = (originalImage.rows / 2.0f) - cropY;
+			cv::Point centerPoint(static_cast<int>(centerX), static_cast<int>(centerY));
+			
+			// 使用绿色绘制连接线
+			cv::Scalar lineColor(0, 255, 0, 255);
+			int lineThickness = 1;
+			
+			for (const auto& det : detectionsCopy) {
+				// 计算目标在裁剪帧中的坐标
+				int targetX = static_cast<int>(det.centerX * originalImage.cols) - cropX;
+				int targetY = static_cast<int>(det.centerY * originalImage.rows) - cropY;
+				cv::Point targetPoint(targetX, targetY);
+				
+				// 确保目标点在裁剪区域内
+				if (targetX >= 0 && targetY >= 0 && targetX < croppedFrame.cols && targetY < croppedFrame.rows) {
+					// 绘制从中心点到目标的连接线
+					cv::line(croppedFrame, centerPoint, targetPoint, lineColor, lineThickness);
+				}
+			}
+
 			// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
 			if (tf->showLabel || tf->showConfidence) {
 				int fontFace = cv::FONT_HERSHEY_SIMPLEX;
