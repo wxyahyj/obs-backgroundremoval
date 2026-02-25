@@ -88,6 +88,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::atomic<bool> shouldInference;
 	int frameCounter;
 
+	int inferenceFrameWidth;
+	int inferenceFrameHeight;
+	std::mutex inferenceFrameSizeMutex;
+
 	uint64_t totalFrames;
 	uint64_t inferenceCount;
 	double avgInferenceTimeMs;
@@ -1020,6 +1024,12 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			filter->detections = std::move(newDetections);
 		}
 
+		{
+			std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
+			filter->inferenceFrameWidth = fullFrame.cols;
+			filter->inferenceFrameHeight = fullFrame.rows;
+		}
+
 		filter->inferenceCount++;
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 
@@ -1254,6 +1264,8 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->inferenceRunning = false;
 		instance->shouldInference = false;
 		instance->frameCounter = 0;
+		instance->inferenceFrameWidth = 0;
+		instance->inferenceFrameHeight = 0;
 		instance->totalFrames = 0;
 		instance->inferenceCount = 0;
 		instance->avgInferenceTimeMs = 0.0;
@@ -1478,18 +1490,30 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
 			// 注意：这里我们无法直接获取当前配置，所以在update函数中会处理FOV半径
 			// 我们直接传递检测结果并tick
-			tf->mouseController->setDetections(detectionsCopy);
+			int frameWidth = 0, frameHeight = 0;
+			{
+				std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
+				frameWidth = tf->inferenceFrameWidth;
+				frameHeight = tf->inferenceFrameHeight;
+			}
+			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight);
 			tf->mouseController->tick();
 		}
 	} else {
 		// 不使用动态FOV，正常处理
 		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
 			std::vector<Detection> detectionsCopy;
+			int frameWidth = 0, frameHeight = 0;
 			{
 				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
 				detectionsCopy = tf->detections;
 			}
-			tf->mouseController->setDetections(detectionsCopy);
+			{
+				std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
+				frameWidth = tf->inferenceFrameWidth;
+				frameHeight = tf->inferenceFrameHeight;
+			}
+			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight);
 			tf->mouseController->tick();
 		}
 	}

@@ -20,6 +20,8 @@ struct MouseControllerConfig {
     float sourceCanvasScaleY;
     int sourceWidth;
     int sourceHeight;
+    int inferenceFrameWidth;
+    int inferenceFrameHeight;
     int screenOffsetX;
     int screenOffsetY;
     int screenWidth;
@@ -47,6 +49,8 @@ public:
     virtual void updateConfig(const MouseControllerConfig& config) = 0;
 
     virtual void setDetections(const std::vector<Detection>& detections) = 0;
+
+    virtual void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight) = 0;
 
     virtual void tick() = 0;
 };

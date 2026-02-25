@@ -17,6 +17,8 @@ public:
     void updateConfig(const MouseControllerConfig& config) override;
     
     void setDetections(const std::vector<Detection>& detections) override;
+
+    void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight) override;
     
     void tick() override;
 

@@ -211,6 +211,14 @@ void MAKCUMouseController::setDetections(const std::vector<Detection>& detection
     currentDetections = detections;
 }
 
+void MAKCUMouseController::setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    currentDetections = detections;
+    config.inferenceFrameWidth = frameWidth;
+    config.inferenceFrameHeight = frameHeight;
+}
+
 void MAKCUMouseController::tick()
 {
     std::lock_guard<std::mutex> lock(mutex);
@@ -312,20 +320,25 @@ Detection* MAKCUMouseController::selectTarget()
         return nullptr;
     }
 
-    // 安全检查：确保sourceWidth和sourceHeight不为0
-    int safeSourceWidth = (config.sourceWidth > 0) ? config.sourceWidth : 1920;
-    int safeSourceHeight = (config.sourceHeight > 0) ? config.sourceHeight : 1080;
+    // 使用推理帧的实际尺寸来计算 FOV 中心
+    // 这确保了 FOV 计算与检测坐标使用相同的基准
+    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
+                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
+    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
+                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
-    int fovCenterX = safeSourceWidth / 2;
-    int fovCenterY = safeSourceHeight / 2;
+    int fovCenterX = frameWidth / 2;
+    int fovCenterY = frameHeight / 2;
     float fovRadiusSquared = static_cast<float>(config.fovRadiusPixels * config.fovRadiusPixels);
 
     Detection* bestTarget = nullptr;
     float minDistanceSquared = std::numeric_limits<float>::max();
 
     for (auto& det : currentDetections) {
-        int targetX = static_cast<int>(det.centerX * safeSourceWidth);
-        int targetY = static_cast<int>(det.centerY * safeSourceHeight);
+        // 检测坐标已经是相对于推理帧的归一化坐标
+        // 所以我们需要使用推理帧的尺寸来计算像素位置
+        int targetX = static_cast<int>(det.centerX * frameWidth);
+        int targetY = static_cast<int>(det.centerY * frameHeight);
         
         float dx = static_cast<float>(targetX - fovCenterX);
         float dy = static_cast<float>(targetY - fovCenterY);
@@ -345,10 +358,33 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     int fullScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     int fullScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    // 直接使用屏幕坐标，因为检测坐标已经是相对于整个屏幕的归一化坐标
-    // 这样可以避免OBS源大小与屏幕大小不一致导致的缩放错误
-    float screenPixelX = det.centerX * fullScreenWidth + config.screenOffsetX;
-    float screenPixelY = det.centerY * fullScreenHeight - config.targetYOffset + config.screenOffsetY;
+    // 使用推理帧的实际尺寸
+    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
+                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
+    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
+                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
+
+    // 检测坐标是相对于推理帧的归一化坐标
+    // 首先转换为推理帧中的像素坐标
+    float framePixelX = det.centerX * frameWidth;
+    float framePixelY = det.centerY * frameHeight;
+
+    // 然后从推理帧坐标转换到屏幕坐标
+    // 如果推理帧尺寸与屏幕尺寸相同，直接使用
+    // 如果不同，需要按比例缩放
+    float screenPixelX, screenPixelY;
+    
+    if (frameWidth == fullScreenWidth && frameHeight == fullScreenHeight) {
+        // 推理帧尺寸与屏幕尺寸相同，直接使用
+        screenPixelX = framePixelX + config.screenOffsetX;
+        screenPixelY = framePixelY - config.targetYOffset + config.screenOffsetY;
+    } else {
+        // 推理帧尺寸与屏幕尺寸不同，需要缩放
+        float scaleX = static_cast<float>(fullScreenWidth) / frameWidth;
+        float scaleY = static_cast<float>(fullScreenHeight) / frameHeight;
+        screenPixelX = framePixelX * scaleX + config.screenOffsetX;
+        screenPixelY = framePixelY * scaleY - config.targetYOffset + config.screenOffsetY;
+    }
 
     POINT result;
     result.x = static_cast<LONG>(screenPixelX);
