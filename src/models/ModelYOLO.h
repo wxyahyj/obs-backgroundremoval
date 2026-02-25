@@ -38,6 +38,12 @@ public:
     const std::vector<std::string>& getClassNames() const { return classNames_; }
 
 private:
+    struct LetterboxInfo {
+        float scale;
+        int padX;
+        int padY;
+    };
+
     std::vector<Detection> postprocessYOLOv5(
         const float* rawOutput,
         int numBoxes,
@@ -73,12 +79,6 @@ private:
     void xywhToxyxy(float cx, float cy, float w, float h,
                     float& x1, float& y1, float& x2, float& y2);
 
-    struct LetterboxInfo {
-        float scale;
-        int padX;
-        int padY;
-    };
-
     LetterboxInfo letterbox(const cv::Mat& input, cv::Mat& output);
 
     Version version_;
@@ -104,7 +104,6 @@ private:
     std::vector<Ort::Value> inputTensor_;
     std::vector<Ort::Value> outputTensor_;
     
-    // 输入缓冲区
     size_t inputBufferSize_;
     std::vector<float> inputBuffer_;
 };
