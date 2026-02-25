@@ -60,6 +60,10 @@ public:
     virtual void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY) = 0;
 
     virtual void tick() = 0;
+    
+    virtual void setCurrentWeapon(const std::string& weaponName) = 0;
+    
+    virtual std::string getCurrentWeapon() const = 0;
 };
 
 #endif

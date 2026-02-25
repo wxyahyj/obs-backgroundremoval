@@ -24,11 +24,14 @@ public:
     
     void tick() override;
     
+    void setCurrentWeapon(const std::string& weaponName) override;
+    std::string getCurrentWeapon() const override;
+    
     bool isConnected();
     bool testCommunication();
 
 private:
-    std::mutex mutex;
+    mutable std::mutex mutex;
     MouseControllerConfig config;
     std::vector<Detection> currentDetections;
     
@@ -70,6 +73,14 @@ private:
     std::chrono::steady_clock::time_point hotkeyPressStartTime;
     bool yUnlockActive;
     std::chrono::steady_clock::time_point lastAutoTriggerTime;
+    
+    std::string currentWeapon_;
+    int recoilPatternIndex_;
+    std::chrono::steady_clock::time_point recoilStartTime_;
+    bool recoilActive_;
+    
+    void applyRecoilCompensation(float& moveX, float& moveY);
+    void resetRecoilState();
 };
 
 #endif

@@ -222,7 +222,7 @@ std::string ConfigManager::configToJson(const ExtendedMouseControllerConfig& con
 bool ConfigManager::jsonToConfig(const std::string& json, ExtendedMouseControllerConfig& config) {
     config = ExtendedMouseControllerConfig::getDefault();
     
-    auto extractString = [&json](const std::string& key) -> std::string {
+    auto extractString = [this, &json](const std::string& key) -> std::string {
         std::string searchKey = "\"" + key + "\"";
         size_t pos = json.find(searchKey);
         if (pos == std::string::npos) return "";

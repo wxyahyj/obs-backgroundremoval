@@ -28,7 +28,7 @@ public:
     std::string getCurrentWeapon() const;
 
 private:
-    std::mutex mutex;
+    mutable std::mutex mutex;
     MouseControllerConfig config;
     std::vector<Detection> currentDetections;
     

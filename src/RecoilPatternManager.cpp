@@ -3,6 +3,7 @@
 #include "RecoilPatternManager.hpp"
 #include "LogitechMacroConverter.hpp"
 #include <obs-module.h>
+#include <plugin-support.h>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
