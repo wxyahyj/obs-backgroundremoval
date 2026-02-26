@@ -1097,7 +1097,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->configList = obs_data_get_string(settings, "config_list");
 	tf->iouThreshold = (float)obs_data_get_double(settings, "iou_threshold");
 	tf->maxLostFrames = (int)obs_data_get_int(settings, "max_lost_frames");
-	}
 #endif
 
 	tf->isDisabled = false;
@@ -1180,7 +1179,11 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
         return true;
     }
 
-    MAKCUMouseController tempController(tf->makcuPort, tf->makcuBaudRate);
+    int currentConfig = tf->currentConfigIndex;
+    std::string port = tf->mouseConfigs[currentConfig].makcuPort;
+    int baudRate = tf->mouseConfigs[currentConfig].makcuBaudRate;
+
+    MAKCUMouseController tempController(port, baudRate);
 
     bool isConnected = tempController.isConnected();
 
@@ -2096,35 +2099,14 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->floatingWindowDragging = false;
 		instance->floatingWindowHandle = nullptr;
 
-		instance->enableMouseControl = false;
-		instance->controllerType = 0;
-		instance->makcuPort = "COM5";
-		instance->makcuBaudRate = 40000;
-		instance->mouseControlHotkey = VK_XBUTTON1;
-		instance->mouseControlPMin = 0.153f;
-		instance->mouseControlPMax = 0.6f;
-		instance->mouseControlPSlope = 1.0f;
-		instance->mouseControlD = 0.007f;
-		instance->baselineCompensation = 0.85f;
-		instance->aimSmoothingX = 0.7f;
-		instance->aimSmoothingY = 0.5f;
-		instance->maxPixelMove = 128.0f;
-		instance->deadZonePixels = 5.0f;
-		instance->screenOffsetX = 0;
-		instance->screenOffsetY = 0;
-		instance->screenWidth = 0;
-		instance->screenHeight = 0;
-		instance->targetYOffset = 0.0f;
-		instance->derivativeFilterAlpha = 0.2f;
-instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI);
+		for (int i = 0; i < 5; i++) {
+			instance->mouseConfigs[i] = MouseControlConfig();
+		}
+		instance->currentConfigIndex = 0;
+		instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI, "", 0);
 
 		instance->configName = "";
 		instance->configList = "";
-		instance->enableYAxisUnlock = false;
-		instance->yAxisUnlockDelay = 500;
-		instance->enableAutoTrigger = false;
-		instance->triggerRadius = 5;
-		instance->triggerCooldown = 200;
 #endif
 
 		// Create pointer to shared_ptr for the update call
