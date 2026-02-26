@@ -47,6 +47,14 @@ struct MouseControllerConfig {
     bool autoTriggerEnabled;
     int autoTriggerRadius;
     int autoTriggerCooldownMs;
+    int autoTriggerFireDelay;
+    int autoTriggerFireDuration;
+    int autoTriggerInterval;
+    int autoTriggerDelayRandomMin;
+    int autoTriggerDelayRandomMax;
+    int autoTriggerDurationRandomMin;
+    int autoTriggerDurationRandomMax;
+    int autoTriggerMoveCompensation;
 };
 
 class MouseControllerInterface {

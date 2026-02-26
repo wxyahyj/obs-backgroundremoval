@@ -6,6 +6,7 @@
 #include <plugin-support.h>
 #include <cmath>
 #include <algorithm>
+#include <random>
 
 MouseController::MouseController()
     : cachedScreenWidth(0)
@@ -21,14 +22,20 @@ MouseController::MouseController()
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , hotkeyPressStartTime(std::chrono::steady_clock::now())
     , yUnlockActive(false)
     , lastAutoTriggerTime(std::chrono::steady_clock::now())
+    , autoTriggerFireStartTime(std::chrono::steady_clock::now())
+    , autoTriggerHolding(false)
+    , autoTriggerWaitingForDelay(false)
+    , currentFireDuration(50)
+    , randomGenerator(std::random_device{}())
     , recoilPatternIndex_(0)
+    , recoilStartTime_(std::chrono::steady_clock::now())
     , recoilActive_(false)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
-    hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 }
@@ -76,6 +83,7 @@ void MouseController::tick()
             resetMotionState();
         }
         yUnlockActive = false;
+        releaseAutoTrigger();
         return;
     }
 
@@ -145,12 +153,32 @@ void MouseController::tick()
     float distance = std::sqrt(distanceSquared);
 
     if (config.autoTriggerEnabled) {
-        if (distance < config.autoTriggerRadius) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
-            if (elapsed >= config.autoTriggerCooldownMs) {
-                performAutoClick();
+        auto now = std::chrono::steady_clock::now();
+
+        if (autoTriggerHolding) {
+            auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+            if (fireElapsed >= currentFireDuration) {
+                releaseAutoTrigger();
                 lastAutoTriggerTime = now;
+            }
+        } else {
+            if (distance < config.autoTriggerRadius) {
+                if (!autoTriggerWaitingForDelay) {
+                    autoTriggerWaitingForDelay = true;
+                    autoTriggerFireStartTime = now;
+                }
+                
+                auto delayElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+                int totalDelay = config.autoTriggerFireDelay + getRandomDelay();
+                
+                if (delayElapsed >= totalDelay) {
+                    auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
+                    if (cooldownElapsed >= config.autoTriggerInterval) {
+                        performAutoClick();
+                    }
+                }
+            } else {
+                autoTriggerWaitingForDelay = false;
             }
         }
     }
@@ -325,17 +353,45 @@ void MouseController::resetMotionState()
     previousMoveY = 0.0f;
 }
 
+int MouseController::getRandomDelay()
+{
+    if (config.autoTriggerDelayRandomMin >= config.autoTriggerDelayRandomMax) {
+        return config.autoTriggerDelayRandomMin;
+    }
+    std::uniform_int_distribution<int> dist(config.autoTriggerDelayRandomMin, config.autoTriggerDelayRandomMax);
+    return dist(randomGenerator);
+}
+
+int MouseController::getRandomDuration()
+{
+    if (config.autoTriggerDurationRandomMin >= config.autoTriggerDurationRandomMax) {
+        return config.autoTriggerDurationRandomMin;
+    }
+    std::uniform_int_distribution<int> dist(config.autoTriggerDurationRandomMin, config.autoTriggerDurationRandomMax);
+    return dist(randomGenerator);
+}
+
 void MouseController::performAutoClick()
 {
-    INPUT inputs[3] = {};
-    
-    inputs[0].type = INPUT_MOUSE;
-    inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-    
-    inputs[1].type = INPUT_MOUSE;
-    inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-    
-    SendInput(2, inputs, sizeof(INPUT));
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    SendInput(1, &input, sizeof(INPUT));
+    autoTriggerHolding = true;
+    autoTriggerFireStartTime = std::chrono::steady_clock::now();
+    currentFireDuration = config.autoTriggerFireDuration + getRandomDuration();
+}
+
+void MouseController::releaseAutoTrigger()
+{
+    if (autoTriggerHolding) {
+        INPUT input = {};
+        input.type = INPUT_MOUSE;
+        input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        SendInput(1, &input, sizeof(INPUT));
+        autoTriggerHolding = false;
+    }
+    autoTriggerWaitingForDelay = false;
 }
 
 void MouseController::setCurrentWeapon(const std::string& weaponName)

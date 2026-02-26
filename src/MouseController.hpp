@@ -59,10 +59,18 @@ private:
     void resetPidState();
     void resetMotionState();
     void performAutoClick();
+    void releaseAutoTrigger();
+    int getRandomDelay();
+    int getRandomDuration();
     
     std::chrono::steady_clock::time_point hotkeyPressStartTime;
     bool yUnlockActive;
     std::chrono::steady_clock::time_point lastAutoTriggerTime;
+    std::chrono::steady_clock::time_point autoTriggerFireStartTime;
+    bool autoTriggerHolding;
+    bool autoTriggerWaitingForDelay;
+    int currentFireDuration;
+    std::mt19937 randomGenerator;
     
     std::string currentWeapon_;
     int recoilPatternIndex_;

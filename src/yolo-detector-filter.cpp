@@ -158,6 +158,14 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool enableAutoTrigger;
 		int triggerRadius;
 		int triggerCooldown;
+		int triggerFireDelay;
+		int triggerFireDuration;
+		int triggerInterval;
+		int triggerDelayRandomMin;
+		int triggerDelayRandomMax;
+		int triggerDurationRandomMin;
+		int triggerDurationRandomMax;
+		int triggerMoveCompensation;
 		std::string weaponName;
 
 		MouseControlConfig() {
@@ -186,6 +194,14 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			enableAutoTrigger = false;
 			triggerRadius = 5;
 			triggerCooldown = 200;
+			triggerFireDelay = 0;
+			triggerFireDuration = 50;
+			triggerInterval = 50;
+			triggerDelayRandomMin = 0;
+			triggerDelayRandomMax = 0;
+			triggerDurationRandomMin = 0;
+			triggerDurationRandomMax = 0;
+			triggerMoveCompensation = 0;
 		}
 	};
 
@@ -414,6 +430,22 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_int_slider(props, propName, "扳机触发半径(像素)", 1, 50, 1);
 		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
 		obs_properties_add_int_slider(props, propName, "扳机冷却时间(ms)", 50, 1000, 50);
+		snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", i);
+		obs_properties_add_int_slider(props, propName, "开火延时(ms)", 0, 500, 10);
+		snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", i);
+		obs_properties_add_int_slider(props, propName, "开火时长(ms)", 10, 500, 10);
+		snprintf(propName, sizeof(propName), "trigger_interval_%d", i);
+		obs_properties_add_int_slider(props, propName, "间隔设置(ms)", 10, 500, 10);
+		snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", i);
+		obs_properties_add_int_slider(props, propName, "随机延时下限(ms)", 0, 200, 5);
+		snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", i);
+		obs_properties_add_int_slider(props, propName, "随机延时上限(ms)", 0, 200, 5);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", i);
+		obs_properties_add_int_slider(props, propName, "随机时长下限(ms)", 0, 200, 5);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", i);
+		obs_properties_add_int_slider(props, propName, "随机时长上限(ms)", 0, 200, 5);
+		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
+		obs_properties_add_int_slider(props, propName, "移动补偿(像素)", 0, 100, 1);
 
 		snprintf(propName, sizeof(propName), "weapon_select_%d", i);
 		obs_properties_add_list(props, propName, "选择武器", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -508,6 +540,22 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	snprintf(propName, sizeof(propName), "trigger_radius_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_cooldown_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_interval_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 
 	snprintf(propName, sizeof(propName), "weapon_select_%d", configIndex);
@@ -766,6 +814,22 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 5);
 		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
 		obs_data_set_default_int(settings, propName, 200);
+		snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", i);
+		obs_data_set_default_int(settings, propName, 50);
+		snprintf(propName, sizeof(propName), "trigger_interval_%d", i);
+		obs_data_set_default_int(settings, propName, 50);
+		snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
 	}
 
 	obs_data_set_default_string(settings, "config_name", "");
@@ -995,6 +1059,22 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].triggerRadius = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
 		tf->mouseConfigs[i].triggerCooldown = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", i);
+		tf->mouseConfigs[i].triggerFireDelay = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", i);
+		tf->mouseConfigs[i].triggerFireDuration = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_interval_%d", i);
+		tf->mouseConfigs[i].triggerInterval = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", i);
+		tf->mouseConfigs[i].triggerDelayRandomMin = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", i);
+		tf->mouseConfigs[i].triggerDelayRandomMax = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", i);
+		tf->mouseConfigs[i].triggerDurationRandomMin = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", i);
+		tf->mouseConfigs[i].triggerDurationRandomMax = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
+		tf->mouseConfigs[i].triggerMoveCompensation = (int)obs_data_get_int(settings, propName);
 
 		snprintf(propName, sizeof(propName), "weapon_select_%d", i);
 		tf->mouseConfigs[i].weaponName = obs_data_get_string(settings, propName);
@@ -2227,6 +2307,14 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoTriggerEnabled = cfg.enableAutoTrigger;
 		mcConfig.autoTriggerRadius = cfg.triggerRadius;
 		mcConfig.autoTriggerCooldownMs = cfg.triggerCooldown;
+		mcConfig.autoTriggerFireDelay = cfg.triggerFireDelay;
+		mcConfig.autoTriggerFireDuration = cfg.triggerFireDuration;
+		mcConfig.autoTriggerInterval = cfg.triggerInterval;
+		mcConfig.autoTriggerDelayRandomMin = cfg.triggerDelayRandomMin;
+		mcConfig.autoTriggerDelayRandomMax = cfg.triggerDelayRandomMax;
+		mcConfig.autoTriggerDurationRandomMin = cfg.triggerDurationRandomMin;
+		mcConfig.autoTriggerDurationRandomMax = cfg.triggerDurationRandomMax;
+		mcConfig.autoTriggerMoveCompensation = cfg.triggerMoveCompensation;
 		tf->mouseController->updateConfig(mcConfig);
 		tf->mouseController->setCurrentWeapon(cfg.weaponName);
 	};
