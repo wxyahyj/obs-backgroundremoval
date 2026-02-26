@@ -23,6 +23,7 @@
 #include <fstream>
 #include <new>
 #include <mutex>
+#include <thread>
 #include <regex>
 #include <thread>
 #include <chrono>
@@ -1119,72 +1120,74 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         return true;
     }
 
-    obs_data_t *settings = obs_source_get_settings(tf->source);
-    if (!settings) {
-        return true;
-    }
+    std::thread([tf]() {
+        obs_data_t *settings = obs_source_get_settings(tf->source);
+        if (!settings) {
+            return;
+        }
 
-    char szFile[MAX_PATH] = {0};
-    
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "json";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    
-    if (!GetSaveFileNameA(&ofn)) {
+        char szFile[MAX_PATH] = {0};
+        
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrDefExt = "json";
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+        
+        if (!GetSaveFileNameA(&ofn)) {
+            obs_data_release(settings);
+            return;
+        }
+        
+        std::string filePath = szFile;
+        size_t lastSlash = filePath.find_last_of("\\/");
+        size_t lastDot = filePath.find_last_of(".");
+        std::string configName = (lastDot != std::string::npos && lastDot > lastSlash) 
+            ? filePath.substr(lastSlash + 1, lastDot - lastSlash - 1) 
+            : filePath.substr(lastSlash + 1);
+        std::string dir = (lastSlash != std::string::npos) ? filePath.substr(0, lastSlash) : ".";
+        ConfigManager::getInstance().setConfigsDirectory(dir);
+
+        ExtendedMouseControllerConfig config;
+        config.configName = configName;
+        config.enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
+        config.hotkeyVirtualKey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
+        config.screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
+        config.screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
+        config.screenWidth = (int)obs_data_get_int(settings, "screen_width");
+        config.screenHeight = (int)obs_data_get_int(settings, "screen_height");
+        config.pidPMin = (float)obs_data_get_double(settings, "mouse_control_p_min");
+        config.pidPMax = (float)obs_data_get_double(settings, "mouse_control_p_max");
+        config.pidPSlope = (float)obs_data_get_double(settings, "mouse_control_p_slope");
+        config.pidD = (float)obs_data_get_double(settings, "mouse_control_d");
+        config.baselineCompensation = (float)obs_data_get_double(settings, "baseline_compensation");
+        config.derivativeFilterAlpha = (float)obs_data_get_double(settings, "derivative_filter_alpha");
+        config.aimSmoothingX = (float)obs_data_get_double(settings, "aim_smoothing_x");
+        config.aimSmoothingY = (float)obs_data_get_double(settings, "aim_smoothing_y");
+        config.maxPixelMove = (float)obs_data_get_double(settings, "max_pixel_move");
+        config.deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
+        config.targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
+        config.controllerType = (int)obs_data_get_int(settings, "controller_type") == 1 ? ControllerType::MAKCU : ControllerType::WindowsAPI;
+        config.makcuPort = obs_data_get_string(settings, "makcu_port");
+        config.makcuBaudRate = (int)obs_data_get_int(settings, "makcu_baud_rate");
+        config.yUnlockEnabled = obs_data_get_bool(settings, "enable_y_axis_unlock");
+        config.yUnlockDelayMs = (int)obs_data_get_int(settings, "y_axis_unlock_delay");
+        config.autoTriggerEnabled = obs_data_get_bool(settings, "enable_auto_trigger");
+        config.autoTriggerRadius = (float)obs_data_get_int(settings, "trigger_radius");
+        config.autoTriggerCooldownMs = (int)obs_data_get_int(settings, "trigger_cooldown");
+
         obs_data_release(settings);
-        return true;
-    }
-    
-    std::string filePath = szFile;
-    size_t lastSlash = filePath.find_last_of("\\/");
-    size_t lastDot = filePath.find_last_of(".");
-    std::string configName = (lastDot != std::string::npos && lastDot > lastSlash) 
-        ? filePath.substr(lastSlash + 1, lastDot - lastSlash - 1) 
-        : filePath.substr(lastSlash + 1);
-    std::string dir = (lastSlash != std::string::npos) ? filePath.substr(0, lastSlash) : ".";
-    ConfigManager::getInstance().setConfigsDirectory(dir);
 
-    ExtendedMouseControllerConfig config;
-    config.configName = configName;
-    config.enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
-    config.hotkeyVirtualKey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
-    config.screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
-    config.screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
-    config.screenWidth = (int)obs_data_get_int(settings, "screen_width");
-    config.screenHeight = (int)obs_data_get_int(settings, "screen_height");
-    config.pidPMin = (float)obs_data_get_double(settings, "mouse_control_p_min");
-    config.pidPMax = (float)obs_data_get_double(settings, "mouse_control_p_max");
-    config.pidPSlope = (float)obs_data_get_double(settings, "mouse_control_p_slope");
-    config.pidD = (float)obs_data_get_double(settings, "mouse_control_d");
-    config.baselineCompensation = (float)obs_data_get_double(settings, "baseline_compensation");
-    config.derivativeFilterAlpha = (float)obs_data_get_double(settings, "derivative_filter_alpha");
-    config.aimSmoothingX = (float)obs_data_get_double(settings, "aim_smoothing_x");
-    config.aimSmoothingY = (float)obs_data_get_double(settings, "aim_smoothing_y");
-    config.maxPixelMove = (float)obs_data_get_double(settings, "max_pixel_move");
-    config.deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
-    config.targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
-    config.controllerType = (int)obs_data_get_int(settings, "controller_type") == 1 ? ControllerType::MAKCU : ControllerType::WindowsAPI;
-    config.makcuPort = obs_data_get_string(settings, "makcu_port");
-    config.makcuBaudRate = (int)obs_data_get_int(settings, "makcu_baud_rate");
-    config.yUnlockEnabled = obs_data_get_bool(settings, "enable_y_axis_unlock");
-    config.yUnlockDelayMs = (int)obs_data_get_int(settings, "y_axis_unlock_delay");
-    config.autoTriggerEnabled = obs_data_get_bool(settings, "enable_auto_trigger");
-    config.autoTriggerRadius = (float)obs_data_get_int(settings, "trigger_radius");
-    config.autoTriggerCooldownMs = (int)obs_data_get_int(settings, "trigger_cooldown");
-
-    obs_data_release(settings);
-
-    if (ConfigManager::getInstance().saveConfig(config)) {
-        MessageBoxA(NULL, ("配置已保存到:\n" + filePath).c_str(), "成功", MB_OK | MB_ICONINFORMATION);
-    } else {
-        MessageBoxA(NULL, "保存配置失败！", "错误", MB_OK | MB_ICONERROR);
-    }
+        if (ConfigManager::getInstance().saveConfig(config)) {
+            MessageBoxA(NULL, ("配置已保存到:\n" + filePath).c_str(), "成功", MB_OK | MB_ICONINFORMATION);
+        } else {
+            MessageBoxA(NULL, "保存配置失败！", "错误", MB_OK | MB_ICONERROR);
+        }
+    }).detach();
 
     return true;
 }
@@ -1201,67 +1204,69 @@ static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property
         return true;
     }
 
-    char szFile[MAX_PATH] = {0};
-    
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "json";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-    
-    if (!GetOpenFileNameA(&ofn)) {
-        return true;
-    }
-    
-    std::string filePath = szFile;
-    size_t lastSlash = filePath.find_last_of("\\/");
-    size_t lastDot = filePath.find_last_of(".");
-    std::string configName = (lastDot != std::string::npos && lastDot > lastSlash) 
-        ? filePath.substr(lastSlash + 1, lastDot - lastSlash - 1) 
-        : filePath.substr(lastSlash + 1);
-    
-    std::string dir = (lastSlash != std::string::npos) ? filePath.substr(0, lastSlash) : ".";
-    ConfigManager::getInstance().setConfigsDirectory(dir);
-
-    ExtendedMouseControllerConfig config;
-    if (ConfigManager::getInstance().loadConfig(configName, config)) {
-        obs_data_t *newSettings = obs_source_get_settings(tf->source);
-        if (newSettings) {
-            obs_data_set_bool(newSettings, "enable_mouse_control", config.enableMouseControl);
-            obs_data_set_int(newSettings, "mouse_control_hotkey", config.hotkeyVirtualKey);
-            obs_data_set_int(newSettings, "screen_offset_x", config.screenOffsetX);
-            obs_data_set_int(newSettings, "screen_offset_y", config.screenOffsetY);
-            obs_data_set_int(newSettings, "screen_width", config.screenWidth);
-            obs_data_set_int(newSettings, "screen_height", config.screenHeight);
-            obs_data_set_double(newSettings, "mouse_control_p_min", config.pidPMin);
-            obs_data_set_double(newSettings, "mouse_control_p_max", config.pidPMax);
-            obs_data_set_double(newSettings, "mouse_control_p_slope", config.pidPSlope);
-            obs_data_set_double(newSettings, "mouse_control_d", config.pidD);
-            obs_data_set_double(newSettings, "baseline_compensation", config.baselineCompensation);
-            obs_data_set_double(newSettings, "derivative_filter_alpha", config.derivativeFilterAlpha);
-            obs_data_set_double(newSettings, "aim_smoothing_x", config.aimSmoothingX);
-            obs_data_set_double(newSettings, "aim_smoothing_y", config.aimSmoothingY);
-            obs_data_set_double(newSettings, "max_pixel_move", config.maxPixelMove);
-            obs_data_set_double(newSettings, "dead_zone_pixels", config.deadZonePixels);
-            obs_data_set_double(newSettings, "target_y_offset", config.targetYOffset);
-            obs_data_set_int(newSettings, "controller_type", config.controllerType == ControllerType::MAKCU ? 1 : 0);
-            obs_data_set_string(newSettings, "makcu_port", config.makcuPort.c_str());
-            obs_data_set_int(newSettings, "makcu_baud_rate", config.makcuBaudRate);
-            obs_data_set_bool(newSettings, "enable_y_axis_unlock", config.yUnlockEnabled);
-            obs_data_set_int(newSettings, "y_axis_unlock_delay", config.yUnlockDelayMs);
-            obs_data_set_bool(newSettings, "enable_auto_trigger", config.autoTriggerEnabled);
-            obs_data_set_int(newSettings, "trigger_radius", (int)config.autoTriggerRadius);
-            obs_data_set_int(newSettings, "trigger_cooldown", config.autoTriggerCooldownMs);
-            obs_data_release(newSettings);
+    std::thread([tf]() {
+        char szFile[MAX_PATH] = {0};
+        
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrDefExt = "json";
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+        
+        if (!GetOpenFileNameA(&ofn)) {
+            return;
         }
-        MessageBoxA(NULL, ("配置 \"" + configName + "\" 加载成功！").c_str(), "成功", MB_OK | MB_ICONINFORMATION);
-    } else {
-        MessageBoxA(NULL, "加载配置失败！配置文件可能不存在或格式错误。", "错误", MB_OK | MB_ICONERROR);
-    }
+        
+        std::string filePath = szFile;
+        size_t lastSlash = filePath.find_last_of("\\/");
+        size_t lastDot = filePath.find_last_of(".");
+        std::string configName = (lastDot != std::string::npos && lastDot > lastSlash) 
+            ? filePath.substr(lastSlash + 1, lastDot - lastSlash - 1) 
+            : filePath.substr(lastSlash + 1);
+        
+        std::string dir = (lastSlash != std::string::npos) ? filePath.substr(0, lastSlash) : ".";
+        ConfigManager::getInstance().setConfigsDirectory(dir);
+
+        ExtendedMouseControllerConfig config;
+        if (ConfigManager::getInstance().loadConfig(configName, config)) {
+            obs_data_t *newSettings = obs_source_get_settings(tf->source);
+            if (newSettings) {
+                obs_data_set_bool(newSettings, "enable_mouse_control", config.enableMouseControl);
+                obs_data_set_int(newSettings, "mouse_control_hotkey", config.hotkeyVirtualKey);
+                obs_data_set_int(newSettings, "screen_offset_x", config.screenOffsetX);
+                obs_data_set_int(newSettings, "screen_offset_y", config.screenOffsetY);
+                obs_data_set_int(newSettings, "screen_width", config.screenWidth);
+                obs_data_set_int(newSettings, "screen_height", config.screenHeight);
+                obs_data_set_double(newSettings, "mouse_control_p_min", config.pidPMin);
+                obs_data_set_double(newSettings, "mouse_control_p_max", config.pidPMax);
+                obs_data_set_double(newSettings, "mouse_control_p_slope", config.pidPSlope);
+                obs_data_set_double(newSettings, "mouse_control_d", config.pidD);
+                obs_data_set_double(newSettings, "baseline_compensation", config.baselineCompensation);
+                obs_data_set_double(newSettings, "derivative_filter_alpha", config.derivativeFilterAlpha);
+                obs_data_set_double(newSettings, "aim_smoothing_x", config.aimSmoothingX);
+                obs_data_set_double(newSettings, "aim_smoothing_y", config.aimSmoothingY);
+                obs_data_set_double(newSettings, "max_pixel_move", config.maxPixelMove);
+                obs_data_set_double(newSettings, "dead_zone_pixels", config.deadZonePixels);
+                obs_data_set_double(newSettings, "target_y_offset", config.targetYOffset);
+                obs_data_set_int(newSettings, "controller_type", config.controllerType == ControllerType::MAKCU ? 1 : 0);
+                obs_data_set_string(newSettings, "makcu_port", config.makcuPort.c_str());
+                obs_data_set_int(newSettings, "makcu_baud_rate", config.makcuBaudRate);
+                obs_data_set_bool(newSettings, "enable_y_axis_unlock", config.yUnlockEnabled);
+                obs_data_set_int(newSettings, "y_axis_unlock_delay", config.yUnlockDelayMs);
+                obs_data_set_bool(newSettings, "enable_auto_trigger", config.autoTriggerEnabled);
+                obs_data_set_int(newSettings, "trigger_radius", (int)config.autoTriggerRadius);
+                obs_data_set_int(newSettings, "trigger_cooldown", config.autoTriggerCooldownMs);
+                obs_data_release(newSettings);
+            }
+            MessageBoxA(NULL, ("配置 \"" + configName + "\" 加载成功！").c_str(), "成功", MB_OK | MB_ICONINFORMATION);
+        } else {
+            MessageBoxA(NULL, "加载配置失败！配置文件可能不存在或格式错误。", "错误", MB_OK | MB_ICONERROR);
+        }
+    }).detach();
 
     return true;
 }
