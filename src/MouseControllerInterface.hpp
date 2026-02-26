@@ -50,8 +50,10 @@ struct MouseControllerConfig {
     int autoTriggerFireDelay;
     int autoTriggerFireDuration;
     int autoTriggerInterval;
+    bool autoTriggerDelayRandomEnabled;
     int autoTriggerDelayRandomMin;
     int autoTriggerDelayRandomMax;
+    bool autoTriggerDurationRandomEnabled;
     int autoTriggerDurationRandomMin;
     int autoTriggerDurationRandomMax;
     int autoTriggerMoveCompensation;

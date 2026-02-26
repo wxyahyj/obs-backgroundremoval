@@ -370,6 +370,9 @@ void MouseController::resetMotionState()
 
 int MouseController::getRandomDelay()
 {
+    if (!config.autoTriggerDelayRandomEnabled) {
+        return 0;
+    }
     if (config.autoTriggerDelayRandomMin >= config.autoTriggerDelayRandomMax) {
         return config.autoTriggerDelayRandomMin;
     }
@@ -379,6 +382,9 @@ int MouseController::getRandomDelay()
 
 int MouseController::getRandomDuration()
 {
+    if (!config.autoTriggerDurationRandomEnabled) {
+        return 0;
+    }
     if (config.autoTriggerDurationRandomMin >= config.autoTriggerDurationRandomMax) {
         return config.autoTriggerDurationRandomMin;
     }

@@ -195,7 +195,17 @@ void MAKCUMouseController::moveTo(int x, int y)
 
 void MAKCUMouseController::click(bool left)
 {
-    sendSerialCommand(left ? "km.left(1)" : "km.right(1)");
+    sendSerialCommand(left ? "km.left(1)" : "km.left(0)");
+}
+
+void MAKCUMouseController::clickDown()
+{
+    sendSerialCommand("km.left(1)");
+}
+
+void MAKCUMouseController::clickUp()
+{
+    sendSerialCommand("km.left(0)");
 }
 
 void MAKCUMouseController::wheel(int delta)
@@ -513,6 +523,9 @@ void MAKCUMouseController::resetMotionState()
 
 int MAKCUMouseController::getRandomDelay()
 {
+    if (!config.autoTriggerDelayRandomEnabled) {
+        return 0;
+    }
     if (config.autoTriggerDelayRandomMin >= config.autoTriggerDelayRandomMax) {
         return config.autoTriggerDelayRandomMin;
     }
@@ -522,6 +535,9 @@ int MAKCUMouseController::getRandomDelay()
 
 int MAKCUMouseController::getRandomDuration()
 {
+    if (!config.autoTriggerDurationRandomEnabled) {
+        return 0;
+    }
     if (config.autoTriggerDurationRandomMin >= config.autoTriggerDurationRandomMax) {
         return config.autoTriggerDurationRandomMin;
     }
@@ -531,7 +547,7 @@ int MAKCUMouseController::getRandomDuration()
 
 void MAKCUMouseController::performAutoClick()
 {
-    click(true);
+    clickDown();
     autoTriggerHolding = true;
     autoTriggerFireStartTime = std::chrono::steady_clock::now();
     currentFireDuration = config.autoTriggerFireDuration + getRandomDuration();
@@ -539,9 +555,12 @@ void MAKCUMouseController::performAutoClick()
 
 void MAKCUMouseController::releaseAutoTrigger()
 {
+    obs_log(LOG_INFO, "[MAKCU-AutoTrigger] releaseAutoTrigger called, holding=%d", autoTriggerHolding);
     if (autoTriggerHolding) {
-        click(false);
+        obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Sending km.left(0) to release");
+        clickUp();
         autoTriggerHolding = false;
+        obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Released successfully");
     }
     autoTriggerWaitingForDelay = false;
 }

@@ -65,6 +65,8 @@ private:
     void move(int dx, int dy);
     void moveTo(int x, int y);
     void click(bool left = true);
+    void clickDown();
+    void clickUp();
     void wheel(int delta);
     
     float calculateDynamicP(float distance);
