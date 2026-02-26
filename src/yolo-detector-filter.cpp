@@ -2312,22 +2312,30 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			}
 		}
 
-		// 更新鼠标控制器
-		if (tf->mouseController && tf->isInferencing) {
-			int activeConfig = getActiveConfig();
-			if (activeConfig >= 0) {
-				applyConfigToController(activeConfig);
-				int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
-				{
-					std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
-					frameWidth = tf->inferenceFrameWidth;
-					frameHeight = tf->inferenceFrameHeight;
-					cropX = tf->cropOffsetX;
-					cropY = tf->cropOffsetY;
+		// 更新鼠标控制器 - 无论是否在推理，只要有鼠标控制器就调用tick()确保能释放自动扳机
+		if (tf->mouseController) {
+			if (tf->isInferencing) {
+				int activeConfig = getActiveConfig();
+				if (activeConfig >= 0) {
+					applyConfigToController(activeConfig);
+					int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
+					{
+						std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
+						frameWidth = tf->inferenceFrameWidth;
+						frameHeight = tf->inferenceFrameHeight;
+						cropX = tf->cropOffsetX;
+						cropY = tf->cropOffsetY;
+					}
+					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+					tf->mouseController->tick();
+				} else {
+					MouseControllerConfig mcConfig;
+					mcConfig.enableMouseControl = false;
+					tf->mouseController->updateConfig(mcConfig);
+					tf->mouseController->tick();
 				}
-				tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-				tf->mouseController->tick();
 			} else {
+				// 即使不在推理，也要确保自动扳机被释放
 				MouseControllerConfig mcConfig;
 				mcConfig.enableMouseControl = false;
 				tf->mouseController->updateConfig(mcConfig);
@@ -2335,27 +2343,35 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			}
 		}
 	} else {
-		// 不使用动态FOV，正常处理
-		if (tf->mouseController && tf->isInferencing) {
-			int activeConfig = getActiveConfig();
-			if (activeConfig >= 0) {
-				applyConfigToController(activeConfig);
-				std::vector<Detection> detectionsCopy;
-				int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
-				{
-					std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-					detectionsCopy = tf->detections;
+		// 不使用动态FOV，正常处理 - 无论是否在推理，只要有鼠标控制器就调用tick()确保能释放自动扳机
+		if (tf->mouseController) {
+			if (tf->isInferencing) {
+				int activeConfig = getActiveConfig();
+				if (activeConfig >= 0) {
+					applyConfigToController(activeConfig);
+					std::vector<Detection> detectionsCopy;
+					int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
+					{
+						std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+						detectionsCopy = tf->detections;
+					}
+					{
+						std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
+						frameWidth = tf->inferenceFrameWidth;
+						frameHeight = tf->inferenceFrameHeight;
+						cropX = tf->cropOffsetX;
+						cropY = tf->cropOffsetY;
+					}
+					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+					tf->mouseController->tick();
+				} else {
+					MouseControllerConfig mcConfig;
+					mcConfig.enableMouseControl = false;
+					tf->mouseController->updateConfig(mcConfig);
+					tf->mouseController->tick();
 				}
-				{
-					std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
-					frameWidth = tf->inferenceFrameWidth;
-					frameHeight = tf->inferenceFrameHeight;
-					cropX = tf->cropOffsetX;
-					cropY = tf->cropOffsetY;
-				}
-				tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-				tf->mouseController->tick();
 			} else {
+				// 即使不在推理，也要确保自动扳机被释放
 				MouseControllerConfig mcConfig;
 				mcConfig.enableMouseControl = false;
 				tf->mouseController->updateConfig(mcConfig);
