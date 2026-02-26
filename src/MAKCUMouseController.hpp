@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <chrono>
+#include <random>
 #include "MouseControllerInterface.hpp"
 
 class MAKCUMouseController : public MouseControllerInterface {
@@ -71,10 +72,20 @@ private:
     POINT convertToScreenCoordinates(const Detection& det);
     void resetPidState();
     void resetMotionState();
+    void performAutoClick();
+    void releaseAutoTrigger();
+    int getRandomDelay();
+    int getRandomDuration();
     
     std::chrono::steady_clock::time_point hotkeyPressStartTime;
     bool yUnlockActive;
     std::chrono::steady_clock::time_point lastAutoTriggerTime;
+    std::chrono::steady_clock::time_point autoTriggerFireStartTime;
+    std::chrono::steady_clock::time_point autoTriggerDelayStartTime;
+    bool autoTriggerHolding;
+    bool autoTriggerWaitingForDelay;
+    int currentFireDuration;
+    std::mt19937 randomGenerator;
     
     std::string currentWeapon_;
 };

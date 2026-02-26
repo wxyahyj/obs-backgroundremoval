@@ -25,10 +25,16 @@ MAKCUMouseController::MAKCUMouseController()
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , hotkeyPressStartTime(std::chrono::steady_clock::now())
     , yUnlockActive(false)
     , lastAutoTriggerTime(std::chrono::steady_clock::now())
+    , autoTriggerFireStartTime(std::chrono::steady_clock::now())
+    , autoTriggerDelayStartTime(std::chrono::steady_clock::now())
+    , autoTriggerHolding(false)
+    , autoTriggerWaitingForDelay(false)
+    , currentFireDuration(50)
+    , randomGenerator(std::random_device{}())
 {
-    hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
@@ -56,10 +62,16 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , hotkeyPressStartTime(std::chrono::steady_clock::now())
     , yUnlockActive(false)
     , lastAutoTriggerTime(std::chrono::steady_clock::now())
+    , autoTriggerFireStartTime(std::chrono::steady_clock::now())
+    , autoTriggerDelayStartTime(std::chrono::steady_clock::now())
+    , autoTriggerHolding(false)
+    , autoTriggerWaitingForDelay(false)
+    , currentFireDuration(50)
+    , randomGenerator(std::random_device{}())
 {
-    hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
@@ -197,18 +209,18 @@ void MAKCUMouseController::updateConfig(const MouseControllerConfig& newConfig)
 {
     std::lock_guard<std::mutex> lock(mutex);
     
-    // 检查MAKCU配置是否变化
+    obs_log(LOG_INFO, "[MAKCU] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
+            newConfig.enableMouseControl, newConfig.autoTriggerEnabled, newConfig.autoTriggerFireDuration, newConfig.autoTriggerInterval);
+    
     bool portChanged = (newConfig.makcuPort != portName);
     bool baudChanged = (newConfig.makcuBaudRate != baudRate);
     
     config = newConfig;
     
-    // 如果配置变化，重新连接串口
     if (portChanged || baudChanged) {
         portName = newConfig.makcuPort;
         baudRate = newConfig.makcuBaudRate;
         
-        // 先断开旧连接
         disconnectSerial();
         
         // 重新连接
@@ -237,18 +249,28 @@ void MAKCUMouseController::tick()
     std::lock_guard<std::mutex> lock(mutex);
 
     if (!config.enableMouseControl) {
+        if (autoTriggerHolding) {
+            obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Releasing because enableMouseControl=false");
+            releaseAutoTrigger();
+        }
+        autoTriggerWaitingForDelay = false;
+        isMoving = false;
         return;
     }
 
     bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
 
     if (!hotkeyPressed) {
+        if (autoTriggerHolding) {
+            obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Releasing because hotkey released");
+        }
         if (isMoving) {
             isMoving = false;
             resetPidState();
             resetMotionState();
         }
         yUnlockActive = false;
+        releaseAutoTrigger();
         return;
     }
 
@@ -306,12 +328,37 @@ void MAKCUMouseController::tick()
     float distance = std::sqrt(distanceSquared);
 
     if (config.autoTriggerEnabled) {
-        if (distance < config.autoTriggerRadius) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
-            if (elapsed >= config.autoTriggerCooldownMs) {
-                click(true);
+        auto now = std::chrono::steady_clock::now();
+
+        if (autoTriggerHolding) {
+            auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+            obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Holding: fireElapsed=%lldms, currentFireDuration=%dms", 
+                    fireElapsed, currentFireDuration);
+            if (fireElapsed >= currentFireDuration) {
+                releaseAutoTrigger();
                 lastAutoTriggerTime = now;
+                obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Released after %lldms", fireElapsed);
+            }
+        } else {
+            if (distance < config.autoTriggerRadius) {
+                if (!autoTriggerWaitingForDelay) {
+                    autoTriggerWaitingForDelay = true;
+                    autoTriggerDelayStartTime = now;
+                }
+                
+                auto delayElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerDelayStartTime).count();
+                int totalDelay = config.autoTriggerFireDelay + getRandomDelay();
+                
+                if (delayElapsed >= totalDelay) {
+                    auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
+                    if (cooldownElapsed >= config.autoTriggerInterval) {
+                        obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Firing: delay=%lldms, cooldown=%lldms, fireDuration=%dms", 
+                                delayElapsed, cooldownElapsed, config.autoTriggerFireDuration);
+                        performAutoClick();
+                    }
+                }
+            } else {
+                autoTriggerWaitingForDelay = false;
             }
         }
     }
@@ -462,6 +509,41 @@ void MAKCUMouseController::resetMotionState()
     currentAccelerationY = 0.0f;
     previousMoveX = 0.0f;
     previousMoveY = 0.0f;
+}
+
+int MAKCUMouseController::getRandomDelay()
+{
+    if (config.autoTriggerDelayRandomMin >= config.autoTriggerDelayRandomMax) {
+        return config.autoTriggerDelayRandomMin;
+    }
+    std::uniform_int_distribution<int> dist(config.autoTriggerDelayRandomMin, config.autoTriggerDelayRandomMax);
+    return dist(randomGenerator);
+}
+
+int MAKCUMouseController::getRandomDuration()
+{
+    if (config.autoTriggerDurationRandomMin >= config.autoTriggerDurationRandomMax) {
+        return config.autoTriggerDurationRandomMin;
+    }
+    std::uniform_int_distribution<int> dist(config.autoTriggerDurationRandomMin, config.autoTriggerDurationRandomMax);
+    return dist(randomGenerator);
+}
+
+void MAKCUMouseController::performAutoClick()
+{
+    click(true);
+    autoTriggerHolding = true;
+    autoTriggerFireStartTime = std::chrono::steady_clock::now();
+    currentFireDuration = config.autoTriggerFireDuration + getRandomDuration();
+}
+
+void MAKCUMouseController::releaseAutoTrigger()
+{
+    if (autoTriggerHolding) {
+        click(false);
+        autoTriggerHolding = false;
+    }
+    autoTriggerWaitingForDelay = false;
 }
 
 bool MAKCUMouseController::isConnected()
