@@ -72,6 +72,8 @@ public:
     virtual void setCurrentWeapon(const std::string& weaponName) = 0;
     
     virtual std::string getCurrentWeapon() const = 0;
+    
+    virtual ControllerType getControllerType() const = 0;
 };
 
 #endif

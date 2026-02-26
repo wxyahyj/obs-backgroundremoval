@@ -27,6 +27,8 @@ public:
     void setCurrentWeapon(const std::string& weaponName) override;
     std::string getCurrentWeapon() const override;
     
+    ControllerType getControllerType() const override { return ControllerType::MAKCU; }
+    
     bool isConnected();
     bool testCommunication();
 

@@ -26,6 +26,8 @@ public:
     void setCurrentWeapon(const std::string& weaponName);
     
     std::string getCurrentWeapon() const;
+    
+    ControllerType getControllerType() const override { return ControllerType::WindowsAPI; }
 
 private:
     mutable std::mutex mutex;

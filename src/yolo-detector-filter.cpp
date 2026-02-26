@@ -2253,9 +2253,16 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	};
 
 	auto applyConfigToController = [&tf](int configIndex) {
-		if (!tf->mouseController || configIndex < 0 || configIndex >= 5) return;
+		if (configIndex < 0 || configIndex >= 5) return;
 		
 		const auto& cfg = tf->mouseConfigs[configIndex];
+		
+		ControllerType newType = static_cast<ControllerType>(cfg.controllerType);
+		if (!tf->mouseController || tf->mouseController->getControllerType() != newType) {
+			tf->mouseController = MouseControllerFactory::createController(newType, cfg.makcuPort, cfg.makcuBaudRate);
+			obs_log(LOG_INFO, "Created mouse controller type=%d, port=%s, baud=%d", newType, cfg.makcuPort.c_str(), cfg.makcuBaudRate);
+		}
+
 		MouseControllerConfig mcConfig;
 		mcConfig.enableMouseControl = true;
 		mcConfig.hotkeyVirtualKey = cfg.hotkey;
