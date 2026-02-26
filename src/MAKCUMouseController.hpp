@@ -77,12 +77,6 @@ private:
     std::chrono::steady_clock::time_point lastAutoTriggerTime;
     
     std::string currentWeapon_;
-    int recoilPatternIndex_;
-    std::chrono::steady_clock::time_point recoilStartTime_;
-    bool recoilActive_;
-    
-    void applyRecoilCompensation(float& moveX, float& moveY);
-    void resetRecoilState();
 };
 
 #endif

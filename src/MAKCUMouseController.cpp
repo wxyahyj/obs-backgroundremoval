@@ -1,7 +1,6 @@
 #ifdef _WIN32
 
 #include "MAKCUMouseController.hpp"
-#include "RecoilPatternManager.hpp"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -28,8 +27,6 @@ MAKCUMouseController::MAKCUMouseController()
     , previousMoveY(0.0f)
     , yUnlockActive(false)
     , lastAutoTriggerTime(std::chrono::steady_clock::now())
-    , recoilPatternIndex_(0)
-    , recoilActive_(false)
 {
     hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -61,8 +58,6 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , previousMoveY(0.0f)
     , yUnlockActive(false)
     , lastAutoTriggerTime(std::chrono::steady_clock::now())
-    , recoilPatternIndex_(0)
-    , recoilActive_(false)
 {
     hotkeyPressStartTime = std::chrono::steady_clock::now();
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -490,60 +485,12 @@ void MAKCUMouseController::setCurrentWeapon(const std::string& weaponName)
 {
     std::lock_guard<std::mutex> lock(mutex);
     currentWeapon_ = weaponName;
-    resetRecoilState();
 }
 
 std::string MAKCUMouseController::getCurrentWeapon() const
 {
     std::lock_guard<std::mutex> lock(mutex);
     return currentWeapon_;
-}
-
-void MAKCUMouseController::applyRecoilCompensation(float& moveX, float& moveY)
-{
-    if (currentWeapon_.empty()) {
-        return;
-    }
-    
-    const RecoilPattern* pattern = RecoilPatternManager::getInstance().getPattern(currentWeapon_);
-    if (!pattern || pattern->moves.empty()) {
-        return;
-    }
-    
-    if (!recoilActive_) {
-        recoilActive_ = true;
-        recoilStartTime_ = std::chrono::steady_clock::now();
-        recoilPatternIndex_ = 0;
-    }
-    
-    auto now = std::chrono::steady_clock::now();
-    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - recoilStartTime_).count();
-    
-    int accumulatedTime = 0;
-    int targetIndex = 0;
-    
-    for (size_t i = 0; i < pattern->moves.size(); ++i) {
-        accumulatedTime += pattern->moves[i].delayMs;
-        if (accumulatedTime >= elapsedMs) {
-            targetIndex = static_cast<int>(i);
-            break;
-        }
-        if (i == pattern->moves.size() - 1) {
-            targetIndex = static_cast<int>(i);
-        }
-    }
-    
-    if (targetIndex < pattern->moves.size()) {
-        const RecoilMove& recoilMove = pattern->moves[targetIndex];
-        moveX += static_cast<float>(recoilMove.dx);
-        moveY -= static_cast<float>(recoilMove.dy);
-    }
-}
-
-void MAKCUMouseController::resetRecoilState()
-{
-    recoilPatternIndex_ = 0;
-    recoilActive_ = false;
 }
 
 #endif

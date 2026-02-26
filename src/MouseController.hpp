@@ -69,18 +69,13 @@ private:
     bool yUnlockActive;
     std::chrono::steady_clock::time_point lastAutoTriggerTime;
     std::chrono::steady_clock::time_point autoTriggerFireStartTime;
+    std::chrono::steady_clock::time_point autoTriggerDelayStartTime;
     bool autoTriggerHolding;
     bool autoTriggerWaitingForDelay;
     int currentFireDuration;
     std::mt19937 randomGenerator;
     
     std::string currentWeapon_;
-    int recoilPatternIndex_;
-    std::chrono::steady_clock::time_point recoilStartTime_;
-    bool recoilActive_;
-    
-    void applyRecoilCompensation(float& moveX, float& moveY);
-    void resetRecoilState();
 };
 
 #endif

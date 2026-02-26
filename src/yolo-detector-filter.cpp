@@ -10,8 +10,6 @@
 #pragma comment(lib, "gdiplus.lib")
 #include "MouseController.hpp"
 #include "MouseControllerFactory.hpp"
-#include "LogitechMacroConverter.hpp"
-#include "RecoilPatternManager.hpp"
 #include "ConfigManager.hpp"
 #endif
 
@@ -166,7 +164,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int triggerDurationRandomMin;
 		int triggerDurationRandomMax;
 		int triggerMoveCompensation;
-		std::string weaponName;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -224,9 +221,6 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
 static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data);
 #ifdef _WIN32
-static bool importRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data);
-static bool deleteRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data);
-static bool refreshWeaponList(obs_properties_t *props, obs_property_t *property, void *data);
 static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property, void *data);
 static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property, void *data);
 #endif
@@ -446,16 +440,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_int_slider(props, propName, "随机时长上限(ms)", 0, 200, 5);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_properties_add_int_slider(props, propName, "移动补偿(像素)", 0, 100, 1);
-
-		snprintf(propName, sizeof(propName), "weapon_select_%d", i);
-		obs_properties_add_list(props, propName, "选择武器", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
-	obs_properties_add_text(props, "weapon_name_input", "武器名称", OBS_TEXT_DEFAULT);
-	obs_properties_add_button(props, "import_recoil_pattern", "导入压枪宏", importRecoilPattern);
-	obs_properties_add_button(props, "delete_recoil_pattern", "删除武器配置", deleteRecoilPattern);
-	obs_properties_add_button(props, "refresh_weapon_list", "刷新武器列表", refreshWeaponList);
 
 	obs_properties_add_group(props, "tracking_group", "目标追踪设置", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_float_slider(props, "iou_threshold", "IoU阈值", 0.1, 0.9, 0.05);
@@ -557,9 +544,6 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
-	snprintf(propName, sizeof(propName), "weapon_select_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
@@ -572,10 +556,6 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 
 	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), true);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), true);
-	obs_property_set_visible(obs_properties_get(props, "weapon_name_input"), true);
-	obs_property_set_visible(obs_properties_get(props, "import_recoil_pattern"), true);
-	obs_property_set_visible(obs_properties_get(props, "delete_recoil_pattern"), true);
-	obs_property_set_visible(obs_properties_get(props, "refresh_weapon_list"), true);
 
 	return true;
 }
@@ -694,10 +674,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	}
 
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "weapon_name_input"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "import_recoil_pattern"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "delete_recoil_pattern"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "refresh_weapon_list"), page == 1);
 #else
 	(void)page;
 #endif
@@ -1075,9 +1051,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].triggerDurationRandomMax = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		tf->mouseConfigs[i].triggerMoveCompensation = (int)obs_data_get_int(settings, propName);
-
-		snprintf(propName, sizeof(propName), "weapon_select_%d", i);
-		tf->mouseConfigs[i].weaponName = obs_data_get_string(settings, propName);
 	}
 
 	bool hasEnabledConfig = false;
@@ -1201,127 +1174,6 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
     return true;
 }
 
-static bool importRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data)
-{
-    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
-    if (!ptr) {
-        return true;
-    }
-
-    std::shared_ptr<yolo_detector_filter> tf = *ptr;
-    if (!tf) {
-        return true;
-    }
-
-    obs_data_t *settings = obs_source_get_settings(tf->source);
-    std::string weaponName;
-    if (settings) {
-        weaponName = obs_data_get_string(settings, "weapon_name_input");
-        obs_data_release(settings);
-    }
-    
-    if (weaponName.empty()) {
-        MessageBoxA(NULL, "请先输入武器名称！", "提示", MB_OK | MB_ICONWARNING);
-        return true;
-    }
-
-    OPENFILENAMEA ofn = {};
-    char szFile[MAX_PATH] = "";
-
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "宏文件 (*.xml;*.lua)\0*.xml;*.lua\0XML Files (*.xml)\0*.xml\0LUA Files (*.lua)\0*.lua\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "选择罗技压枪宏文件";
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-
-    if (GetOpenFileNameA(&ofn)) {
-        if (RecoilPatternManager::getInstance().importFromLogitechMacro(szFile, weaponName)) {
-            const RecoilPattern* pattern = RecoilPatternManager::getInstance().getPattern(weaponName);
-            
-            char infoMsg[1024];
-            snprintf(infoMsg, sizeof(infoMsg),
-                "压枪配置导入成功！\n\n"
-                "武器名称: %s\n"
-                "移动步数: %zu\n"
-                "总移动X: %d\n"
-                "总移动Y: %d\n"
-                "总持续时间: %d ms\n\n"
-                "请在\"选择武器\"下拉框中选择此武器。",
-                weaponName.c_str(),
-                pattern->moves.size(),
-                pattern->totalMoveX,
-                pattern->totalMoveY,
-                pattern->totalDurationMs);
-
-            MessageBoxA(NULL, infoMsg, "导入成功", MB_OK | MB_ICONINFORMATION);
-            
-            refreshWeaponList(props, property, data);
-        } else {
-            MessageBoxA(NULL, "无法解析宏文件，请确保文件格式正确。", "解析失败", MB_OK | MB_ICONERROR);
-        }
-    }
-
-    return true;
-}
-
-static bool deleteRecoilPattern(obs_properties_t *props, obs_property_t *property, void *data)
-{
-    auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
-    if (!ptr) {
-        return true;
-    }
-
-    std::shared_ptr<yolo_detector_filter> tf = *ptr;
-    if (!tf) {
-        return true;
-    }
-
-    obs_data_t *settings = obs_source_get_settings(tf->source);
-    std::string weaponName;
-    if (settings) {
-        weaponName = obs_data_get_string(settings, "weapon_select");
-        obs_data_release(settings);
-    }
-    
-    if (weaponName.empty()) {
-        MessageBoxA(NULL, "请先选择要删除的武器！", "提示", MB_OK | MB_ICONWARNING);
-        return true;
-    }
-
-    char confirmMsg[256];
-    snprintf(confirmMsg, sizeof(confirmMsg), "确定要删除武器 \"%s\" 的压枪配置吗？", weaponName.c_str());
-    
-    int result = MessageBoxA(NULL, confirmMsg, "确认删除", MB_YESNO | MB_ICONQUESTION);
-    if (result == IDYES) {
-        RecoilPatternManager::getInstance().removePattern(weaponName);
-        MessageBoxA(NULL, "删除成功！", "提示", MB_OK | MB_ICONINFORMATION);
-        refreshWeaponList(props, property, data);
-    }
-
-    return true;
-}
-
-static bool refreshWeaponList(obs_properties_t *props, obs_property_t *property, void *data)
-{
-    obs_property_t *weaponList = obs_properties_get(props, "weapon_select");
-    if (!weaponList) {
-        return true;
-    }
-    
-    obs_property_list_clear(weaponList);
-    
-    obs_property_list_add_string(weaponList, "-- 无武器 --", "");
-    
-    auto weaponNames = RecoilPatternManager::getInstance().getWeaponNames();
-    for (const auto& name : weaponNames) {
-        obs_property_list_add_string(weaponList, name.c_str(), name.c_str());
-    }
-
-    return true;
-}
-
 static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property, void *data)
 {
     auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
@@ -1334,74 +1186,152 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         return true;
     }
 
-    std::thread([tf]() {
-        obs_data_t *settings = obs_source_get_settings(tf->source);
-        if (!settings) {
-            return;
-        }
+    obs_data_t *settings = obs_source_get_settings(tf->source);
+    if (!settings) {
+        return true;
+    }
 
-        char szFile[MAX_PATH] = {0};
-        
-        OPENFILENAMEA ofn = {};
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = NULL;
-        ofn.lpstrFile = szFile;
-        ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
-        ofn.nFilterIndex = 1;
-        ofn.lpstrDefExt = "json";
-        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-        
-        if (!GetSaveFileNameA(&ofn)) {
-            obs_data_release(settings);
-            return;
-        }
-        
-        std::string filePath = szFile;
-        size_t lastSlash = filePath.find_last_of("\\/");
-        size_t lastDot = filePath.find_last_of(".");
-        std::string configName = (lastDot != std::string::npos && lastDot > lastSlash) 
-            ? filePath.substr(lastSlash + 1, lastDot - lastSlash - 1) 
-            : filePath.substr(lastSlash + 1);
-        std::string dir = (lastSlash != std::string::npos) ? filePath.substr(0, lastSlash) : ".";
-        ConfigManager::getInstance().setConfigsDirectory(dir);
-
-        ExtendedMouseControllerConfig config;
-        config.configName = configName;
-        config.enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
-        config.hotkeyVirtualKey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
-        config.screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
-        config.screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
-        config.screenWidth = (int)obs_data_get_int(settings, "screen_width");
-        config.screenHeight = (int)obs_data_get_int(settings, "screen_height");
-        config.pidPMin = (float)obs_data_get_double(settings, "mouse_control_p_min");
-        config.pidPMax = (float)obs_data_get_double(settings, "mouse_control_p_max");
-        config.pidPSlope = (float)obs_data_get_double(settings, "mouse_control_p_slope");
-        config.pidD = (float)obs_data_get_double(settings, "mouse_control_d");
-        config.baselineCompensation = (float)obs_data_get_double(settings, "baseline_compensation");
-        config.derivativeFilterAlpha = (float)obs_data_get_double(settings, "derivative_filter_alpha");
-        config.aimSmoothingX = (float)obs_data_get_double(settings, "aim_smoothing_x");
-        config.aimSmoothingY = (float)obs_data_get_double(settings, "aim_smoothing_y");
-        config.maxPixelMove = (float)obs_data_get_double(settings, "max_pixel_move");
-        config.deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
-        config.targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
-        config.controllerType = (int)obs_data_get_int(settings, "controller_type") == 1 ? ControllerType::MAKCU : ControllerType::WindowsAPI;
-        config.makcuPort = obs_data_get_string(settings, "makcu_port");
-        config.makcuBaudRate = (int)obs_data_get_int(settings, "makcu_baud_rate");
-        config.yUnlockEnabled = obs_data_get_bool(settings, "enable_y_axis_unlock");
-        config.yUnlockDelayMs = (int)obs_data_get_int(settings, "y_axis_unlock_delay");
-        config.autoTriggerEnabled = obs_data_get_bool(settings, "enable_auto_trigger");
-        config.autoTriggerRadius = (float)obs_data_get_int(settings, "trigger_radius");
-        config.autoTriggerCooldownMs = (int)obs_data_get_int(settings, "trigger_cooldown");
-
+    char szFile[MAX_PATH] = {0};
+    
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrDefExt = "json";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    
+    if (!GetSaveFileNameA(&ofn)) {
         obs_data_release(settings);
-
-        if (ConfigManager::getInstance().saveConfig(config)) {
-            MessageBoxA(NULL, ("配置已保存到:\n" + filePath).c_str(), "成功", MB_OK | MB_ICONINFORMATION);
-        } else {
-            MessageBoxA(NULL, "保存配置失败！", "错误", MB_OK | MB_ICONERROR);
-        }
-    }).detach();
+        return true;
+    }
+    
+    std::string filePath = szFile;
+    FILE* f = fopen(filePath.c_str(), "w");
+    if (!f) {
+        obs_data_release(settings);
+        MessageBoxA(NULL, "无法打开文件进行写入！", "错误", MB_OK | MB_ICONERROR);
+        return true;
+    }
+    
+    fprintf(f, "{\n");
+    fprintf(f, "  \"configs\": [\n");
+    
+    for (int i = 0; i < 5; i++) {
+        char propName[64];
+        
+        fprintf(f, "    {\n");
+        
+        snprintf(propName, sizeof(propName), "enable_config_%d", i);
+        fprintf(f, "      \"enabled\": %s,\n", obs_data_get_bool(settings, propName) ? "true" : "false");
+        
+        snprintf(propName, sizeof(propName), "hotkey_%d", i);
+        fprintf(f, "      \"hotkey\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "controller_type_%d", i);
+        fprintf(f, "      \"controllerType\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+        fprintf(f, "      \"makcuPort\": \"%s\",\n", obs_data_get_string(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+        fprintf(f, "      \"makcuBaudRate\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "p_min_%d", i);
+        fprintf(f, "      \"pMin\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "p_max_%d", i);
+        fprintf(f, "      \"pMax\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "p_slope_%d", i);
+        fprintf(f, "      \"pSlope\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "d_%d", i);
+        fprintf(f, "      \"d\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
+        fprintf(f, "      \"baselineCompensation\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
+        fprintf(f, "      \"derivativeFilterAlpha\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
+        fprintf(f, "      \"aimSmoothingX\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", i);
+        fprintf(f, "      \"aimSmoothingY\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "max_pixel_move_%d", i);
+        fprintf(f, "      \"maxPixelMove\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", i);
+        fprintf(f, "      \"deadZonePixels\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
+        fprintf(f, "      \"targetYOffset\": %.4f,\n", obs_data_get_double(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "screen_offset_x_%d", i);
+        fprintf(f, "      \"screenOffsetX\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "screen_offset_y_%d", i);
+        fprintf(f, "      \"screenOffsetY\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "screen_width_%d", i);
+        fprintf(f, "      \"screenWidth\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "screen_height_%d", i);
+        fprintf(f, "      \"screenHeight\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", i);
+        fprintf(f, "      \"enableYAxisUnlock\": %s,\n", obs_data_get_bool(settings, propName) ? "true" : "false");
+        
+        snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
+        fprintf(f, "      \"yAxisUnlockDelay\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+        fprintf(f, "      \"enableAutoTrigger\": %s,\n", obs_data_get_bool(settings, propName) ? "true" : "false");
+        
+        snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
+        fprintf(f, "      \"triggerRadius\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
+        fprintf(f, "      \"triggerCooldown\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", i);
+        fprintf(f, "      \"triggerFireDelay\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", i);
+        fprintf(f, "      \"triggerFireDuration\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_interval_%d", i);
+        fprintf(f, "      \"triggerInterval\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", i);
+        fprintf(f, "      \"triggerDelayRandomMin\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", i);
+        fprintf(f, "      \"triggerDelayRandomMax\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", i);
+        fprintf(f, "      \"triggerDurationRandomMin\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", i);
+        fprintf(f, "      \"triggerDurationRandomMax\": %d,\n", (int)obs_data_get_int(settings, propName));
+        
+        snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
+        fprintf(f, "      \"triggerMoveCompensation\": %d\n", (int)obs_data_get_int(settings, propName));
+        
+        fprintf(f, "    }%s\n", (i < 4) ? "," : "");
+    }
+    
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
+    fclose(f);
+    obs_data_release(settings);
+    
+    MessageBoxA(NULL, ("配置已保存到:\n" + filePath).c_str(), "成功", MB_OK | MB_ICONINFORMATION);
 
     return true;
 }
@@ -1418,69 +1348,66 @@ static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property
         return true;
     }
 
-    std::thread([tf]() {
-        char szFile[MAX_PATH] = {0};
+    char szFile[MAX_PATH] = {0};
+    
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrDefExt = "json";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    
+    if (!GetOpenFileNameA(&ofn)) {
+        return true;
+    }
+    
+    std::string filePath = szFile;
+    FILE* f = fopen(filePath.c_str(), "r");
+    if (!f) {
+        MessageBoxA(NULL, "无法打开文件！", "错误", MB_OK | MB_ICONERROR);
+        return true;
+    }
+    
+    fseek(f, 0, SEEK_END);
+    long fileSize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    std::string content(fileSize, '\0');
+    fread(&content[0], 1, fileSize, f);
+    fclose(f);
+    
+    obs_data_t *settings = obs_source_get_settings(tf->source);
+    if (!settings) {
+        return true;
+    }
+    
+    for (int i = 0; i < 5; i++) {
+        char propName[64];
+        char searchKey[64];
+        size_t pos;
         
-        OPENFILENAMEA ofn = {};
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = NULL;
-        ofn.lpstrFile = szFile;
-        ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrFilter = "JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0";
-        ofn.nFilterIndex = 1;
-        ofn.lpstrDefExt = "json";
-        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-        
-        if (!GetOpenFileNameA(&ofn)) {
-            return;
+        snprintf(searchKey, sizeof(searchKey), "\"enabled\":");
+        pos = content.find(searchKey);
+        if (pos != std::string::npos) {
+            snprintf(propName, sizeof(propName), "enable_config_%d", i);
+            bool val = content.substr(pos + strlen(searchKey), 10).find("true") != std::string::npos;
+            obs_data_set_bool(settings, propName, val);
         }
         
-        std::string filePath = szFile;
-        size_t lastSlash = filePath.find_last_of("\\/");
-        size_t lastDot = filePath.find_last_of(".");
-        std::string configName = (lastDot != std::string::npos && lastDot > lastSlash) 
-            ? filePath.substr(lastSlash + 1, lastDot - lastSlash - 1) 
-            : filePath.substr(lastSlash + 1);
-        
-        std::string dir = (lastSlash != std::string::npos) ? filePath.substr(0, lastSlash) : ".";
-        ConfigManager::getInstance().setConfigsDirectory(dir);
-
-        ExtendedMouseControllerConfig config;
-        if (ConfigManager::getInstance().loadConfig(configName, config)) {
-            obs_data_t *newSettings = obs_source_get_settings(tf->source);
-            if (newSettings) {
-                obs_data_set_bool(newSettings, "enable_mouse_control", config.enableMouseControl);
-                obs_data_set_int(newSettings, "mouse_control_hotkey", config.hotkeyVirtualKey);
-                obs_data_set_int(newSettings, "screen_offset_x", config.screenOffsetX);
-                obs_data_set_int(newSettings, "screen_offset_y", config.screenOffsetY);
-                obs_data_set_int(newSettings, "screen_width", config.screenWidth);
-                obs_data_set_int(newSettings, "screen_height", config.screenHeight);
-                obs_data_set_double(newSettings, "mouse_control_p_min", config.pidPMin);
-                obs_data_set_double(newSettings, "mouse_control_p_max", config.pidPMax);
-                obs_data_set_double(newSettings, "mouse_control_p_slope", config.pidPSlope);
-                obs_data_set_double(newSettings, "mouse_control_d", config.pidD);
-                obs_data_set_double(newSettings, "baseline_compensation", config.baselineCompensation);
-                obs_data_set_double(newSettings, "derivative_filter_alpha", config.derivativeFilterAlpha);
-                obs_data_set_double(newSettings, "aim_smoothing_x", config.aimSmoothingX);
-                obs_data_set_double(newSettings, "aim_smoothing_y", config.aimSmoothingY);
-                obs_data_set_double(newSettings, "max_pixel_move", config.maxPixelMove);
-                obs_data_set_double(newSettings, "dead_zone_pixels", config.deadZonePixels);
-                obs_data_set_double(newSettings, "target_y_offset", config.targetYOffset);
-                obs_data_set_int(newSettings, "controller_type", config.controllerType == ControllerType::MAKCU ? 1 : 0);
-                obs_data_set_string(newSettings, "makcu_port", config.makcuPort.c_str());
-                obs_data_set_int(newSettings, "makcu_baud_rate", config.makcuBaudRate);
-                obs_data_set_bool(newSettings, "enable_y_axis_unlock", config.yUnlockEnabled);
-                obs_data_set_int(newSettings, "y_axis_unlock_delay", config.yUnlockDelayMs);
-                obs_data_set_bool(newSettings, "enable_auto_trigger", config.autoTriggerEnabled);
-                obs_data_set_int(newSettings, "trigger_radius", (int)config.autoTriggerRadius);
-                obs_data_set_int(newSettings, "trigger_cooldown", config.autoTriggerCooldownMs);
-                obs_data_release(newSettings);
-            }
-            MessageBoxA(NULL, ("配置 \"" + configName + "\" 加载成功！").c_str(), "成功", MB_OK | MB_ICONINFORMATION);
-        } else {
-            MessageBoxA(NULL, "加载配置失败！配置文件可能不存在或格式错误。", "错误", MB_OK | MB_ICONERROR);
+        snprintf(searchKey, sizeof(searchKey), "\"hotkey\":");
+        pos = content.find(searchKey);
+        if (pos != std::string::npos) {
+            snprintf(propName, sizeof(propName), "hotkey_%d", i);
+            int val = atoi(content.c_str() + pos + strlen(searchKey));
+            obs_data_set_int(settings, propName, val);
         }
-    }).detach();
+    }
+    
+    obs_data_release(settings);
+    MessageBoxA(NULL, ("配置已从:\n" + filePath + "\n加载").c_str(), "成功", MB_OK | MB_ICONINFORMATION);
 
     return true;
 }
@@ -2305,7 +2232,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoTriggerDurationRandomMax = cfg.triggerDurationRandomMax;
 		mcConfig.autoTriggerMoveCompensation = cfg.triggerMoveCompensation;
 		tf->mouseController->updateConfig(mcConfig);
-		tf->mouseController->setCurrentWeapon(cfg.weaponName);
 	};
 
 	// 动态FOV切换逻辑
@@ -2367,6 +2293,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				}
 				tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
 				tf->mouseController->tick();
+			} else {
+				MouseControllerConfig mcConfig;
+				mcConfig.enableMouseControl = false;
+				tf->mouseController->updateConfig(mcConfig);
+				tf->mouseController->tick();
 			}
 		}
 	} else {
@@ -2389,6 +2320,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 					cropY = tf->cropOffsetY;
 				}
 				tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+				tf->mouseController->tick();
+			} else {
+				MouseControllerConfig mcConfig;
+				mcConfig.enableMouseControl = false;
+				tf->mouseController->updateConfig(mcConfig);
 				tf->mouseController->tick();
 			}
 		}
