@@ -166,8 +166,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int triggerDurationRandomMin;
 		int triggerDurationRandomMax;
 		int triggerMoveCompensation;
-		int targetSwitchDelayMs;
-		float targetSwitchTolerance;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -205,10 +203,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			triggerDurationRandomMin = 0;
 			triggerDurationRandomMax = 0;
 			triggerMoveCompensation = 0;
-			targetSwitchDelayMs = 500;
-			targetSwitchTolerance = 0.15f;
 		}
 	};
+
+	int targetSwitchDelayMs = 500;
+	float targetSwitchTolerance = 0.15f;
 
 	std::array<MouseControlConfig, MAX_CONFIGS> mouseConfigs;
 	int currentConfigIndex;
@@ -452,10 +451,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_int_slider(props, propName, "随机时长上限(ms)", 0, 200, 5);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_properties_add_int_slider(props, propName, "移动补偿(像素)", 0, 100, 1);
-		snprintf(propName, sizeof(propName), "target_switch_delay_%d", i);
-		obs_properties_add_int_slider(props, propName, "转火延迟(ms)", 0, 1500, 50);
-		snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", i);
-		obs_properties_add_float_slider(props, propName, "切换容差", 0.0, 0.5, 0.05);
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -463,6 +458,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_group(props, "tracking_group", "目标追踪设置", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_float_slider(props, "iou_threshold", "IoU阈值", 0.1, 0.9, 0.05);
 	obs_properties_add_int_slider(props, "max_lost_frames", "最大丢失帧数", 1, 30, 1);
+	obs_properties_add_int_slider(props, "target_switch_delay", "转火延迟(ms)", 0, 1500, 50);
+	obs_properties_add_float_slider(props, "target_switch_tolerance", "切换容差", 0.0, 0.5, 0.05);
 
 	obs_properties_add_group(props, "floating_window_group", obs_module_text("FloatingWindow"), OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_bool(props, "show_floating_window", obs_module_text("ShowFloatingWindow"));
@@ -563,10 +560,6 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "target_switch_delay_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -834,17 +827,14 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 0);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_data_set_default_int(settings, propName, 0);
-
-	 snprintf(propName, sizeof(propName), "target_switch_delay_%d", i);
-    obs_data_set_default_int(settings, propName, 500);
-    snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", i);
-    obs_data_set_default_double(settings, propName, 0.15);
-}
+	}
 
     obs_data_set_default_string(settings, "config_name", "");
     obs_data_set_default_string(settings, "config_list", "");
     obs_data_set_default_double(settings, "iou_threshold", 0.3);
     obs_data_set_default_int(settings, "max_lost_frames", 10);
+    obs_data_set_default_int(settings, "target_switch_delay", 500);
+    obs_data_set_default_double(settings, "target_switch_tolerance", 0.15);
     obs_data_set_default_int(settings, "settings_page", 0);
 #endif
 }
@@ -1088,11 +1078,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].triggerDurationRandomMax = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		tf->mouseConfigs[i].triggerMoveCompensation = (int)obs_data_get_int(settings, propName);
-		snprintf(propName, sizeof(propName), "target_switch_delay_%d", i);
-		tf->mouseConfigs[i].targetSwitchDelayMs = (int)obs_data_get_int(settings, propName);
-		snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", i);
-		tf->mouseConfigs[i].targetSwitchTolerance = (float)obs_data_get_double(settings, propName);
 	}
+
+	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
+	tf->targetSwitchTolerance = (float)obs_data_get_double(settings, "target_switch_tolerance");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -2274,8 +2263,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoTriggerDurationRandomMin = cfg.triggerDurationRandomMin;
 		mcConfig.autoTriggerDurationRandomMax = cfg.triggerDurationRandomMax;
 		mcConfig.autoTriggerMoveCompensation = cfg.triggerMoveCompensation;
-		mcConfig.targetSwitchDelayMs = cfg.targetSwitchDelayMs;
-		mcConfig.targetSwitchTolerance = cfg.targetSwitchTolerance;
+		mcConfig.targetSwitchDelayMs = tf->targetSwitchDelayMs;
+		mcConfig.targetSwitchTolerance = tf->targetSwitchTolerance;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

@@ -124,6 +124,14 @@ void MouseController::tick()
             resetPidState();
             resetMotionState();
         }
+        if (autoTriggerHolding) {
+            auto now = std::chrono::steady_clock::now();
+            auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+            if (fireElapsed >= currentFireDuration) {
+                releaseAutoTrigger();
+                lastAutoTriggerTime = now;
+            }
+        }
         return;
     }
 
@@ -161,6 +169,14 @@ void MouseController::tick()
             isMoving = false;
             resetPidState();
             resetMotionState();
+        }
+        if (autoTriggerHolding) {
+            auto now = std::chrono::steady_clock::now();
+            auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+            if (fireElapsed >= currentFireDuration) {
+                releaseAutoTrigger();
+                lastAutoTriggerTime = now;
+            }
         }
         return;
     }
@@ -299,7 +315,15 @@ Detection* MouseController::selectTarget()
     float bestDistance = std::sqrt(minDistanceSquared);
     auto now = std::chrono::steady_clock::now();
 
+    static bool loggedOnce = false;
+    if (!loggedOnce) {
+        obs_log(LOG_INFO, "[MouseController-TargetSwitch] targetSwitchDelayMs=%dms, targetSwitchTolerance=%.2f", 
+                config.targetSwitchDelayMs, config.targetSwitchTolerance);
+        loggedOnce = true;
+    }
+
     if (currentTargetTrackId == -1) {
+        obs_log(LOG_INFO, "[MouseController-TargetSwitch] First target: trackId=%d, distance=%.1f", bestTrackId, bestDistance);
         currentTargetTrackId = bestTrackId;
         targetLockStartTime = now;
         currentTargetDistance = bestDistance;
@@ -312,8 +336,11 @@ Detection* MouseController::selectTarget()
     }
 
     auto lockElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count();
+    obs_log(LOG_INFO, "[MouseController-TargetSwitch] New target found: currentTrackId=%d, newTrackId=%d, lockElapsed=%lldms, delay=%dms", 
+            currentTargetTrackId, bestTrackId, lockElapsed, config.targetSwitchDelayMs);
     
     if (lockElapsed < config.targetSwitchDelayMs) {
+        obs_log(LOG_INFO, "[MouseController-TargetSwitch] Delaying switch, keeping current target");
         for (auto& det : currentDetections) {
             if (det.trackId == currentTargetTrackId) {
                 int targetX = static_cast<int>(det.centerX * frameWidth);
@@ -326,6 +353,7 @@ Detection* MouseController::selectTarget()
                 }
             }
         }
+        obs_log(LOG_INFO, "[MouseController-TargetSwitch] Current target lost, switching to new");
         currentTargetTrackId = bestTrackId;
         targetLockStartTime = now;
         currentTargetDistance = bestDistance;
@@ -334,7 +362,9 @@ Detection* MouseController::selectTarget()
 
     if (currentTargetDistance > 0.0f && config.targetSwitchTolerance > 0.0f) {
         float improvement = (currentTargetDistance - bestDistance) / currentTargetDistance;
+        obs_log(LOG_INFO, "[MouseController-TargetSwitch] Tolerance check: improvement=%.2f, tolerance=%.2f", improvement, config.targetSwitchTolerance);
         if (improvement < config.targetSwitchTolerance) {
+            obs_log(LOG_INFO, "[MouseController-TargetSwitch] Improvement too small, keeping current target");
             for (auto& det : currentDetections) {
                 if (det.trackId == currentTargetTrackId) {
                     int targetX = static_cast<int>(det.centerX * frameWidth);
@@ -350,6 +380,7 @@ Detection* MouseController::selectTarget()
         }
     }
 
+    obs_log(LOG_INFO, "[MouseController-TargetSwitch] Switching to new target");
     currentTargetTrackId = bestTrackId;
     targetLockStartTime = now;
     currentTargetDistance = bestDistance;
