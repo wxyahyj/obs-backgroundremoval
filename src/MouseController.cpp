@@ -45,6 +45,8 @@ void MouseController::updateConfig(const MouseControllerConfig& newConfig)
 {
     std::lock_guard<std::mutex> lock(mutex);
     config = newConfig;
+    obs_log(LOG_INFO, "[MouseController] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
+            config.enableMouseControl, config.autoTriggerEnabled, config.autoTriggerFireDuration, config.autoTriggerInterval);
 }
 
 void MouseController::setDetections(const std::vector<Detection>& detections)
@@ -68,12 +70,25 @@ void MouseController::tick()
     std::lock_guard<std::mutex> lock(mutex);
 
     if (!config.enableMouseControl) {
+        if (autoTriggerHolding) {
+            obs_log(LOG_INFO, "[AutoTrigger] Releasing because enableMouseControl=false");
+            INPUT input = {};
+            input.type = INPUT_MOUSE;
+            input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+            SendInput(1, &input, sizeof(INPUT));
+            autoTriggerHolding = false;
+        }
+        autoTriggerWaitingForDelay = false;
+        isMoving = false;
         return;
     }
 
     bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
 
     if (!hotkeyPressed) {
+        if (autoTriggerHolding) {
+            obs_log(LOG_INFO, "[AutoTrigger] Releasing because hotkey released");
+        }
         if (isMoving) {
             isMoving = false;
             resetPidState();
@@ -154,9 +169,12 @@ void MouseController::tick()
 
         if (autoTriggerHolding) {
             auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+            obs_log(LOG_INFO, "[AutoTrigger] Holding: fireElapsed=%lldms, currentFireDuration=%dms", 
+                    fireElapsed, currentFireDuration);
             if (fireElapsed >= currentFireDuration) {
                 releaseAutoTrigger();
                 lastAutoTriggerTime = now;
+                obs_log(LOG_INFO, "[AutoTrigger] Released after %lldms", fireElapsed);
             }
         } else {
             if (distance < config.autoTriggerRadius) {
@@ -171,6 +189,8 @@ void MouseController::tick()
                 if (delayElapsed >= totalDelay) {
                     auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
                     if (cooldownElapsed >= config.autoTriggerInterval) {
+                        obs_log(LOG_INFO, "[AutoTrigger] Firing: delay=%lldms, cooldown=%lldms, fireDuration=%dms", 
+                                delayElapsed, cooldownElapsed, config.autoTriggerFireDuration);
                         performAutoClick();
                     }
                 }
