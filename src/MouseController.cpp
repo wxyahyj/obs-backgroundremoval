@@ -484,13 +484,13 @@ void MouseController::releaseAutoTrigger()
 void MouseController::setCurrentWeapon(const std::string& weaponName)
 {
     std::lock_guard<std::mutex> lock(mutex);
-    currentWeapon_ = weaponName;
+    currentWeapon = weaponName;
 }
 
 std::string MouseController::getCurrentWeapon() const
 {
     std::lock_guard<std::mutex> lock(mutex);
-    return currentWeapon_;
+    return currentWeapon;
 }
 
 #endif
