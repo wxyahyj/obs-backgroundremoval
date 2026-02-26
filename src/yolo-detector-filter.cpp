@@ -2100,7 +2100,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->floatingWindowHandle = nullptr;
 
 		for (int i = 0; i < 5; i++) {
-			instance->mouseConfigs[i] = MouseControlConfig();
+			instance->mouseConfigs[i] = yolo_detector_filter::MouseControlConfig();
 		}
 		instance->currentConfigIndex = 0;
 		instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI, "", 0);
