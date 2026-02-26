@@ -34,6 +34,9 @@ MAKCUMouseController::MAKCUMouseController()
     , autoTriggerWaitingForDelay(false)
     , currentFireDuration(50)
     , randomGenerator(std::random_device{}())
+    , currentTargetTrackId(-1)
+    , targetLockStartTime(std::chrono::steady_clock::now())
+    , currentTargetDistance(0.0f)
 {
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
@@ -71,6 +74,9 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , autoTriggerWaitingForDelay(false)
     , currentFireDuration(50)
     , randomGenerator(std::random_device{}())
+    , currentTargetTrackId(-1)
+    , targetLockStartTime(std::chrono::steady_clock::now())
+    , currentTargetDistance(0.0f)
 {
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
@@ -200,12 +206,16 @@ void MAKCUMouseController::click(bool left)
 
 void MAKCUMouseController::clickDown()
 {
-    sendSerialCommand("km.left(1)");
+    obs_log(LOG_INFO, "[MAKCU] clickDown: sending km.left(1)");
+    bool success = sendSerialCommand("km.left(1)");
+    obs_log(LOG_INFO, "[MAKCU] clickDown result: %d, serialConnected=%d", success, serialConnected);
 }
 
 void MAKCUMouseController::clickUp()
 {
-    sendSerialCommand("km.left(0)");
+    obs_log(LOG_INFO, "[MAKCU] clickUp: sending km.left(0)");
+    bool success = sendSerialCommand("km.left(0)");
+    obs_log(LOG_INFO, "[MAKCU] clickUp result: %d, serialConnected=%d", success, serialConnected);
 }
 
 void MAKCUMouseController::wheel(int delta)
@@ -424,11 +434,11 @@ void MAKCUMouseController::tick()
 Detection* MAKCUMouseController::selectTarget()
 {
     if (currentDetections.empty()) {
+        currentTargetTrackId = -1;
+        currentTargetDistance = 0.0f;
         return nullptr;
     }
 
-    // 使用推理帧的实际尺寸来计算 FOV 中心
-    // 这确保了 FOV 计算与检测坐标使用相同的基准
     int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
                      ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
     int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
@@ -440,10 +450,9 @@ Detection* MAKCUMouseController::selectTarget()
 
     Detection* bestTarget = nullptr;
     float minDistanceSquared = std::numeric_limits<float>::max();
+    int bestTrackId = -1;
 
     for (auto& det : currentDetections) {
-        // 检测坐标已经是相对于推理帧的归一化坐标
-        // 所以我们需要使用推理帧的尺寸来计算像素位置
         int targetX = static_cast<int>(det.centerX * frameWidth);
         int targetY = static_cast<int>(det.centerY * frameHeight);
         
@@ -454,9 +463,73 @@ Detection* MAKCUMouseController::selectTarget()
         if (distanceSquared <= fovRadiusSquared && distanceSquared < minDistanceSquared) {
             minDistanceSquared = distanceSquared;
             bestTarget = &det;
+            bestTrackId = det.trackId;
         }
     }
 
+    if (!bestTarget) {
+        currentTargetTrackId = -1;
+        currentTargetDistance = 0.0f;
+        return nullptr;
+    }
+
+    float bestDistance = std::sqrt(minDistanceSquared);
+    auto now = std::chrono::steady_clock::now();
+
+    if (currentTargetTrackId == -1) {
+        currentTargetTrackId = bestTrackId;
+        targetLockStartTime = now;
+        currentTargetDistance = bestDistance;
+        return bestTarget;
+    }
+
+    if (bestTrackId == currentTargetTrackId) {
+        currentTargetDistance = bestDistance;
+        return bestTarget;
+    }
+
+    auto lockElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count();
+    
+    if (lockElapsed < config.targetSwitchDelayMs) {
+        for (auto& det : currentDetections) {
+            if (det.trackId == currentTargetTrackId) {
+                int targetX = static_cast<int>(det.centerX * frameWidth);
+                int targetY = static_cast<int>(det.centerY * frameHeight);
+                float dx = static_cast<float>(targetX - fovCenterX);
+                float dy = static_cast<float>(targetY - fovCenterY);
+                float distSq = dx * dx + dy * dy;
+                if (distSq <= fovRadiusSquared) {
+                    return &det;
+                }
+            }
+        }
+        currentTargetTrackId = bestTrackId;
+        targetLockStartTime = now;
+        currentTargetDistance = bestDistance;
+        return bestTarget;
+    }
+
+    if (currentTargetDistance > 0.0f && config.targetSwitchTolerance > 0.0f) {
+        float improvement = (currentTargetDistance - bestDistance) / currentTargetDistance;
+        if (improvement < config.targetSwitchTolerance) {
+            for (auto& det : currentDetections) {
+                if (det.trackId == currentTargetTrackId) {
+                    int targetX = static_cast<int>(det.centerX * frameWidth);
+                    int targetY = static_cast<int>(det.centerY * frameHeight);
+                    float dx = static_cast<float>(targetX - fovCenterX);
+                    float dy = static_cast<float>(targetY - fovCenterY);
+                    float distSq = dx * dx + dy * dy;
+                    if (distSq <= fovRadiusSquared) {
+                        return &det;
+                    }
+                }
+            }
+        }
+    }
+
+    currentTargetTrackId = bestTrackId;
+    targetLockStartTime = now;
+    currentTargetDistance = bestDistance;
     return bestTarget;
 }
 

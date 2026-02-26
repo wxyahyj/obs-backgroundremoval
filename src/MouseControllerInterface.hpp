@@ -57,6 +57,9 @@ struct MouseControllerConfig {
     int autoTriggerDurationRandomMin;
     int autoTriggerDurationRandomMax;
     int autoTriggerMoveCompensation;
+    
+    int targetSwitchDelayMs;
+    float targetSwitchTolerance;
 };
 
 class MouseControllerInterface {

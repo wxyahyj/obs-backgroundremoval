@@ -166,6 +166,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int triggerDurationRandomMin;
 		int triggerDurationRandomMax;
 		int triggerMoveCompensation;
+		int targetSwitchDelayMs;
+		float targetSwitchTolerance;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -203,6 +205,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			triggerDurationRandomMin = 0;
 			triggerDurationRandomMax = 0;
 			triggerMoveCompensation = 0;
+			targetSwitchDelayMs = 500;
+			targetSwitchTolerance = 0.15f;
 		}
 	};
 
@@ -448,6 +452,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_int_slider(props, propName, "随机时长上限(ms)", 0, 200, 5);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_properties_add_int_slider(props, propName, "移动补偿(像素)", 0, 100, 1);
+		snprintf(propName, sizeof(propName), "target_switch_delay_%d", i);
+		obs_properties_add_int_slider(props, propName, "转火延迟(ms)", 0, 1500, 50);
+		snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", i);
+		obs_properties_add_float_slider(props, propName, "切换容差", 0.0, 0.5, 0.05);
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -555,6 +563,10 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "target_switch_delay_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -822,13 +834,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 0);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_data_set_default_int(settings, propName, 0);
-	}
 
-	obs_data_set_default_string(settings, "config_name", "");
-	obs_data_set_default_string(settings, "config_list", "");
-	obs_data_set_default_double(settings, "iou_threshold", 0.3);
-	obs_data_set_default_int(settings, "max_lost_frames", 10);
-	obs_data_set_default_int(settings, "settings_page", 0);
+	 snprintf(propName, sizeof(propName), "target_switch_delay_%d", i);
+    obs_data_set_default_int(settings, propName, 500);
+    snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", i);
+    obs_data_set_default_double(settings, propName, 0.15);
+}
+
+    obs_data_set_default_string(settings, "config_name", "");
+    obs_data_set_default_string(settings, "config_list", "");
+    obs_data_set_default_double(settings, "iou_threshold", 0.3);
+    obs_data_set_default_int(settings, "max_lost_frames", 10);
+    obs_data_set_default_int(settings, "settings_page", 0);
 #endif
 }
 
@@ -1071,6 +1088,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].triggerDurationRandomMax = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		tf->mouseConfigs[i].triggerMoveCompensation = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "target_switch_delay_%d", i);
+		tf->mouseConfigs[i].targetSwitchDelayMs = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "target_switch_tolerance_%d", i);
+		tf->mouseConfigs[i].targetSwitchTolerance = (float)obs_data_get_double(settings, propName);
 	}
 
 	bool hasEnabledConfig = false;
@@ -2253,6 +2274,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoTriggerDurationRandomMin = cfg.triggerDurationRandomMin;
 		mcConfig.autoTriggerDurationRandomMax = cfg.triggerDurationRandomMax;
 		mcConfig.autoTriggerMoveCompensation = cfg.triggerMoveCompensation;
+		mcConfig.targetSwitchDelayMs = cfg.targetSwitchDelayMs;
+		mcConfig.targetSwitchTolerance = cfg.targetSwitchTolerance;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

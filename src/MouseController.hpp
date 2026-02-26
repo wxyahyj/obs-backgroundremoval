@@ -75,7 +75,11 @@ private:
     int currentFireDuration;
     std::mt19937 randomGenerator;
     
-    std::string currentWeapon_;
+    int currentTargetTrackId;
+    std::chrono::steady_clock::time_point targetLockStartTime;
+    float currentTargetDistance;
+    
+    std::string currentWeapon;
 };
 
 #endif
