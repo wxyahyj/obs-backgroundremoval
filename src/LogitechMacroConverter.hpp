@@ -50,6 +50,8 @@ public:
     
     static bool parseString(const std::string& xmlContent, ParsedMacro& result);
     
+    static bool parseLuaString(const std::string& luaContent, ParsedMacro& result);
+    
     static void generateConfigSuggestions(const ParsedMacro& macro, 
                                           float& suggestedP, 
                                           float& suggestedD,

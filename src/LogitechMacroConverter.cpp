@@ -295,7 +295,214 @@ bool LogitechMacroConverter::parseFile(const std::string& filePath, ParsedMacro&
     buffer << file.rdbuf();
     file.close();
     
-    return parseString(buffer.str(), result);
+    std::string content = buffer.str();
+    
+    if (filePath.size() > 4) {
+        std::string ext = toLower(filePath.substr(filePath.size() - 4));
+        if (ext == ".lua") {
+            return parseLuaString(content, result);
+        }
+    }
+    
+    return parseString(content, result);
+}
+
+bool LogitechMacroConverter::parseLuaString(const std::string& luaContent, ParsedMacro& result)
+{
+    result.clear();
+    
+    std::string content = luaContent;
+    
+    size_t tableStart = content.find("{{");
+    if (tableStart != std::string::npos) {
+        size_t tableEnd = content.find("}}", tableStart);
+        if (tableEnd == std::string::npos) {
+            tableEnd = content.find("}", content.find("}", tableStart + 2) + 1);
+        }
+        
+        if (tableEnd != std::string::npos) {
+            std::string tableContent = content.substr(tableStart, tableEnd - tableStart + 2);
+            
+            size_t pos = 0;
+            while ((pos = tableContent.find("{", pos)) != std::string::npos) {
+                size_t endPos = tableContent.find("}", pos);
+                if (endPos == std::string::npos) {
+                    break;
+                }
+                
+                std::string entry = tableContent.substr(pos + 1, endPos - pos - 1);
+                
+                int x = 0, y = 0, d = 0;
+                
+                size_t xPos = entry.find("x=");
+                if (xPos != std::string::npos) {
+                    size_t xEnd = entry.find(",", xPos);
+                    if (xEnd == std::string::npos) xEnd = entry.length();
+                    std::string xStr = trim(entry.substr(xPos + 2, xEnd - xPos - 2));
+                    try { x = std::stoi(xStr); } catch (...) {}
+                }
+                
+                size_t yPos = entry.find("y=");
+                if (yPos != std::string::npos) {
+                    size_t yEnd = entry.find(",", yPos);
+                    if (yEnd == std::string::npos) yEnd = entry.length();
+                    std::string yStr = trim(entry.substr(yPos + 2, yEnd - yPos - 2));
+                    try { y = std::stoi(yStr); } catch (...) {}
+                }
+                
+                size_t dPos = entry.find("d=");
+                if (dPos != std::string::npos) {
+                    size_t dEnd = entry.find(",", dPos);
+                    if (dEnd == std::string::npos) dEnd = entry.length();
+                    std::string dStr = trim(entry.substr(dPos + 2, dEnd - dPos - 2));
+                    try { d = std::stoi(dStr); } catch (...) {}
+                }
+                
+                if (x != 0 || y != 0) {
+                    MacroEvent moveEvent;
+                    moveEvent.type = MacroEvent::MouseMove;
+                    moveEvent.dx = x;
+                    moveEvent.dy = y;
+                    result.events.push_back(moveEvent);
+                }
+                
+                if (d > 0) {
+                    MacroEvent delayEvent;
+                    delayEvent.type = MacroEvent::Delay;
+                    delayEvent.delayMs = d;
+                    result.events.push_back(delayEvent);
+                }
+                
+                pos = endPos + 1;
+            }
+            
+            result.calculateStatistics();
+            return !result.events.empty();
+        }
+    }
+    
+    std::istringstream stream(luaContent);
+    std::string line;
+    
+    while (std::getline(stream, line)) {
+        std::string trimmed = trim(line);
+        
+        if (trimmed.empty() || trimmed[0] == '-' || trimmed[0] == '/' || trimmed[0] == '#') {
+            continue;
+        }
+        
+        std::string lower = toLower(trimmed);
+        
+        if (lower.find("movemouserelative") != std::string::npos ||
+            lower.find("move_mouse_relative") != std::string::npos ||
+            lower.find("movemouse") != std::string::npos) {
+            
+            int dx = 0, dy = 0;
+            
+            size_t parenStart = trimmed.find('(');
+            size_t parenEnd = trimmed.find(')');
+            
+            if (parenStart != std::string::npos && parenEnd != std::string::npos && parenEnd > parenStart) {
+                std::string args = trimmed.substr(parenStart + 1, parenEnd - parenStart - 1);
+                
+                size_t comma = args.find(',');
+                if (comma != std::string::npos) {
+                    std::string dxStr = trim(args.substr(0, comma));
+                    std::string dyStr = trim(args.substr(comma + 1));
+                    
+                    try { dx = std::stoi(dxStr); } catch (...) {}
+                    try { dy = std::stoi(dyStr); } catch (...) {}
+                }
+            }
+            
+            MacroEvent event;
+            event.type = MacroEvent::MouseMove;
+            event.dx = dx;
+            event.dy = dy;
+            result.events.push_back(event);
+        }
+        else if (lower.find("sleep") != std::string::npos ||
+                 lower.find("wait") != std::string::npos ||
+                 lower.find("delay") != std::string::npos) {
+            
+            int delayMs = 0;
+            
+            size_t parenStart = trimmed.find('(');
+            size_t parenEnd = trimmed.find(')');
+            
+            if (parenStart != std::string::npos && parenEnd != std::string::npos && parenEnd > parenStart) {
+                std::string arg = trim(trimmed.substr(parenStart + 1, parenEnd - parenStart - 1));
+                try { delayMs = std::stoi(arg); } catch (...) {}
+            }
+            
+            if (delayMs > 0) {
+                MacroEvent event;
+                event.type = MacroEvent::Delay;
+                event.delayMs = delayMs;
+                result.events.push_back(event);
+            }
+        }
+        else if (lower.find("presskey") != std::string::npos ||
+                 lower.find("press_key") != std::string::npos ||
+                 lower.find("keydown") != std::string::npos ||
+                 lower.find("key_down") != std::string::npos) {
+            
+            MacroEvent event;
+            event.type = MacroEvent::KeyDown;
+            result.events.push_back(event);
+        }
+        else if (lower.find("releasekey") != std::string::npos ||
+                 lower.find("release_key") != std::string::npos ||
+                 lower.find("keyup") != std::string::npos ||
+                 lower.find("key_up") != std::string::npos) {
+            
+            MacroEvent event;
+            event.type = MacroEvent::KeyUp;
+            result.events.push_back(event);
+        }
+        else if (lower.find("pressMouseButton") != std::string::npos ||
+                 lower.find("press_mouse_button") != std::string::npos ||
+                 lower.find("mousedown") != std::string::npos ||
+                 lower.find("mouse_down") != std::string::npos) {
+            
+            MacroEvent event;
+            event.type = MacroEvent::MouseDown;
+            event.button = 1;
+            
+            size_t parenStart = trimmed.find('(');
+            size_t parenEnd = trimmed.find(')');
+            
+            if (parenStart != std::string::npos && parenEnd != std::string::npos && parenEnd > parenStart) {
+                std::string arg = trim(trimmed.substr(parenStart + 1, parenEnd - parenStart - 1));
+                try { event.button = std::stoi(arg); } catch (...) {}
+            }
+            
+            result.events.push_back(event);
+        }
+        else if (lower.find("releaseMouseButton") != std::string::npos ||
+                 lower.find("release_mouse_button") != std::string::npos ||
+                 lower.find("mouseup") != std::string::npos ||
+                 lower.find("mouse_up") != std::string::npos) {
+            
+            MacroEvent event;
+            event.type = MacroEvent::MouseUp;
+            event.button = 1;
+            
+            size_t parenStart = trimmed.find('(');
+            size_t parenEnd = trimmed.find(')');
+            
+            if (parenStart != std::string::npos && parenEnd != std::string::npos && parenEnd > parenStart) {
+                std::string arg = trim(trimmed.substr(parenStart + 1, parenEnd - parenStart - 1));
+                try { event.button = std::stoi(arg); } catch (...) {}
+            }
+            
+            result.events.push_back(event);
+        }
+    }
+    
+    result.calculateStatistics();
+    
+    return !result.events.empty();
 }
 
 bool LogitechMacroConverter::parseString(const std::string& xmlContent, ParsedMacro& result)

@@ -130,35 +130,71 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::mutex floatingWindowMutex;
 	cv::Mat floatingWindowFrame;
 
-	bool enableMouseControl;
-	int mouseControlHotkey;
-	float mouseControlPMin;
-	float mouseControlPMax;
-	float mouseControlPSlope;
-	float mouseControlD;
-	float baselineCompensation;
-	float aimSmoothingX;
-	float aimSmoothingY;
-	float maxPixelMove;
-float deadZonePixels;
-int screenOffsetX;
-int screenOffsetY;
-int screenWidth;
-	int screenHeight;
-	float derivativeFilterAlpha;
-float targetYOffset;
-	int controllerType;
-	std::string makcuPort;
-	int makcuBaudRate;
-std::unique_ptr<MouseControllerInterface> mouseController;
+	static const int MAX_CONFIGS = 5;
+
+	struct MouseControlConfig {
+		bool enabled;
+		int hotkey;
+		float pMin;
+		float pMax;
+		float pSlope;
+		float d;
+		float baselineCompensation;
+		float aimSmoothingX;
+		float aimSmoothingY;
+		float maxPixelMove;
+		float deadZonePixels;
+		int screenOffsetX;
+		int screenOffsetY;
+		int screenWidth;
+		int screenHeight;
+		float derivativeFilterAlpha;
+		float targetYOffset;
+		int controllerType;
+		std::string makcuPort;
+		int makcuBaudRate;
+		bool enableYAxisUnlock;
+		int yAxisUnlockDelay;
+		bool enableAutoTrigger;
+		int triggerRadius;
+		int triggerCooldown;
+		std::string weaponName;
+
+		MouseControlConfig() {
+			enabled = false;
+			hotkey = VK_XBUTTON1;
+			pMin = 0.153f;
+			pMax = 0.6f;
+			pSlope = 1.0f;
+			d = 0.007f;
+			baselineCompensation = 0.85f;
+			aimSmoothingX = 0.7f;
+			aimSmoothingY = 0.5f;
+			maxPixelMove = 128.0f;
+			deadZonePixels = 5.0f;
+			screenOffsetX = 0;
+			screenOffsetY = 0;
+			screenWidth = 0;
+			screenHeight = 0;
+			derivativeFilterAlpha = 0.2f;
+			targetYOffset = 0.0f;
+			controllerType = 0;
+			makcuPort = "COM5";
+			makcuBaudRate = 4000000;
+			enableYAxisUnlock = false;
+			yAxisUnlockDelay = 500;
+			enableAutoTrigger = false;
+			triggerRadius = 5;
+			triggerCooldown = 200;
+		}
+	};
+
+	std::array<MouseControlConfig, MAX_CONFIGS> mouseConfigs;
+	int currentConfigIndex;
+	std::unique_ptr<MouseControllerInterface> mouseController;
 
 	std::string configName;
 	std::string configList;
-	bool enableYAxisUnlock;
-	int yAxisUnlockDelay;
-	bool enableAutoTrigger;
-	int triggerRadius;
-	int triggerCooldown;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -195,6 +231,8 @@ const char *yolo_detector_filter_getname(void *unused)
 }
 
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
+static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
+static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 
 obs_properties_t *yolo_detector_filter_properties(void *data)
 {
@@ -207,8 +245,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "YOLO检测设置", 0);
 	obs_property_list_add_int(pageList, "鼠标控制", 1);
 	obs_property_list_add_int(pageList, "FOV设置", 2);
-	obs_property_list_add_int(pageList, "功能开关", 3);
-	obs_property_list_add_int(pageList, "目标追踪", 4);
+	obs_property_list_add_int(pageList, "目标追踪", 3);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -286,71 +323,105 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_color(props, "fov_color2", "第二个FOV颜色");
 
 #ifdef _WIN32
-	obs_properties_add_group(props, "mouse_basic_group", "基本设置", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "enable_mouse_control", "启用鼠标控制");
-	obs_property_t *hotkeyList = obs_properties_add_list(props, "mouse_control_hotkey", "鼠标控制热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
-	obs_property_list_add_int(hotkeyList, "鼠标右键", VK_RBUTTON);
-	obs_property_list_add_int(hotkeyList, "侧键1", VK_XBUTTON1);
-	obs_property_list_add_int(hotkeyList, "侧键2", VK_XBUTTON2);
-	obs_property_list_add_int(hotkeyList, "空格", VK_SPACE);
-	obs_property_list_add_int(hotkeyList, "Shift", VK_SHIFT);
-	obs_property_list_add_int(hotkeyList, "Control", VK_CONTROL);
-	obs_property_list_add_int(hotkeyList, "A", 'A');
-	obs_property_list_add_int(hotkeyList, "D", 'D');
-	obs_property_list_add_int(hotkeyList, "W", 'W');
-	obs_property_list_add_int(hotkeyList, "S", 'S');
-	obs_property_list_add_int(hotkeyList, "F1", VK_F1);
-	obs_property_list_add_int(hotkeyList, "F2", VK_F2);
+	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(configSelectList, "配置1", 0);
+	obs_property_list_add_int(configSelectList, "配置2", 1);
+	obs_property_list_add_int(configSelectList, "配置3", 2);
+	obs_property_list_add_int(configSelectList, "配置4", 3);
+	obs_property_list_add_int(configSelectList, "配置5", 4);
+	obs_property_set_modified_callback(configSelectList, onConfigChanged);
 
-	obs_properties_add_group(props, "mouse_controller_group", "控制方式", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *controllerTypeList = obs_properties_add_list(props, "controller_type", "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(controllerTypeList, "Windows API", 0);
-	obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
-	obs_properties_add_text(props, "makcu_port", "MAKCU 端口", OBS_TEXT_DEFAULT);
-	obs_property_t *baudRateList = obs_properties_add_list(props, "makcu_baud_rate", "波特率", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(baudRateList, "9600", 9600);
-	obs_property_list_add_int(baudRateList, "19200", 19200);
-	obs_property_list_add_int(baudRateList, "38400", 38400);
-	obs_property_list_add_int(baudRateList, "57600", 57600);
-	obs_property_list_add_int(baudRateList, "115200", 115200);
-	obs_property_list_add_int(baudRateList, "4000000 (4Mbps)", 4000000);
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+
+		snprintf(propName, sizeof(propName), "enable_config_%d", i);
+		obs_properties_add_bool(props, propName, "启用此配置");
+
+		snprintf(propName, sizeof(propName), "hotkey_%d", i);
+		obs_property_t *hotkeyList = obs_properties_add_list(props, propName, "热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
+		obs_property_list_add_int(hotkeyList, "鼠标右键", VK_RBUTTON);
+		obs_property_list_add_int(hotkeyList, "侧键1", VK_XBUTTON1);
+		obs_property_list_add_int(hotkeyList, "侧键2", VK_XBUTTON2);
+		obs_property_list_add_int(hotkeyList, "空格", VK_SPACE);
+		obs_property_list_add_int(hotkeyList, "Shift", VK_SHIFT);
+		obs_property_list_add_int(hotkeyList, "Control", VK_CONTROL);
+		obs_property_list_add_int(hotkeyList, "A", 'A');
+		obs_property_list_add_int(hotkeyList, "D", 'D');
+		obs_property_list_add_int(hotkeyList, "W", 'W');
+		obs_property_list_add_int(hotkeyList, "S", 'S');
+		obs_property_list_add_int(hotkeyList, "F1", VK_F1);
+		obs_property_list_add_int(hotkeyList, "F2", VK_F2);
+
+		snprintf(propName, sizeof(propName), "controller_type_%d", i);
+		obs_property_t *controllerTypeList = obs_properties_add_list(props, propName, "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(controllerTypeList, "Windows API", 0);
+		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
+
+		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+		obs_properties_add_text(props, propName, "MAKCU 端口", OBS_TEXT_DEFAULT);
+
+		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+		obs_property_t *baudRateList = obs_properties_add_list(props, propName, "波特率", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(baudRateList, "9600", 9600);
+		obs_property_list_add_int(baudRateList, "19200", 19200);
+		obs_property_list_add_int(baudRateList, "38400", 38400);
+		obs_property_list_add_int(baudRateList, "57600", 57600);
+		obs_property_list_add_int(baudRateList, "115200", 115200);
+		obs_property_list_add_int(baudRateList, "4000000 (4Mbps)", 4000000);
+
+		snprintf(propName, sizeof(propName), "p_min_%d", i);
+		obs_properties_add_float_slider(props, propName, "P最小值", 0.00, 1.00, 0.01);
+		snprintf(propName, sizeof(propName), "p_max_%d", i);
+		obs_properties_add_float_slider(props, propName, "P最大值", 0.00, 1.00, 0.01);
+		snprintf(propName, sizeof(propName), "p_slope_%d", i);
+		obs_properties_add_float_slider(props, propName, "P增长斜率", 0.00, 10, 0.01);
+		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
+		obs_properties_add_float_slider(props, propName, "基线补偿", 0.00, 1.00, 0.01);
+		snprintf(propName, sizeof(propName), "d_%d", i);
+		obs_properties_add_float_slider(props, propName, "微分系数", 0.000, 1.00, 0.001);
+		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
+		obs_properties_add_float_slider(props, propName, "微分滤波系数", 0.01, 1.00, 0.01);
+
+		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
+		obs_properties_add_float_slider(props, propName, "X轴平滑度", 0.00, 1.0, 0.01);
+		snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", i);
+		obs_properties_add_float_slider(props, propName, "Y轴平滑度", 0.00, 1.0, 0.01);
+		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
+		obs_properties_add_float_slider(props, propName, "Y轴目标偏移", -50.0, 50.0, 1.0);
+		snprintf(propName, sizeof(propName), "max_pixel_move_%d", i);
+		obs_properties_add_float_slider(props, propName, "最大移动量", 0.0, 200.0, 1.0);
+		snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", i);
+		obs_properties_add_float_slider(props, propName, "瞄准死区", 0.0, 20.0, 0.5);
+
+		snprintf(propName, sizeof(propName), "screen_offset_x_%d", i);
+		obs_properties_add_int(props, propName, "屏幕偏移X", 0, 3840, 1);
+		snprintf(propName, sizeof(propName), "screen_offset_y_%d", i);
+		obs_properties_add_int(props, propName, "屏幕偏移Y", 0, 2160, 1);
+		snprintf(propName, sizeof(propName), "screen_width_%d", i);
+		obs_properties_add_int(props, propName, "屏幕宽度", 0, 3840, 1);
+		snprintf(propName, sizeof(propName), "screen_height_%d", i);
+		obs_properties_add_int(props, propName, "屏幕高度", 0, 2160, 1);
+
+		snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", i);
+		obs_properties_add_bool(props, propName, "启用长按解锁Y轴");
+		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
+		obs_properties_add_int_slider(props, propName, "Y轴解锁延迟(ms)", 100, 2000, 50);
+
+		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+		obs_properties_add_bool(props, propName, "启用自动扳机");
+		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
+		obs_properties_add_int_slider(props, propName, "扳机触发半径(像素)", 1, 50, 1);
+		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
+		obs_properties_add_int_slider(props, propName, "扳机冷却时间(ms)", 50, 1000, 50);
+
+		snprintf(propName, sizeof(propName), "weapon_select_%d", i);
+		obs_properties_add_list(props, propName, "选择武器", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	}
+
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
-
-	obs_properties_add_group(props, "mouse_pid_group", "PID参数", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_float_slider(props, "mouse_control_p_min", "P最小值", 0.00, 1.00, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_max", "P最大值", 0.00, 1.00, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_p_slope", "P增长斜率", 0.00, 10, 0.01);
-	obs_properties_add_float_slider(props, "baseline_compensation", "基线补偿", 0.00, 1.00, 0.01);
-	obs_properties_add_float_slider(props, "mouse_control_d", "微分系数", 0.000, 1.00, 0.001);
-	obs_properties_add_float_slider(props, "derivative_filter_alpha", "微分滤波系数", 0.01, 1.00, 0.01);
-
-	obs_properties_add_group(props, "mouse_aim_group", "瞄准参数", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_float_slider(props, "aim_smoothing_x", "X轴平滑度", 0.00, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "aim_smoothing_y", "Y轴平滑度", 0.00, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "target_y_offset", "Y轴目标偏移", -50.0, 50.0, 1.0);
-	obs_properties_add_float_slider(props, "max_pixel_move", "最大移动量", 0.0, 200.0, 1.0);
-	obs_properties_add_float_slider(props, "dead_zone_pixels", "瞄准死区", 0.0, 20.0, 0.5);
-
-	obs_properties_add_group(props, "mouse_screen_group", "屏幕设置", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_int(props, "screen_offset_x", "屏幕偏移X", 0, 3840, 1);
-	obs_properties_add_int(props, "screen_offset_y", "屏幕偏移Y", 0, 2160, 1);
-	obs_properties_add_int(props, "screen_width", "屏幕宽度", 0, 3840, 1);
-	obs_properties_add_int(props, "screen_height", "屏幕高度", 0, 2160, 1);
-
-	obs_properties_add_group(props, "y_axis_unlock_group", "Y轴解锁设置", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "enable_y_axis_unlock", "启用长按解锁Y轴");
-	obs_properties_add_int_slider(props, "y_axis_unlock_delay", "Y轴解锁延迟(ms)", 100, 2000, 50);
-
-	obs_properties_add_group(props, "auto_trigger_group", "自动扳机设置", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "enable_auto_trigger", "启用自动扳机");
-	obs_properties_add_int_slider(props, "trigger_radius", "扳机触发半径(像素)", 1, 50, 1);
-	obs_properties_add_int_slider(props, "trigger_cooldown", "扳机冷却时间(ms)", 50, 1000, 50);
-
-	obs_properties_add_group(props, "recoil_pattern_group", "压枪配置", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_text(props, "weapon_name_input", "武器名称", OBS_TEXT_DEFAULT);
 	obs_properties_add_button(props, "import_recoil_pattern", "导入压枪宏", importRecoilPattern);
-	obs_properties_add_list(props, "weapon_select", "选择武器", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_properties_add_button(props, "delete_recoil_pattern", "删除武器配置", deleteRecoilPattern);
 	obs_properties_add_button(props, "refresh_weapon_list", "刷新武器列表", refreshWeaponList);
 
@@ -373,6 +444,92 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	UNUSED_PARAMETER(data);
 	return props;
+}
+
+static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+{
+	char propName[64];
+
+	snprintf(propName, sizeof(propName), "enable_config_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "hotkey_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "controller_type_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "makcu_port_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "p_min_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "p_max_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "p_slope_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "baseline_compensation_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "d_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "max_pixel_move_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "screen_offset_x_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "screen_offset_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "screen_width_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "screen_height_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_radius_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_cooldown_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "weapon_select_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
+
+static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
+
+	for (int i = 0; i < 5; i++) {
+		setConfigPropertiesVisible(props, i, i == currentConfig);
+	}
+
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), true);
+	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), true);
+	obs_property_set_visible(obs_properties_get(props, "weapon_name_input"), true);
+	obs_property_set_visible(obs_properties_get(props, "import_recoil_pattern"), true);
+	obs_property_set_visible(obs_properties_get(props, "delete_recoil_pattern"), true);
+	obs_property_set_visible(obs_properties_get(props, "refresh_weapon_list"), true);
+
+	return true;
 }
 
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
@@ -473,93 +630,26 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(fov_color2, page == 2);
 
 #ifdef _WIN32
-	obs_property_t *mouse_basic_group = obs_properties_get(props, "mouse_basic_group");
-	obs_property_t *mouse_controller_group = obs_properties_get(props, "mouse_controller_group");
-	obs_property_t *mouse_pid_group = obs_properties_get(props, "mouse_pid_group");
-	obs_property_t *mouse_aim_group = obs_properties_get(props, "mouse_aim_group");
-	obs_property_t *mouse_screen_group = obs_properties_get(props, "mouse_screen_group");
-	obs_property_t *y_axis_unlock_group = obs_properties_get(props, "y_axis_unlock_group");
-	obs_property_t *auto_trigger_group = obs_properties_get(props, "auto_trigger_group");
-	obs_property_t *recoil_pattern_group = obs_properties_get(props, "recoil_pattern_group");
 	obs_property_t *tracking_group = obs_properties_get(props, "tracking_group");
+	obs_property_set_visible(tracking_group, page == 3);
 
-	obs_property_set_visible(mouse_basic_group, page == 1);
-	obs_property_set_visible(mouse_controller_group, page == 1);
-	obs_property_set_visible(mouse_pid_group, page == 1);
-	obs_property_set_visible(mouse_aim_group, page == 1);
-	obs_property_set_visible(mouse_screen_group, page == 1);
-	obs_property_set_visible(y_axis_unlock_group, page == 3);
-	obs_property_set_visible(auto_trigger_group, page == 3);
-	obs_property_set_visible(recoil_pattern_group, page == 3);
-	obs_property_set_visible(tracking_group, page == 4);
-
-	obs_property_t *enable_mouse_control = obs_properties_get(props, "enable_mouse_control");
-	obs_property_t *mouse_control_hotkey = obs_properties_get(props, "mouse_control_hotkey");
-	obs_property_t *controller_type = obs_properties_get(props, "controller_type");
-	obs_property_t *makcu_port = obs_properties_get(props, "makcu_port");
-	obs_property_t *makcu_baud_rate = obs_properties_get(props, "makcu_baud_rate");
-	obs_property_t *test_makcu_connection = obs_properties_get(props, "test_makcu_connection");
-	obs_property_t *mouse_control_p_min = obs_properties_get(props, "mouse_control_p_min");
-	obs_property_t *mouse_control_p_max = obs_properties_get(props, "mouse_control_p_max");
-	obs_property_t *mouse_control_p_slope = obs_properties_get(props, "mouse_control_p_slope");
-	obs_property_t *baseline_compensation = obs_properties_get(props, "baseline_compensation");
-	obs_property_t *mouse_control_d = obs_properties_get(props, "mouse_control_d");
-	obs_property_t *derivative_filter_alpha = obs_properties_get(props, "derivative_filter_alpha");
-	obs_property_t *aim_smoothing_x = obs_properties_get(props, "aim_smoothing_x");
-	obs_property_t *aim_smoothing_y = obs_properties_get(props, "aim_smoothing_y");
-	obs_property_t *target_y_offset = obs_properties_get(props, "target_y_offset");
-	obs_property_t *max_pixel_move = obs_properties_get(props, "max_pixel_move");
-	obs_property_t *dead_zone_pixels = obs_properties_get(props, "dead_zone_pixels");
-	obs_property_t *screen_offset_x = obs_properties_get(props, "screen_offset_x");
-	obs_property_t *screen_offset_y = obs_properties_get(props, "screen_offset_y");
-	obs_property_t *screen_width = obs_properties_get(props, "screen_width");
-	obs_property_t *screen_height = obs_properties_get(props, "screen_height");
-	obs_property_t *enable_y_axis_unlock = obs_properties_get(props, "enable_y_axis_unlock");
-	obs_property_t *y_axis_unlock_delay = obs_properties_get(props, "y_axis_unlock_delay");
-	obs_property_t *enable_auto_trigger = obs_properties_get(props, "enable_auto_trigger");
-	obs_property_t *trigger_radius = obs_properties_get(props, "trigger_radius");
-	obs_property_t *trigger_cooldown = obs_properties_get(props, "trigger_cooldown");
-	obs_property_t *weapon_name_input = obs_properties_get(props, "weapon_name_input");
-	obs_property_t *import_recoil_pattern = obs_properties_get(props, "import_recoil_pattern");
-	obs_property_t *weapon_select = obs_properties_get(props, "weapon_select");
-	obs_property_t *delete_recoil_pattern = obs_properties_get(props, "delete_recoil_pattern");
-	obs_property_t *refresh_weapon_list = obs_properties_get(props, "refresh_weapon_list");
 	obs_property_t *iou_threshold = obs_properties_get(props, "iou_threshold");
 	obs_property_t *max_lost_frames = obs_properties_get(props, "max_lost_frames");
+	obs_property_set_visible(iou_threshold, page == 3);
+	obs_property_set_visible(max_lost_frames, page == 3);
 
-	obs_property_set_visible(enable_mouse_control, page == 1);
-	obs_property_set_visible(mouse_control_hotkey, page == 1);
-	obs_property_set_visible(controller_type, page == 1);
-	obs_property_set_visible(makcu_port, page == 1);
-	obs_property_set_visible(makcu_baud_rate, page == 1);
-	obs_property_set_visible(test_makcu_connection, page == 1);
-	obs_property_set_visible(mouse_control_p_min, page == 1);
-	obs_property_set_visible(mouse_control_p_max, page == 1);
-	obs_property_set_visible(mouse_control_p_slope, page == 1);
-	obs_property_set_visible(baseline_compensation, page == 1);
-	obs_property_set_visible(mouse_control_d, page == 1);
-	obs_property_set_visible(derivative_filter_alpha, page == 1);
-	obs_property_set_visible(aim_smoothing_x, page == 1);
-	obs_property_set_visible(aim_smoothing_y, page == 1);
-	obs_property_set_visible(target_y_offset, page == 1);
-	obs_property_set_visible(max_pixel_move, page == 1);
-	obs_property_set_visible(dead_zone_pixels, page == 1);
-	obs_property_set_visible(screen_offset_x, page == 1);
-	obs_property_set_visible(screen_offset_y, page == 1);
-	obs_property_set_visible(screen_width, page == 1);
-	obs_property_set_visible(screen_height, page == 1);
-	obs_property_set_visible(enable_y_axis_unlock, page == 3);
-	obs_property_set_visible(y_axis_unlock_delay, page == 3);
-	obs_property_set_visible(enable_auto_trigger, page == 3);
-	obs_property_set_visible(trigger_radius, page == 3);
-	obs_property_set_visible(trigger_cooldown, page == 3);
-	obs_property_set_visible(weapon_name_input, page == 3);
-	obs_property_set_visible(import_recoil_pattern, page == 3);
-	obs_property_set_visible(weapon_select, page == 3);
-	obs_property_set_visible(delete_recoil_pattern, page == 3);
-	obs_property_set_visible(refresh_weapon_list, page == 3);
-	obs_property_set_visible(iou_threshold, page == 4);
-	obs_property_set_visible(max_lost_frames, page == 4);
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 1);
+
+	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
+	for (int i = 0; i < 5; i++) {
+		setConfigPropertiesVisible(props, i, page == 1 && i == currentConfig);
+	}
+
+	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "weapon_name_input"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "import_recoil_pattern"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "delete_recoil_pattern"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "refresh_weapon_list"), page == 1);
 #else
 	(void)page;
 #endif
@@ -612,34 +702,74 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "floating_window_width", 640);
 	obs_data_set_default_int(settings, "floating_window_height", 480);
 
-	obs_data_set_default_bool(settings, "enable_mouse_control", false);
-	obs_data_set_default_int(settings, "controller_type", 0);
-	obs_data_set_default_string(settings, "makcu_port", "COM5");
-	obs_data_set_default_int(settings, "makcu_baud_rate", 4000000);
-	obs_data_set_default_int(settings, "mouse_control_hotkey", VK_XBUTTON1);
-	obs_data_set_default_double(settings, "mouse_control_p_min", 0.153);
-	obs_data_set_default_double(settings, "mouse_control_p_max", 0.6);
-	obs_data_set_default_double(settings, "mouse_control_p_slope", 1.0);
-	obs_data_set_default_double(settings, "mouse_control_d", 0.007);
-	obs_data_set_default_double(settings, "derivative_filter_alpha", 0.2);
-	obs_data_set_default_double(settings, "baseline_compensation", 0.85);
-	obs_data_set_default_double(settings, "aim_smoothing_x", 0.7);
-	obs_data_set_default_double(settings, "aim_smoothing_y", 0.5);
-	obs_data_set_default_double(settings, "max_pixel_move", 128.0);
-	obs_data_set_default_double(settings, "dead_zone_pixels", 5.0);
-	obs_data_set_default_int(settings, "screen_offset_x", 0);
-obs_data_set_default_int(settings, "screen_offset_y", 0);
-obs_data_set_default_int(settings, "screen_width", 0);
-obs_data_set_default_int(settings, "screen_height", 0);
-obs_data_set_default_double(settings, "target_y_offset", 0.0);
+	obs_data_set_default_int(settings, "mouse_config_select", 0);
+
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+
+		snprintf(propName, sizeof(propName), "enable_config_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+
+		snprintf(propName, sizeof(propName), "hotkey_%d", i);
+		obs_data_set_default_int(settings, propName, VK_XBUTTON1);
+
+		snprintf(propName, sizeof(propName), "controller_type_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+
+		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+		obs_data_set_default_string(settings, propName, "COM5");
+
+		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+		obs_data_set_default_int(settings, propName, 4000000);
+
+		snprintf(propName, sizeof(propName), "p_min_%d", i);
+		obs_data_set_default_double(settings, propName, 0.153);
+		snprintf(propName, sizeof(propName), "p_max_%d", i);
+		obs_data_set_default_double(settings, propName, 0.6);
+		snprintf(propName, sizeof(propName), "p_slope_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "d_%d", i);
+		obs_data_set_default_double(settings, propName, 0.007);
+		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
+		obs_data_set_default_double(settings, propName, 0.2);
+		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
+		obs_data_set_default_double(settings, propName, 0.85);
+
+		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
+		obs_data_set_default_double(settings, propName, 0.7);
+		snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
+		obs_data_set_default_double(settings, propName, 0.0);
+		snprintf(propName, sizeof(propName), "max_pixel_move_%d", i);
+		obs_data_set_default_double(settings, propName, 128.0);
+		snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+
+		snprintf(propName, sizeof(propName), "screen_offset_x_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "screen_offset_y_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "screen_width_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+		snprintf(propName, sizeof(propName), "screen_height_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+
+		snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
+		obs_data_set_default_int(settings, propName, 500);
+
+		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
+		obs_data_set_default_int(settings, propName, 5);
+		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
+		obs_data_set_default_int(settings, propName, 200);
+	}
 
 	obs_data_set_default_string(settings, "config_name", "");
 	obs_data_set_default_string(settings, "config_list", "");
-	obs_data_set_default_bool(settings, "enable_y_axis_unlock", false);
-	obs_data_set_default_int(settings, "y_axis_unlock_delay", 500);
-	obs_data_set_default_bool(settings, "enable_auto_trigger", false);
-	obs_data_set_default_int(settings, "trigger_radius", 5);
-	obs_data_set_default_int(settings, "trigger_cooldown", 200);
 	obs_data_set_default_double(settings, "iou_threshold", 0.3);
 	obs_data_set_default_int(settings, "max_lost_frames", 10);
 	obs_data_set_default_int(settings, "settings_page", 0);
@@ -801,91 +931,92 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		}
 	}
 
-	tf->enableMouseControl = obs_data_get_bool(settings, "enable_mouse_control");
-	int newControllerType = (int)obs_data_get_int(settings, "controller_type");
-	std::string newMakcuPort = obs_data_get_string(settings, "makcu_port");
-	int newMakcuBaudRate = (int)obs_data_get_int(settings, "makcu_baud_rate");
-	tf->mouseControlHotkey = (int)obs_data_get_int(settings, "mouse_control_hotkey");
-	tf->mouseControlPMin = (float)obs_data_get_double(settings, "mouse_control_p_min");
-	tf->mouseControlPMax = (float)obs_data_get_double(settings, "mouse_control_p_max");
-	tf->mouseControlPSlope = (float)obs_data_get_double(settings, "mouse_control_p_slope");
-	tf->mouseControlD = (float)obs_data_get_double(settings, "mouse_control_d");
-	tf->baselineCompensation = (float)obs_data_get_double(settings, "baseline_compensation");
-	tf->aimSmoothingX = (float)obs_data_get_double(settings, "aim_smoothing_x");
-	tf->aimSmoothingY = (float)obs_data_get_double(settings, "aim_smoothing_y");
-	tf->maxPixelMove = (float)obs_data_get_double(settings, "max_pixel_move");
-	tf->deadZonePixels = (float)obs_data_get_double(settings, "dead_zone_pixels");
-	tf->screenOffsetX = (int)obs_data_get_int(settings, "screen_offset_x");
-tf->screenOffsetY = (int)obs_data_get_int(settings, "screen_offset_y");
-tf->screenWidth = (int)obs_data_get_int(settings, "screen_width");
-tf->screenHeight = (int)obs_data_get_int(settings, "screen_height");
-tf->targetYOffset = (float)obs_data_get_double(settings, "target_y_offset");
-		tf->derivativeFilterAlpha = (float)obs_data_get_double(settings, "derivative_filter_alpha");
+	tf->currentConfigIndex = (int)obs_data_get_int(settings, "mouse_config_select");
 
-	if (newControllerType != tf->controllerType ||
-	    newMakcuPort != tf->makcuPort ||
-	    newMakcuBaudRate != tf->makcuBaudRate) {
-		tf->controllerType = newControllerType;
-		tf->makcuPort = newMakcuPort;
-		tf->makcuBaudRate = newMakcuBaudRate;
-		ControllerType type = static_cast<ControllerType>(tf->controllerType);
-		tf->mouseController = MouseControllerFactory::createController(type, tf->makcuPort, tf->makcuBaudRate);
-		obs_log(LOG_INFO, "Created mouse controller with type=%d, port=%s, baud=%d", type, tf->makcuPort.c_str(), tf->makcuBaudRate);
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+
+		snprintf(propName, sizeof(propName), "enable_config_%d", i);
+		tf->mouseConfigs[i].enabled = obs_data_get_bool(settings, propName);
+
+		snprintf(propName, sizeof(propName), "hotkey_%d", i);
+		tf->mouseConfigs[i].hotkey = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "controller_type_%d", i);
+		tf->mouseConfigs[i].controllerType = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+		tf->mouseConfigs[i].makcuPort = obs_data_get_string(settings, propName);
+
+		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+		tf->mouseConfigs[i].makcuBaudRate = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "p_min_%d", i);
+		tf->mouseConfigs[i].pMin = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "p_max_%d", i);
+		tf->mouseConfigs[i].pMax = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "p_slope_%d", i);
+		tf->mouseConfigs[i].pSlope = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "d_%d", i);
+		tf->mouseConfigs[i].d = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
+		tf->mouseConfigs[i].derivativeFilterAlpha = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
+		tf->mouseConfigs[i].baselineCompensation = (float)obs_data_get_double(settings, propName);
+
+		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
+		tf->mouseConfigs[i].aimSmoothingX = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", i);
+		tf->mouseConfigs[i].aimSmoothingY = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
+		tf->mouseConfigs[i].targetYOffset = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "max_pixel_move_%d", i);
+		tf->mouseConfigs[i].maxPixelMove = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", i);
+		tf->mouseConfigs[i].deadZonePixels = (float)obs_data_get_double(settings, propName);
+
+		snprintf(propName, sizeof(propName), "screen_offset_x_%d", i);
+		tf->mouseConfigs[i].screenOffsetX = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "screen_offset_y_%d", i);
+		tf->mouseConfigs[i].screenOffsetY = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "screen_width_%d", i);
+		tf->mouseConfigs[i].screenWidth = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "screen_height_%d", i);
+		tf->mouseConfigs[i].screenHeight = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", i);
+		tf->mouseConfigs[i].enableYAxisUnlock = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
+		tf->mouseConfigs[i].yAxisUnlockDelay = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+		tf->mouseConfigs[i].enableAutoTrigger = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
+		tf->mouseConfigs[i].triggerRadius = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
+		tf->mouseConfigs[i].triggerCooldown = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "weapon_select_%d", i);
+		tf->mouseConfigs[i].weaponName = obs_data_get_string(settings, propName);
 	}
 
-	if (tf->mouseController && tf->enableMouseControl) {
-		MouseControllerConfig mcConfig;
-		mcConfig.enableMouseControl = tf->enableMouseControl;
-		mcConfig.hotkeyVirtualKey = tf->mouseControlHotkey;
-		// 根据当前FOV模式设置FOV半径
-		mcConfig.fovRadiusPixels = tf->useDynamicFOV && tf->isInFOV2Mode ? tf->fovRadius2 : tf->fovRadius;
-		mcConfig.pidPMin = tf->mouseControlPMin;
-		mcConfig.pidPMax = tf->mouseControlPMax;
-		mcConfig.pidPSlope = tf->mouseControlPSlope;
-		mcConfig.pidD = tf->mouseControlD;
-		mcConfig.baselineCompensation = tf->baselineCompensation;
-		mcConfig.aimSmoothingX = tf->aimSmoothingX;
-		mcConfig.aimSmoothingY = tf->aimSmoothingY;
-		mcConfig.maxPixelMove = tf->maxPixelMove;
-		mcConfig.deadZonePixels = tf->deadZonePixels;
-		mcConfig.sourceCanvasPosX = 0.0f;
-		mcConfig.sourceCanvasPosY = 0.0f;
-		mcConfig.sourceCanvasScaleX = 1.0f;
-		mcConfig.sourceCanvasScaleY = 1.0f;
-		mcConfig.sourceWidth = obs_source_get_base_width(tf->source);
-		mcConfig.sourceHeight = obs_source_get_base_height(tf->source);
-		mcConfig.screenOffsetX = tf->screenOffsetX;
-		mcConfig.screenOffsetY = tf->screenOffsetY;
-		mcConfig.screenWidth = tf->screenWidth;
-		mcConfig.screenHeight = tf->screenHeight;
-		mcConfig.targetYOffset = tf->targetYOffset;
-		mcConfig.derivativeFilterAlpha = tf->derivativeFilterAlpha;
-		mcConfig.controllerType = static_cast<ControllerType>(tf->controllerType);
-		mcConfig.makcuPort = tf->makcuPort;
-		mcConfig.makcuBaudRate = tf->makcuBaudRate;
-		mcConfig.yUnlockEnabled = tf->enableYAxisUnlock;
-		mcConfig.yUnlockDelayMs = tf->yAxisUnlockDelay;
-		mcConfig.autoTriggerEnabled = tf->enableAutoTrigger;
-		mcConfig.autoTriggerRadius = tf->triggerRadius;
-		mcConfig.autoTriggerCooldownMs = tf->triggerCooldown;
-		tf->mouseController->updateConfig(mcConfig);
+	bool hasEnabledConfig = false;
+	for (int i = 0; i < 5; i++) {
+		if (tf->mouseConfigs[i].enabled) {
+			hasEnabledConfig = true;
+			break;
+		}
+	}
+
+	if (!tf->mouseController && hasEnabledConfig) {
+		tf->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI, "", 0);
+		obs_log(LOG_INFO, "Created mouse controller for multi-config mode");
 	}
 
 	tf->configName = obs_data_get_string(settings, "config_name");
 	tf->configList = obs_data_get_string(settings, "config_list");
-	tf->enableYAxisUnlock = obs_data_get_bool(settings, "enable_y_axis_unlock");
-	tf->yAxisUnlockDelay = (int)obs_data_get_int(settings, "y_axis_unlock_delay");
-	tf->enableAutoTrigger = obs_data_get_bool(settings, "enable_auto_trigger");
-	tf->triggerRadius = (int)obs_data_get_int(settings, "trigger_radius");
-	tf->triggerCooldown = (int)obs_data_get_int(settings, "trigger_cooldown");
 	tf->iouThreshold = (float)obs_data_get_double(settings, "iou_threshold");
 	tf->maxLostFrames = (int)obs_data_get_int(settings, "max_lost_frames");
-	
-	const char* selectedWeapon = obs_data_get_string(settings, "weapon_select");
-	if (selectedWeapon && strlen(selectedWeapon) > 0) {
-		tf->mouseController->setCurrentWeapon(selectedWeapon);
-	} else {
-		tf->mouseController->setCurrentWeapon("");
 	}
 #endif
 
@@ -1016,7 +1147,7 @@ static bool importRecoilPattern(obs_properties_t *props, obs_property_t *propert
 
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = "XML Files (*.xml)\0*.xml\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = "宏文件 (*.xml;*.lua)\0*.xml;*.lua\0XML Files (*.xml)\0*.xml\0LUA Files (*.lua)\0*.lua\0All Files (*.*)\0*.*\0";
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrTitle = "选择罗技压枪宏文件";
@@ -2048,6 +2179,58 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	}
 
 #ifdef _WIN32
+	auto getActiveConfig = [&tf]() -> int {
+		for (int i = 0; i < 5; i++) {
+			if (tf->mouseConfigs[i].enabled) {
+				if ((GetAsyncKeyState(tf->mouseConfigs[i].hotkey) & 0x8000) != 0) {
+					return i;
+				}
+			}
+		}
+		return -1;
+	};
+
+	auto applyConfigToController = [&tf](int configIndex) {
+		if (!tf->mouseController || configIndex < 0 || configIndex >= 5) return;
+		
+		const auto& cfg = tf->mouseConfigs[configIndex];
+		MouseControllerConfig mcConfig;
+		mcConfig.enableMouseControl = true;
+		mcConfig.hotkeyVirtualKey = cfg.hotkey;
+		mcConfig.fovRadiusPixels = tf->useDynamicFOV && tf->isInFOV2Mode ? tf->fovRadius2 : tf->fovRadius;
+		mcConfig.pidPMin = cfg.pMin;
+		mcConfig.pidPMax = cfg.pMax;
+		mcConfig.pidPSlope = cfg.pSlope;
+		mcConfig.pidD = cfg.d;
+		mcConfig.baselineCompensation = cfg.baselineCompensation;
+		mcConfig.aimSmoothingX = cfg.aimSmoothingX;
+		mcConfig.aimSmoothingY = cfg.aimSmoothingY;
+		mcConfig.maxPixelMove = cfg.maxPixelMove;
+		mcConfig.deadZonePixels = cfg.deadZonePixels;
+		mcConfig.sourceCanvasPosX = 0.0f;
+		mcConfig.sourceCanvasPosY = 0.0f;
+		mcConfig.sourceCanvasScaleX = 1.0f;
+		mcConfig.sourceCanvasScaleY = 1.0f;
+		mcConfig.sourceWidth = obs_source_get_base_width(tf->source);
+		mcConfig.sourceHeight = obs_source_get_base_height(tf->source);
+		mcConfig.screenOffsetX = cfg.screenOffsetX;
+		mcConfig.screenOffsetY = cfg.screenOffsetY;
+		mcConfig.screenWidth = cfg.screenWidth;
+		mcConfig.screenHeight = cfg.screenHeight;
+		mcConfig.targetYOffset = cfg.targetYOffset;
+		mcConfig.derivativeFilterAlpha = cfg.derivativeFilterAlpha;
+		mcConfig.controllerType = static_cast<ControllerType>(cfg.controllerType);
+		mcConfig.makcuPort = cfg.makcuPort;
+		mcConfig.makcuBaudRate = cfg.makcuBaudRate;
+		mcConfig.yUnlockEnabled = cfg.enableYAxisUnlock;
+		mcConfig.yUnlockDelayMs = cfg.yAxisUnlockDelay;
+		mcConfig.autoTriggerEnabled = cfg.enableAutoTrigger;
+		mcConfig.autoTriggerRadius = cfg.triggerRadius;
+		mcConfig.autoTriggerCooldownMs = cfg.triggerCooldown;
+		tf->mouseController->updateConfig(mcConfig);
+		tf->mouseController->setCurrentWeapon(cfg.weaponName);
+	};
+
 	// 动态FOV切换逻辑
 	if (tf->useDynamicFOV) {
 		std::vector<Detection> detectionsCopy;
@@ -2092,39 +2275,45 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			}
 		}
 
-		// 更新鼠标控制器的FOV半径
-		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
-			// 注意：这里我们无法直接获取当前配置，所以在update函数中会处理FOV半径
-			// 我们直接传递检测结果并tick
-			int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
-			{
-				std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
-				frameWidth = tf->inferenceFrameWidth;
-				frameHeight = tf->inferenceFrameHeight;
-				cropX = tf->cropOffsetX;
-				cropY = tf->cropOffsetY;
+		// 更新鼠标控制器
+		if (tf->mouseController && tf->isInferencing) {
+			int activeConfig = getActiveConfig();
+			if (activeConfig >= 0) {
+				applyConfigToController(activeConfig);
+				int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
+				{
+					std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
+					frameWidth = tf->inferenceFrameWidth;
+					frameHeight = tf->inferenceFrameHeight;
+					cropX = tf->cropOffsetX;
+					cropY = tf->cropOffsetY;
+				}
+				tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+				tf->mouseController->tick();
 			}
-			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-			tf->mouseController->tick();
 		}
 	} else {
 		// 不使用动态FOV，正常处理
-		if (tf->mouseController && tf->enableMouseControl && tf->isInferencing) {
-			std::vector<Detection> detectionsCopy;
-			int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
-			{
-				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-				detectionsCopy = tf->detections;
+		if (tf->mouseController && tf->isInferencing) {
+			int activeConfig = getActiveConfig();
+			if (activeConfig >= 0) {
+				applyConfigToController(activeConfig);
+				std::vector<Detection> detectionsCopy;
+				int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
+				{
+					std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+					detectionsCopy = tf->detections;
+				}
+				{
+					std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
+					frameWidth = tf->inferenceFrameWidth;
+					frameHeight = tf->inferenceFrameHeight;
+					cropX = tf->cropOffsetX;
+					cropY = tf->cropOffsetY;
+				}
+				tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+				tf->mouseController->tick();
 			}
-			{
-				std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
-				frameWidth = tf->inferenceFrameWidth;
-				frameHeight = tf->inferenceFrameHeight;
-				cropX = tf->cropOffsetX;
-				cropY = tf->cropOffsetY;
-			}
-			tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-			tf->mouseController->tick();
 		}
 	}
 #endif
