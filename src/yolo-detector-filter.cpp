@@ -44,6 +44,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	std::vector<Detection> detections;
 	std::mutex detectionsMutex;
+	std::shared_ptr<std::vector<Detection>> sharedDetections;
 
 	std::vector<Detection> trackedTargets;
 	std::mutex trackedTargetsMutex;
@@ -211,6 +212,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	std::array<MouseControlConfig, MAX_CONFIGS> mouseConfigs;
 	int currentConfigIndex;
+	int lastAppliedConfigIndex;
 	std::unique_ptr<MouseControllerInterface> mouseController;
 
 	std::string configName;
@@ -1784,6 +1786,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::lock_guard<std::mutex> lock(filter->detectionsMutex);
 			filter->detections = std::move(trackedDetections);
+			filter->sharedDetections = std::make_shared<std::vector<Detection>>(filter->detections);
 		}
 
 		{
@@ -2060,6 +2063,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 			instance->mouseConfigs[i] = yolo_detector_filter::MouseControlConfig();
 		}
 		instance->currentConfigIndex = 0;
+		instance->lastAppliedConfigIndex = -1;
 		instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI, "", 0);
 
 		instance->configName = "";
@@ -2209,8 +2213,12 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		return -1;
 	};
 
-	auto applyConfigToController = [&tf](int configIndex) {
+	auto applyConfigToController = [&tf](int configIndex, bool forceUpdate = false) {
 		if (configIndex < 0 || configIndex >= 5) return;
+		
+		if (!forceUpdate && tf->lastAppliedConfigIndex == configIndex) {
+			return;
+		}
 		
 		const auto& cfg = tf->mouseConfigs[configIndex];
 		
@@ -2266,28 +2274,29 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.targetSwitchDelayMs = tf->targetSwitchDelayMs;
 		mcConfig.targetSwitchTolerance = tf->targetSwitchTolerance;
 		tf->mouseController->updateConfig(mcConfig);
+		tf->lastAppliedConfigIndex = configIndex;
 	};
 
-	// 动态FOV切换逻辑
+	// 动态 FOV 切换逻辑
 	if (tf->useDynamicFOV) {
-		std::vector<Detection> detectionsCopy;
-		{
-			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-			detectionsCopy = tf->detections;
+		// 使用 shared_ptr 避免拷贝
+		auto detectionsPtr = tf->sharedDetections;
+		if (!detectionsPtr) {
+			detectionsPtr = std::make_shared<std::vector<Detection>>();
 		}
 
 		// 画面中心
 		float centerX = 0.5f;
 		float centerY = 0.5f;
 
-		// 当前使用的FOV半径
+		// 当前使用的 FOV 半径
 		float currentFOVRadius = tf->isInFOV2Mode ? 
 			(static_cast<float>(tf->fovRadius2) / static_cast<float>(obs_source_get_base_width(tf->source))) :
 			(static_cast<float>(tf->fovRadius) / static_cast<float>(obs_source_get_base_width(tf->source)));
 
-		// 检查FOV内是否有目标
+		// 检查 FOV 内是否有目标
 		bool hasTargetInCurrentFOV = false;
-		for (const auto& det : detectionsCopy) {
+		for (const auto& det : *detectionsPtr) {
 			float dx = det.centerX - centerX;
 			float dy = det.centerY - centerY;
 			float distance = sqrtf(dx * dx + dy * dy);
@@ -2312,7 +2321,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			}
 		}
 
-		// 更新鼠标控制器 - 无论是否在推理，只要有鼠标控制器就调用tick()确保能释放自动扳机
+		// 更新鼠标控制器 - 无论是否在推理，只要有鼠标控制器就调用 tick() 确保能释放自动扳机
 		if (tf->mouseController) {
 			if (tf->isInferencing) {
 				int activeConfig = getActiveConfig();
@@ -2326,7 +2335,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropX = tf->cropOffsetX;
 						cropY = tf->cropOffsetY;
 					}
-					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+					tf->mouseController->setDetectionsWithFrameSize(*detectionsPtr, frameWidth, frameHeight, cropX, cropY);
 					tf->mouseController->tick();
 				} else {
 					MouseControllerConfig mcConfig;
@@ -2343,18 +2352,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			}
 		}
 	} else {
-		// 不使用动态FOV，正常处理 - 无论是否在推理，只要有鼠标控制器就调用tick()确保能释放自动扳机
+		// 不使用动态 FOV，正常处理 - 无论是否在推理，只要有鼠标控制器就调用 tick() 确保能释放自动扳机
 		if (tf->mouseController) {
 			if (tf->isInferencing) {
 				int activeConfig = getActiveConfig();
 				if (activeConfig >= 0) {
 					applyConfigToController(activeConfig);
-					std::vector<Detection> detectionsCopy;
-					int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
-					{
-						std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-						detectionsCopy = tf->detections;
+					// 使用 shared_ptr 避免拷贝
+					auto detectionsPtr = tf->sharedDetections;
+					if (!detectionsPtr) {
+						detectionsPtr = std::make_shared<std::vector<Detection>>();
 					}
+					int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
 					{
 						std::lock_guard<std::mutex> lock(tf->inferenceFrameSizeMutex);
 						frameWidth = tf->inferenceFrameWidth;
@@ -2362,7 +2371,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropX = tf->cropOffsetX;
 						cropY = tf->cropOffsetY;
 					}
-					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+					tf->mouseController->setDetectionsWithFrameSize(*detectionsPtr, frameWidth, frameHeight, cropX, cropY);
 					tf->mouseController->tick();
 				} else {
 					MouseControllerConfig mcConfig;
@@ -2511,12 +2520,12 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			cv::Mat croppedFrame = originalImage(cv::Rect(cropX, cropY, actualCropWidth, actualCropHeight)).clone();
 
 			size_t detectionCount = 0;
-			std::vector<Detection> detectionsCopy;
-			{
-				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-				detectionCount = tf->detections.size();
-				detectionsCopy = tf->detections;
+			// 使用 shared_ptr 避免拷贝
+			auto detectionsPtr = tf->sharedDetections;
+			if (!detectionsPtr) {
+				detectionsPtr = std::make_shared<std::vector<Detection>>();
 			}
+			detectionCount = detectionsPtr->size();
 
 			if (tf->showBBox) {
 				int lineWidth = tf->bboxLineWidth;
@@ -2525,7 +2534,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				float b = (tf->bboxColor & 0xFF) / 255.0f;
 				cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
 
-				for (const auto& det : detectionsCopy) {
+				for (const auto& det : *detectionsPtr) {
 					int x = static_cast<int>(det.x * originalImage.cols) - cropX;
 					int y = static_cast<int>(det.y * originalImage.rows) - cropY;
 					int w = static_cast<int>(det.width * originalImage.cols);

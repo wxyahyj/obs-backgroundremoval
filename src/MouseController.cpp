@@ -33,6 +33,8 @@ MouseController::MouseController()
     , currentTargetTrackId(-1)
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
+    , coordinateDebugLoggedOnce(false)
+    , targetSwitchLoggedOnce(false)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -149,16 +151,15 @@ void MouseController::tick()
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
+    // Use member variable instead {
         obs_log(LOG_INFO, "[MouseController] 坐标调试:");
-        obs_log(LOG_INFO, "  推理帧尺寸: %dx%d", frameWidth, frameHeight);
-        obs_log(LOG_INFO, "  目标归一化中心: (%.4f, %.4f)", target->centerX, target->centerY);
+        obs_log(LOG_INFO, "  推理帧尺�? %dx%d", frameWidth, frameHeight);
+        obs_log(LOG_INFO, "  目标归一化中�? (%.4f, %.4f)", target->centerX, target->centerY);
         obs_log(LOG_INFO, "  目标像素位置: (%.1f, %.1f)", targetPixelX, targetPixelY);
         obs_log(LOG_INFO, "  FOV中心: (%.1f, %.1f)", fovCenterX, fovCenterY);
-        obs_log(LOG_INFO, "  误差(移动量): (%.1f, %.1f)", errorX, errorY);
+        obs_log(LOG_INFO, "  误差(移动�?: (%.1f, %.1f)", errorX, errorY);
         obs_log(LOG_INFO, "  屏幕偏移: (%d, %d)", config.screenOffsetX, config.screenOffsetY);
-        loggedOnce = true;
+        \/\/ loggedOnce removed
     }
 
     float distanceSquared = errorX * errorX + errorY * errorY;
@@ -315,11 +316,10 @@ Detection* MouseController::selectTarget()
     float bestDistance = std::sqrt(minDistanceSquared);
     auto now = std::chrono::steady_clock::now();
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
+    // Use member variable instead {
         obs_log(LOG_INFO, "[MouseController-TargetSwitch] targetSwitchDelayMs=%dms, targetSwitchTolerance=%.2f", 
                 config.targetSwitchDelayMs, config.targetSwitchTolerance);
-        loggedOnce = true;
+        \/\/ loggedOnce removed
     }
 
     if (currentTargetTrackId == -1) {

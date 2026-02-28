@@ -79,6 +79,9 @@ private:
     std::chrono::steady_clock::time_point targetLockStartTime;
     float currentTargetDistance;
     
+    bool coordinateDebugLoggedOnce;
+    bool targetSwitchLoggedOnce;
+    
     std::string currentWeapon;
 };
 

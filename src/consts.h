@@ -33,4 +33,20 @@ const char *const PLUGIN_INFO_TEMPLATE =
 const char *const PLUGIN_INFO_TEMPLATE_UPDATE_AVAILABLE =
 	"<center><a href=\"https://github.com/royshil/obs-backgroundremoval/releases\">🚀 Update available! (%1)</a></center>";
 
+// ========================================
+// 真正的编译期常量（不可变的）
+// ========================================
+
+// 最大配置数量（固定 5 个配置槽）
+constexpr int MAX_CONFIGS = 5;
+
+// 匈牙利算法最大距离阈值（固定算法参数）
+constexpr float HUNGARIAN_MAX_DISTANCE = 100.0f;
+
+// 目标丢失最大帧数（固定逻辑）
+constexpr int MAX_LOST_FRAMES = 30;
+
+// 最小检测置信度（硬阈值，低于此值直接过滤）
+constexpr float MIN_CONFIDENCE_THRESHOLD = 0.3f;
+
 #endif /* CONSTS_H */

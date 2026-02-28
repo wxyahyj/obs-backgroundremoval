@@ -37,6 +37,8 @@ MAKCUMouseController::MAKCUMouseController()
     , currentTargetTrackId(-1)
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
+    , targetSwitchLoggedOnce(false)
+    , coordinateConversionLoggedOnce(false)
 {
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
@@ -77,6 +79,8 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , currentTargetTrackId(-1)
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
+    , targetSwitchLoggedOnce(false)
+    , coordinateConversionLoggedOnce(false)
 {
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
@@ -492,11 +496,10 @@ Detection* MAKCUMouseController::selectTarget()
     float bestDistance = std::sqrt(minDistanceSquared);
     auto now = std::chrono::steady_clock::now();
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
+    if (!targetSwitchLoggedOnce) {
         obs_log(LOG_INFO, "[MAKCU-TargetSwitch] targetSwitchDelayMs=%dms, targetSwitchTolerance=%.2f", 
                 config.targetSwitchDelayMs, config.targetSwitchTolerance);
-        loggedOnce = true;
+        targetSwitchLoggedOnce = true;
     }
 
     if (currentTargetTrackId == -1) {
@@ -574,15 +577,14 @@ POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
     float screenPixelX = det.centerX * frameWidth + config.screenOffsetX;
     float screenPixelY = det.centerY * frameHeight - config.targetYOffset + config.screenOffsetY;
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
+    if (!coordinateConversionLoggedOnce) {
         obs_log(LOG_INFO, "[MAKCU] 坐标转换调试信息:");
         obs_log(LOG_INFO, "[MAKCU]   屏幕尺寸: %dx%d", cachedScreenWidth, cachedScreenHeight);
         obs_log(LOG_INFO, "[MAKCU]   推理帧尺寸: %dx%d", frameWidth, frameHeight);
-        obs_log(LOG_INFO, "[MAKCU]   检测中心(归一化): %.4f, %.4f", det.centerX, det.centerY);
+        obs_log(LOG_INFO, "[MAKCU]   检测中心 (归一化): %.4f, %.4f", det.centerX, det.centerY);
         obs_log(LOG_INFO, "[MAKCU]   屏幕偏移: %d, %d", config.screenOffsetX, config.screenOffsetY);
         obs_log(LOG_INFO, "[MAKCU]   最终屏幕坐标: %.1f, %.1f", screenPixelX, screenPixelY);
-        loggedOnce = true;
+        coordinateConversionLoggedOnce = true;
     }
 
     POINT result;
