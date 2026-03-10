@@ -229,14 +229,23 @@ void MAKCUMouseController::updateConfig(const MouseControllerConfig& newConfig)
 {
     std::lock_guard<std::mutex> lock(mutex);
     
-    obs_log(LOG_INFO, "[MAKCU] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms, targetSwitchDelay=%dms, targetSwitchTolerance=%.2f",
-            newConfig.enableMouseControl, newConfig.autoTriggerEnabled, newConfig.autoTriggerFireDuration, newConfig.autoTriggerInterval,
-            newConfig.targetSwitchDelayMs, newConfig.targetSwitchTolerance);
+    bool configChanged = (config.enableMouseControl != newConfig.enableMouseControl ||
+                          config.autoTriggerEnabled != newConfig.autoTriggerEnabled ||
+                          config.autoTriggerFireDuration != newConfig.autoTriggerFireDuration ||
+                          config.autoTriggerInterval != newConfig.autoTriggerInterval ||
+                          config.targetSwitchDelayMs != newConfig.targetSwitchDelayMs ||
+                          config.targetSwitchTolerance != newConfig.targetSwitchTolerance);
     
     bool portChanged = (newConfig.makcuPort != portName);
     bool baudChanged = (newConfig.makcuBaudRate != baudRate);
     
     config = newConfig;
+    
+    if (configChanged) {
+        obs_log(LOG_INFO, "[MAKCU] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms, targetSwitchDelay=%dms, targetSwitchTolerance=%.2f",
+                newConfig.enableMouseControl, newConfig.autoTriggerEnabled, newConfig.autoTriggerFireDuration, newConfig.autoTriggerInterval,
+                newConfig.targetSwitchDelayMs, newConfig.targetSwitchTolerance);
+    }
     
     if (portChanged || baudChanged) {
         portName = newConfig.makcuPort;
@@ -270,7 +279,6 @@ void MAKCUMouseController::tick()
 
     if (!config.enableMouseControl) {
         if (autoTriggerHolding) {
-            obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Releasing because enableMouseControl=false");
             releaseAutoTrigger();
         }
         autoTriggerWaitingForDelay = false;
@@ -281,9 +289,6 @@ void MAKCUMouseController::tick()
     bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
 
     if (!hotkeyPressed) {
-        if (autoTriggerHolding) {
-            obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Releasing because hotkey released");
-        }
         if (isMoving) {
             isMoving = false;
             resetPidState();
@@ -368,12 +373,9 @@ void MAKCUMouseController::tick()
 
         if (autoTriggerHolding) {
             auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
-            obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Holding: fireElapsed=%lldms, currentFireDuration=%dms", 
-                    fireElapsed, currentFireDuration);
             if (fireElapsed >= currentFireDuration) {
                 releaseAutoTrigger();
                 lastAutoTriggerTime = now;
-                obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Released after %lldms", fireElapsed);
             }
         } else {
             if (distance < config.autoTriggerRadius) {
@@ -388,8 +390,6 @@ void MAKCUMouseController::tick()
                 if (delayElapsed >= totalDelay) {
                     auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
                     if (cooldownElapsed >= config.autoTriggerInterval) {
-                        obs_log(LOG_INFO, "[MAKCU-AutoTrigger] Firing: delay=%lldms, cooldown=%lldms, fireDuration=%dms", 
-                                delayElapsed, cooldownElapsed, config.autoTriggerFireDuration);
                         performAutoClick();
                     }
                 }
