@@ -117,6 +117,8 @@ void MouseController::tick()
         if (elapsed >= config.yUnlockDelayMs) {
             yUnlockActive = true;
         }
+    } else {
+        yUnlockActive = false;
     }
 
     Detection* target = selectTarget();
