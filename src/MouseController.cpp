@@ -508,8 +508,15 @@ float MouseController::calculateAdaptiveD(float distance, float deltaError, floa
                                                overshootFactor * 0.2f);
     
     float finalD = baseD * adaptiveFactor;
+    finalD = std::max(config.pidDMin, std::min(finalD, config.pidDMax));
     
-    return std::max(config.pidDMin, std::min(finalD, config.pidDMax));
+    static int logCounter = 0;
+    if (logCounter++ % 100 == 0) {
+        obs_log(LOG_INFO, "[AdaptiveD] enabled=1, jitter=%.2f, dist=%.2f, over=%.2f, factor=%.3f, baseD=%.4f, finalD=%.4f, min=%.3f, max=%.3f",
+                jitterFactor, distanceFactor, overshootFactor, adaptiveFactor, baseD, finalD, config.pidDMin, config.pidDMax);
+    }
+    
+    return finalD;
 }
 
 void MouseController::resetMotionState()

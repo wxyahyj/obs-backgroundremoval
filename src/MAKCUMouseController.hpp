@@ -57,6 +57,10 @@ private:
     float pidPreviousErrorY;
     float filteredDeltaErrorX;
     float filteredDeltaErrorY;
+    float previousErrorX;
+    float previousErrorY;
+    int errorSignChangeCount;
+    std::chrono::steady_clock::time_point lastSignChangeTime;
     
     bool connectSerial();
     void disconnectSerial();
@@ -70,6 +74,7 @@ private:
     void wheel(int delta);
     
     float calculateDynamicP(float distance);
+    float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
     void resetPidState();
