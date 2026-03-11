@@ -153,6 +153,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int makcuBaudRate;
 		bool enableYAxisUnlock;
 		int yAxisUnlockDelay;
+		bool enableAdaptiveD;
+		float pidDMin;
+		float pidDMax;
+		float dAdaptiveStrength;
+		float dJitterThreshold;
 		bool enableAutoTrigger;
 		int triggerRadius;
 		int triggerCooldown;
@@ -190,6 +195,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			makcuBaudRate = 4000000;
 			enableYAxisUnlock = false;
 			yAxisUnlockDelay = 500;
+			enableAdaptiveD = false;
+			pidDMin = 0.001f;
+			pidDMax = 1.0f;
+			dAdaptiveStrength = 0.5f;
+			dJitterThreshold = 10.0f;
 			enableAutoTrigger = false;
 			triggerRadius = 5;
 			triggerCooldown = 200;
@@ -423,7 +433,18 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", i);
 		obs_properties_add_bool(props, propName, "启用长按解锁Y轴");
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
-		obs_properties_add_int_slider(props, propName, "Y轴解锁延迟(ms)", 100, 2000, 50);
+		obs_properties_add_int_slider(props, propName, "Y 轴解锁延迟 (ms)", 100, 2000, 50);
+
+		snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", i);
+		obs_properties_add_bool(props, propName, "启用自适应 D 项");
+		snprintf(propName, sizeof(propName), "pid_d_min_%d", i);
+		obs_properties_add_float_slider(props, propName, "D 项最小值", 0.000, 1.0, 0.001);
+		snprintf(propName, sizeof(propName), "pid_d_max_%d", i);
+		obs_properties_add_float_slider(props, propName, "D 项最大值", 0.000, 1.0, 0.001);
+		snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", i);
+		obs_properties_add_float_slider(props, propName, "自适应强度", 0.0, 1.0, 0.05);
+		snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", i);
+		obs_properties_add_float_slider(props, propName, "抖动阈值 (像素)", 0.0, 50.0, 1.0);
 
 		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
 		obs_properties_add_bool(props, propName, "启用自动扳机");
@@ -533,6 +554,17 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "pid_d_min_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "pid_d_max_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 
 	snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", configIndex);
@@ -801,6 +833,17 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		obs_data_set_default_int(settings, propName, 500);
 
+		snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "pid_d_min_%d", i);
+		obs_data_set_default_double(settings, propName, 0.001);
+		snprintf(propName, sizeof(propName), "pid_d_max_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", i);
+		obs_data_set_default_double(settings, propName, 10.0);
+
 		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
@@ -1051,6 +1094,17 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].enableYAxisUnlock = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		tf->mouseConfigs[i].yAxisUnlockDelay = (int)obs_data_get_int(settings, propName);
+
+		snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", i);
+		tf->mouseConfigs[i].enableAdaptiveD = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "pid_d_min_%d", i);
+		tf->mouseConfigs[i].pidDMin = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "pid_d_max_%d", i);
+		tf->mouseConfigs[i].pidDMax = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", i);
+		tf->mouseConfigs[i].dAdaptiveStrength = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", i);
+		tf->mouseConfigs[i].dJitterThreshold = (float)obs_data_get_double(settings, propName);
 
 		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
 		tf->mouseConfigs[i].enableAutoTrigger = obs_data_get_bool(settings, propName);
@@ -2249,6 +2303,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.makcuBaudRate = cfg.makcuBaudRate;
 		mcConfig.yUnlockEnabled = cfg.enableYAxisUnlock;
 		mcConfig.yUnlockDelayMs = cfg.yAxisUnlockDelay;
+		mcConfig.adaptiveDEnabled = cfg.enableAdaptiveD;
+		mcConfig.pidDMin = cfg.pidDMin;
+		mcConfig.pidDMax = cfg.pidDMax;
+		mcConfig.dAdaptiveStrength = cfg.dAdaptiveStrength;
+		mcConfig.dJitterThreshold = cfg.dJitterThreshold;
 		mcConfig.autoTriggerEnabled = cfg.enableAutoTrigger;
 		mcConfig.autoTriggerRadius = cfg.triggerRadius;
 		mcConfig.autoTriggerCooldownMs = cfg.triggerCooldown;

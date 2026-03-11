@@ -53,7 +53,12 @@ private:
     float pidPreviousErrorY;
     float filteredDeltaErrorX;
     float filteredDeltaErrorY;
+    float previousErrorX;
+    float previousErrorY;
+    int errorSignChangeCount;
+    std::chrono::steady_clock::time_point lastSignChangeTime;
     float calculateDynamicP(float distance);
+    float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
     void moveMouseTo(const POINT& pos);
