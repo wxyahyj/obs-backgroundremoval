@@ -218,7 +218,14 @@ std::string ConfigManager::configToJson(const ExtendedMouseControllerConfig& con
     oss << "  \"yUnlockEnabled\": " << (config.yUnlockEnabled ? "true" : "false") << ",\n";
     oss << "  \"autoTriggerEnabled\": " << (config.autoTriggerEnabled ? "true" : "false") << ",\n";
     oss << "  \"autoTriggerRadius\": " << config.autoTriggerRadius << ",\n";
-    oss << "  \"autoTriggerCooldownMs\": " << config.autoTriggerCooldownMs << "\n";
+    oss << "  \"autoTriggerCooldownMs\": " << config.autoTriggerCooldownMs << ",\n";
+    oss << "  \"integralLimit\": " << config.integralLimit << ",\n";
+    oss << "  \"integralSeparationThreshold\": " << config.integralSeparationThreshold << ",\n";
+    oss << "  \"integralDeadZone\": " << config.integralDeadZone << ",\n";
+    oss << "  \"pGainRampInitialScale\": " << config.pGainRampInitialScale << ",\n";
+    oss << "  \"pGainRampDuration\": " << config.pGainRampDuration << ",\n";
+    oss << "  \"predictionWeightX\": " << config.predictionWeightX << ",\n";
+    oss << "  \"predictionWeightY\": " << config.predictionWeightY << "\n";
     oss << "}\n";
     return oss.str();
 }
@@ -416,6 +423,27 @@ bool ConfigManager::jsonToConfig(const std::string& json, ExtendedMouseControlle
     
     numVal = extractNumber("autoTriggerCooldownMs");
     if (numVal.first) config.autoTriggerCooldownMs = static_cast<int>(numVal.second);
+    
+    numVal = extractNumber("integralLimit");
+    if (numVal.first) config.integralLimit = static_cast<float>(numVal.second);
+    
+    numVal = extractNumber("integralSeparationThreshold");
+    if (numVal.first) config.integralSeparationThreshold = static_cast<float>(numVal.second);
+    
+    numVal = extractNumber("integralDeadZone");
+    if (numVal.first) config.integralDeadZone = static_cast<float>(numVal.second);
+    
+    numVal = extractNumber("pGainRampInitialScale");
+    if (numVal.first) config.pGainRampInitialScale = static_cast<float>(numVal.second);
+    
+    numVal = extractNumber("pGainRampDuration");
+    if (numVal.first) config.pGainRampDuration = static_cast<float>(numVal.second);
+    
+    numVal = extractNumber("predictionWeightX");
+    if (numVal.first) config.predictionWeightX = static_cast<float>(numVal.second);
+    
+    numVal = extractNumber("predictionWeightY");
+    if (numVal.first) config.predictionWeightY = static_cast<float>(numVal.second);
     
     return true;
 }

@@ -10,6 +10,27 @@
 #include <chrono>
 #include "MouseControllerInterface.hpp"
 
+class DerivativePredictor {
+private:
+    float velocityX;
+    float velocityY;
+    float accelerationX;
+    float accelerationY;
+    float velocitySmoothFactor;
+    float accelerationSmoothFactor;
+    float maxPredictionTime;
+    float previousErrorX;
+    float previousErrorY;
+    float previousVelocityX;
+    float previousVelocityY;
+
+public:
+    DerivativePredictor();
+    void update(float errorX, float errorY, float deltaTime);
+    void predict(float predictionTime, float& predictedX, float& predictedY);
+    void reset();
+};
+
 class MouseController : public MouseControllerInterface {
 public:
     MouseController();
@@ -57,8 +78,21 @@ private:
     float previousErrorY;
     int errorSignChangeCount;
     std::chrono::steady_clock::time_point lastSignChangeTime;
+    
+    // 积分控制相关
+    float integralX;
+    float integralY;
+    
+    // 运动预测器
+    DerivativePredictor predictor;
+    
+    // 时间步长自适应
+    std::chrono::steady_clock::time_point lastTickTime;
+    float deltaTime;
+    
     float calculateDynamicP(float distance);
     float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
+    float calculateIntegral(float error, float& integral, float deltaTime);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
     void moveMouseTo(const POINT& pos);
@@ -69,6 +103,7 @@ private:
     void releaseAutoTrigger();
     int getRandomDelay();
     int getRandomDuration();
+    float getCurrentPGain();
     
     std::chrono::steady_clock::time_point hotkeyPressStartTime;
     bool yUnlockActive;

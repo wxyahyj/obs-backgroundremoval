@@ -64,6 +64,14 @@ struct MouseControllerConfig {
     int autoTriggerMoveCompensation = 0;
     int targetSwitchDelayMs = 500;
     float targetSwitchTolerance = 0.15f;
+    // 新功能配置选项
+    float integralLimit = 100.0f;
+    float integralSeparationThreshold = 50.0f;
+    float integralDeadZone = 5.0f;
+    float pGainRampInitialScale = 0.6f;
+    float pGainRampDuration = 0.5f;
+    float predictionWeightX = 0.5f;
+    float predictionWeightY = 0.1f;
 };
 
 class MouseControllerInterface {

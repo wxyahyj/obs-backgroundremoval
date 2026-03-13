@@ -7,6 +7,58 @@
 #include <algorithm>
 #include <random>
 
+DerivativePredictor::DerivativePredictor()
+    : velocityX(0.0f)
+    , velocityY(0.0f)
+    , accelerationX(0.0f)
+    , accelerationY(0.0f)
+    , velocitySmoothFactor(0.7f)
+    , accelerationSmoothFactor(0.5f)
+    , maxPredictionTime(0.1f)
+{}
+
+void DerivativePredictor::update(float errorX, float errorY, float deltaTime)
+{
+    if (deltaTime <= 0.0f) return;
+    
+    float newVelocityX = (errorX - previousErrorX) / deltaTime;
+    float newVelocityY = (errorY - previousErrorY) / deltaTime;
+    
+    velocityX = velocitySmoothFactor * velocityX + (1.0f - velocitySmoothFactor) * newVelocityX;
+    velocityY = velocitySmoothFactor * velocityY + (1.0f - velocitySmoothFactor) * newVelocityY;
+    
+    float newAccelerationX = (velocityX - previousVelocityX) / deltaTime;
+    float newAccelerationY = (velocityY - previousVelocityY) / deltaTime;
+    
+    accelerationX = accelerationSmoothFactor * accelerationX + (1.0f - accelerationSmoothFactor) * newAccelerationX;
+    accelerationY = accelerationSmoothFactor * accelerationY + (1.0f - accelerationSmoothFactor) * newAccelerationY;
+    
+    previousErrorX = errorX;
+    previousErrorY = errorY;
+    previousVelocityX = velocityX;
+    previousVelocityY = velocityY;
+}
+
+void DerivativePredictor::predict(float predictionTime, float& predictedX, float& predictedY)
+{
+    predictionTime = std::min(predictionTime, maxPredictionTime);
+    
+    predictedX = velocityX * predictionTime + 0.5f * accelerationX * predictionTime * predictionTime;
+    predictedY = velocityY * predictionTime + 0.5f * accelerationY * predictionTime * predictionTime;
+}
+
+void DerivativePredictor::reset()
+{
+    velocityX = 0.0f;
+    velocityY = 0.0f;
+    accelerationX = 0.0f;
+    accelerationY = 0.0f;
+    previousErrorX = 0.0f;
+    previousErrorY = 0.0f;
+    previousVelocityX = 0.0f;
+    previousVelocityY = 0.0f;
+}
+
 MouseController::MouseController()
     : cachedScreenWidth(0)
     , cachedScreenHeight(0)
@@ -25,6 +77,10 @@ MouseController::MouseController()
     , currentAccelerationY(0.0f)
     , previousMoveX(0.0f)
     , previousMoveY(0.0f)
+    , integralX(0.0f)
+    , integralY(0.0f)
+    , lastTickTime(std::chrono::steady_clock::now())
+    , deltaTime(0.016f)
     , hotkeyPressStartTime(std::chrono::steady_clock::now())
     , yUnlockActive(false)
     , lastAutoTriggerTime(std::chrono::steady_clock::now())
@@ -125,6 +181,12 @@ void MouseController::tick()
         yUnlockActive = false;
     }
 
+    // 计算时间步长
+    auto now = std::chrono::steady_clock::now();
+    deltaTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime).count() / 1000.0f;
+    deltaTime = std::max(0.001f, std::min(deltaTime, 0.05f));
+    lastTickTime = now;
+
     Detection* target = selectTarget();
     if (!target) {
         if (isMoving) {
@@ -156,18 +218,6 @@ void MouseController::tick()
 
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
-
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
-        obs_log(LOG_INFO, "[MouseController] 坐标调试:");
-        obs_log(LOG_INFO, "  推理帧尺寸: %dx%d", frameWidth, frameHeight);
-        obs_log(LOG_INFO, "  目标归一化中心: (%.4f, %.4f)", target->centerX, target->centerY);
-        obs_log(LOG_INFO, "  目标像素位置: (%.1f, %.1f)", targetPixelX, targetPixelY);
-        obs_log(LOG_INFO, "  FOV中心: (%.1f, %.1f)", fovCenterX, fovCenterY);
-        obs_log(LOG_INFO, "  误差(移动量): (%.1f, %.1f)", errorX, errorY);
-        obs_log(LOG_INFO, "  屏幕偏移: (%d, %d)", config.screenOffsetX, config.screenOffsetY);
-        loggedOnce = true;
-    }
 
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
@@ -213,8 +263,6 @@ void MouseController::tick()
                 if (delayElapsed >= totalDelay) {
                     auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
                     if (cooldownElapsed >= config.autoTriggerInterval) {
-                        obs_log(LOG_INFO, "[AutoTrigger] Firing: delay=%lldms, cooldown=%lldms, fireDuration=%dms", 
-                                delayElapsed, cooldownElapsed, config.autoTriggerFireDuration);
                         performAutoClick();
                     }
                 }
@@ -226,29 +274,49 @@ void MouseController::tick()
 
     isMoving = true;
     
-    float dynamicP = calculateDynamicP(distance);
+    // 更新运动预测器
+    predictor.update(errorX, errorY, deltaTime);
     
-    float deltaErrorX = errorX - pidPreviousErrorX;
-    float deltaErrorY = errorY - pidPreviousErrorY;
+    // 预测目标位置
+    float predictedX, predictedY;
+    predictor.predict(deltaTime, predictedX, predictedY);
+    
+    // 误差融合
+    float fusedErrorX = errorX + config.predictionWeightX * predictedX;
+    float fusedErrorY = errorY + config.predictionWeightY * predictedY;
+    
+    // 计算动态P增益，应用P-Gain Ramp
+    float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
+    
+    // 计算微分项
+    float deltaErrorX = fusedErrorX - pidPreviousErrorX;
+    float deltaErrorY = fusedErrorY - pidPreviousErrorY;
     
     float alpha = config.derivativeFilterAlpha;
     filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
     filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
     
+    // 计算自适应D增益
     float adaptiveFactorX = 1.0f;
     float adaptiveFactorY = 1.0f;
-    float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, errorX, adaptiveFactorX);
-    float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, errorY, adaptiveFactorY);
+    float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, fusedErrorX, adaptiveFactorX);
+    float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, fusedErrorY, adaptiveFactorY);
     
-    float pdOutputX = dynamicP * errorX + adaptiveDX * filteredDeltaErrorX;
-    float pdOutputY = dynamicP * errorY + adaptiveDY * filteredDeltaErrorY;
+    // 计算积分项
+    float integralTermX = calculateIntegral(fusedErrorX, integralX, deltaTime);
+    float integralTermY = calculateIntegral(fusedErrorY, integralY, deltaTime);
     
-    float baselineX = errorX * config.baselineCompensation;
-    float baselineY = errorY * config.baselineCompensation;
+    // PID输出计算
+    float pidOutputX = dynamicP * fusedErrorX + adaptiveDX * filteredDeltaErrorX + integralTermX;
+    float pidOutputY = dynamicP * fusedErrorY + adaptiveDY * filteredDeltaErrorY + integralTermY;
     
-    float moveX = pdOutputX + baselineX;
-    float moveY = pdOutputY + baselineY;
+    float baselineX = fusedErrorX * config.baselineCompensation;
+    float baselineY = fusedErrorY * config.baselineCompensation;
     
+    float moveX = pidOutputX + baselineX;
+    float moveY = pidOutputY + baselineY;
+    
+    // 限制最大移动量
     float moveDistSquared = moveX * moveX + moveY * moveY;
     float maxMoveSquared = config.maxPixelMove * config.maxPixelMove;
     if (moveDistSquared > maxMoveSquared && moveDistSquared > 0.0f) {
@@ -261,12 +329,14 @@ void MouseController::tick()
         moveY = 0.0f;
     }
     
+    // 平滑处理
     float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
     float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
     
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
+    // 执行鼠标移动
     INPUT input = {};
     input.type = INPUT_MOUSE;
     input.mi.dx = static_cast<LONG>(finalMoveX);
@@ -276,8 +346,9 @@ void MouseController::tick()
     input.mi.dwExtraInfo = 0;
     SendInput(1, &input, sizeof(INPUT));
     
-    pidPreviousErrorX = errorX;
-    pidPreviousErrorY = errorY;
+    // 更新状态
+    pidPreviousErrorX = fusedErrorX;
+    pidPreviousErrorY = fusedErrorY;
     previousErrorX = errorX;
     previousErrorY = errorY;
 }
@@ -300,8 +371,9 @@ Detection* MouseController::selectTarget()
     float fovRadiusSquared = static_cast<float>(config.fovRadiusPixels * config.fovRadiusPixels);
 
     Detection* bestTarget = nullptr;
-    float minDistanceSquared = std::numeric_limits<float>::max();
+    float bestScore = -1.0f;
     int bestTrackId = -1;
+    float bestDistance = std::numeric_limits<float>::max();
 
     for (auto& det : currentDetections) {
         int targetX = static_cast<int>(det.centerX * frameWidth);
@@ -311,10 +383,23 @@ Detection* MouseController::selectTarget()
         float dy = static_cast<float>(targetY - fovCenterY);
         float distanceSquared = dx * dx + dy * dy;
 
-        if (distanceSquared <= fovRadiusSquared && distanceSquared < minDistanceSquared) {
-            minDistanceSquared = distanceSquared;
-            bestTarget = &det;
-            bestTrackId = det.trackId;
+        if (distanceSquared <= fovRadiusSquared) {
+            float distance = std::sqrt(distanceSquared);
+            
+            // 计算目标评分，考虑距离、大小和置信度
+            float sizeScore = std::min(det.width * det.height, 0.1f); // 目标大小
+            float confidenceScore = det.confidence; // 置信度
+            float distanceScore = 1.0f / (1.0f + distance); // 距离越近分数越高
+            
+            // 综合评分
+            float score = 0.5f * distanceScore + 0.3f * confidenceScore + 0.2f * sizeScore;
+            
+            if (score > bestScore) {
+                bestScore = score;
+                bestTarget = &det;
+                bestTrackId = det.trackId;
+                bestDistance = distance;
+            }
         }
     }
 
@@ -324,18 +409,9 @@ Detection* MouseController::selectTarget()
         return nullptr;
     }
 
-    float bestDistance = std::sqrt(minDistanceSquared);
     auto now = std::chrono::steady_clock::now();
 
-    static bool loggedOnce = false;
-    if (!loggedOnce) {
-        obs_log(LOG_INFO, "[MouseController-TargetSwitch] targetSwitchDelayMs=%dms, targetSwitchTolerance=%.2f", 
-                config.targetSwitchDelayMs, config.targetSwitchTolerance);
-        loggedOnce = true;
-    }
-
     if (currentTargetTrackId == -1) {
-        obs_log(LOG_INFO, "[MouseController-TargetSwitch] First target: trackId=%d, distance=%.1f", bestTrackId, bestDistance);
         currentTargetTrackId = bestTrackId;
         targetLockStartTime = now;
         currentTargetDistance = bestDistance;
@@ -348,11 +424,8 @@ Detection* MouseController::selectTarget()
     }
 
     auto lockElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count();
-    obs_log(LOG_INFO, "[MouseController-TargetSwitch] New target found: currentTrackId=%d, newTrackId=%d, lockElapsed=%lldms, delay=%dms", 
-            currentTargetTrackId, bestTrackId, lockElapsed, config.targetSwitchDelayMs);
     
     if (lockElapsed < config.targetSwitchDelayMs) {
-        obs_log(LOG_INFO, "[MouseController-TargetSwitch] Delaying switch, keeping current target");
         for (auto& det : currentDetections) {
             if (det.trackId == currentTargetTrackId) {
                 int targetX = static_cast<int>(det.centerX * frameWidth);
@@ -365,7 +438,6 @@ Detection* MouseController::selectTarget()
                 }
             }
         }
-        obs_log(LOG_INFO, "[MouseController-TargetSwitch] Current target lost, switching to new");
         currentTargetTrackId = bestTrackId;
         targetLockStartTime = now;
         currentTargetDistance = bestDistance;
@@ -374,9 +446,7 @@ Detection* MouseController::selectTarget()
 
     if (currentTargetDistance > 0.0f && config.targetSwitchTolerance > 0.0f) {
         float improvement = (currentTargetDistance - bestDistance) / currentTargetDistance;
-        obs_log(LOG_INFO, "[MouseController-TargetSwitch] Tolerance check: improvement=%.2f, tolerance=%.2f", improvement, config.targetSwitchTolerance);
         if (improvement < config.targetSwitchTolerance) {
-            obs_log(LOG_INFO, "[MouseController-TargetSwitch] Improvement too small, keeping current target");
             for (auto& det : currentDetections) {
                 if (det.trackId == currentTargetTrackId) {
                     int targetX = static_cast<int>(det.centerX * frameWidth);
@@ -392,7 +462,6 @@ Detection* MouseController::selectTarget()
         }
     }
 
-    obs_log(LOG_INFO, "[MouseController-TargetSwitch] Switching to new target");
     currentTargetTrackId = bestTrackId;
     targetLockStartTime = now;
     currentTargetDistance = bestDistance;
@@ -450,12 +519,42 @@ void MouseController::startMouseMovement(const POINT& target)
     resetMotionState();
 }
 
+float MouseController::calculateIntegral(float error, float& integral, float deltaTime)
+{
+    if (std::abs(error) < config.integralDeadZone) {
+        return 0.0f;
+    }
+    
+    if (std::abs(error) > config.integralSeparationThreshold) {
+        return 0.0f;
+    }
+    
+    integral += error * deltaTime;
+    integral = std::max(-config.integralLimit, std::min(integral, config.integralLimit));
+    
+    return integral;
+}
+
+float MouseController::getCurrentPGain()
+{
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count() / 1000.0f;
+    
+    float rampFactor = std::min(elapsed / config.pGainRampDuration, 1.0f);
+    float currentScale = config.pGainRampInitialScale + (1.0f - config.pGainRampInitialScale) * rampFactor;
+    
+    return currentScale;
+}
+
 void MouseController::resetPidState()
 {
     pidPreviousErrorX = 0.0f;
     pidPreviousErrorY = 0.0f;
     filteredDeltaErrorX = 0.0f;
     filteredDeltaErrorY = 0.0f;
+    integralX = 0.0f;
+    integralY = 0.0f;
+    predictor.reset();
 }
 
 float MouseController::calculateDynamicP(float distance)
