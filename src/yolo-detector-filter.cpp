@@ -171,6 +171,14 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int triggerDurationRandomMin;
 		int triggerDurationRandomMax;
 		int triggerMoveCompensation;
+		// 新功能参数
+		float integralLimit;
+		float integralSeparationThreshold;
+		float integralDeadZone;
+		float pGainRampInitialScale;
+		float pGainRampDuration;
+		float predictionWeightX;
+		float predictionWeightY;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -213,6 +221,14 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			triggerDurationRandomMin = 0;
 			triggerDurationRandomMax = 0;
 			triggerMoveCompensation = 0;
+			// 新功能参数默认值
+			integralLimit = 100.0f;
+			integralSeparationThreshold = 50.0f;
+			integralDeadZone = 5.0f;
+			pGainRampInitialScale = 0.6f;
+			pGainRampDuration = 0.5f;
+			predictionWeightX = 0.5f;
+			predictionWeightY = 0.1f;
 		}
 	};
 
@@ -472,6 +488,22 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_int_slider(props, propName, "随机时长上限(ms)", 0, 200, 5);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_properties_add_int_slider(props, propName, "移动补偿(像素)", 0, 100, 1);
+
+		// 新功能参数设置
+		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
+		obs_properties_add_float_slider(props, propName, "积分限幅", 0.0, 500.0, 1.0);
+		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", i);
+		obs_properties_add_float_slider(props, propName, "积分分离阈值", 0.0, 200.0, 1.0);
+		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
+		obs_properties_add_float_slider(props, propName, "积分死区", 0.0, 50.0, 0.1);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
+		obs_properties_add_float_slider(props, propName, "P-Gain Ramp初始比例", 0.0, 1.0, 0.1);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
+		obs_properties_add_float_slider(props, propName, "P-Gain Ramp持续时间(秒)", 0.0, 2.0, 0.1);
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+		obs_properties_add_float_slider(props, propName, "X轴预测权重", 0.0, 1.0, 0.1);
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		obs_properties_add_float_slider(props, propName, "Y轴预测权重", 0.0, 1.0, 0.1);
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -588,11 +620,27 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	snprintf(propName, sizeof(propName), "enable_trigger_duration_random_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+		// 新功能参数可见性设置
+		snprintf(propName, sizeof(propName), "integral_limit_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
+		obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
@@ -870,6 +918,22 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 0);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_data_set_default_int(settings, propName, 0);
+
+		// 新功能参数默认值
+		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
+		obs_data_set_default_double(settings, propName, 100.0);
+		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", i);
+		obs_data_set_default_double(settings, propName, 50.0);
+		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
+		obs_data_set_default_double(settings, propName, 0.6);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1132,6 +1196,22 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].triggerDurationRandomMax = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		tf->mouseConfigs[i].triggerMoveCompensation = (int)obs_data_get_int(settings, propName);
+
+		// 新功能参数更新
+		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
+		tf->mouseConfigs[i].integralLimit = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", i);
+		tf->mouseConfigs[i].integralSeparationThreshold = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
+		tf->mouseConfigs[i].integralDeadZone = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
+		tf->mouseConfigs[i].pGainRampInitialScale = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
+		tf->mouseConfigs[i].pGainRampDuration = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -2323,6 +2403,14 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoTriggerMoveCompensation = cfg.triggerMoveCompensation;
 		mcConfig.targetSwitchDelayMs = tf->targetSwitchDelayMs;
 		mcConfig.targetSwitchTolerance = tf->targetSwitchTolerance;
+		// 新功能参数
+		mcConfig.integralLimit = cfg.integralLimit;
+		mcConfig.integralSeparationThreshold = cfg.integralSeparationThreshold;
+		mcConfig.integralDeadZone = cfg.integralDeadZone;
+		mcConfig.pGainRampInitialScale = cfg.pGainRampInitialScale;
+		mcConfig.pGainRampDuration = cfg.pGainRampDuration;
+		mcConfig.predictionWeightX = cfg.predictionWeightX;
+		mcConfig.predictionWeightY = cfg.predictionWeightY;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
