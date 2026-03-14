@@ -116,6 +116,39 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	gs_effect_t *solidEffect;
 
+	// 线程池相关成员
+	std::vector<std::thread> threadPool;
+	std::queue<std::function<void()>> taskQueue;
+	std::mutex taskQueueMutex;
+	std::condition_variable taskCondition;
+	std::atomic<bool> threadPoolRunning;
+
+	// 内存池相关成员
+	struct ImageBufferKey {
+		int rows;
+		int cols;
+		int type;
+
+		bool operator==(const ImageBufferKey& other) const {
+			return rows == other.rows && cols == other.cols && type == other.type;
+		}
+	};
+
+	struct ImageBufferKeyHash {
+		size_t operator()(const ImageBufferKey& key) const {
+			size_t h1 = std::hash<int>()(key.rows);
+			size_t h2 = std::hash<int>()(key.cols);
+			size_t h3 = std::hash<int>()(key.type);
+			return h1 ^ (h2 << 1) ^ (h3 << 2);
+		}
+	};
+
+	std::unordered_map<ImageBufferKey, std::vector<cv::Mat>, ImageBufferKeyHash> imageBufferPool;
+	std::vector<std::vector<Detection>> detectionBufferPool;
+	std::mutex bufferPoolMutex;
+	const int MAX_BUFFER_POOL_SIZE = 10;
+	const int THREAD_POOL_SIZE = 4;
+
 #ifdef _WIN32
 	bool showFloatingWindow;
 	int floatingWindowWidth;
@@ -1739,6 +1772,104 @@ static void renderFloatingWindow(yolo_detector_filter *filter)
 }
 #endif
 
+// 线程池工作函数
+void threadPoolWorker(yolo_detector_filter *filter)
+{
+	while (filter->threadPoolRunning) {
+		std::function<void()> task;
+		{
+			std::unique_lock<std::mutex> lock(filter->taskQueueMutex);
+			filter->taskCondition.wait(lock, [filter] { return !filter->threadPoolRunning || !filter->taskQueue.empty(); });
+			if (!filter->threadPoolRunning && filter->taskQueue.empty()) {
+				return;
+			}
+			task = std::move(filter->taskQueue.front());
+			filter->taskQueue.pop();
+		}
+		task();
+	}
+}
+
+// 提交任务到线程池
+void submitTask(yolo_detector_filter *filter, std::function<void()> task)
+{
+	std::unique_lock<std::mutex> lock(filter->taskQueueMutex);
+	filter->taskQueue.push(std::move(task));
+	lock.unlock();
+	filter->taskCondition.notify_one();
+}
+
+// 从内存池中获取图像缓冲区
+cv::Mat getImageBuffer(yolo_detector_filter *filter, int rows, int cols, int type)
+{
+	std::lock_guard<std::mutex> lock(filter->bufferPoolMutex);
+	
+	yolo_detector_filter::ImageBufferKey key{rows, cols, type};
+	auto it = filter->imageBufferPool.find(key);
+	
+	if (it != filter->imageBufferPool.end() && !it->second.empty()) {
+		cv::Mat buffer = std::move(it->second.back());
+		it->second.pop_back();
+		return buffer;
+	}
+	
+	// 如果没有合适的缓冲区，创建一个新的
+	return cv::Mat(rows, cols, type);
+}
+
+// 释放图像缓冲区到内存池
+void releaseImageBuffer(yolo_detector_filter *filter, cv::Mat &&buffer)
+{
+	if (buffer.empty()) {
+		return;
+	}
+	
+	std::lock_guard<std::mutex> lock(filter->bufferPoolMutex);
+	
+	yolo_detector_filter::ImageBufferKey key{buffer.rows, buffer.cols, buffer.type()};
+	auto it = filter->imageBufferPool.find(key);
+	
+	if (it != filter->imageBufferPool.end()) {
+		if (it->second.size() < filter->MAX_BUFFER_POOL_SIZE) {
+			it->second.push_back(std::move(buffer));
+		}
+	} else {
+		std::vector<cv::Mat> buffers;
+		buffers.reserve(5);
+		buffers.push_back(std::move(buffer));
+		filter->imageBufferPool[key] = std::move(buffers);
+	}
+}
+
+// 从内存池中获取检测结果缓冲区
+std::vector<Detection> getDetectionBuffer(yolo_detector_filter *filter)
+{
+	std::lock_guard<std::mutex> lock(filter->bufferPoolMutex);
+	
+	if (!filter->detectionBufferPool.empty()) {
+		std::vector<Detection> buffer = std::move(filter->detectionBufferPool.back());
+		filter->detectionBufferPool.pop_back();
+		buffer.clear(); // 清空缓冲区内容
+		return buffer;
+	}
+	
+	// 如果没有可用的缓冲区，创建一个新的
+	return std::vector<Detection>();
+}
+
+// 释放检测结果缓冲区到内存池
+void releaseDetectionBuffer(yolo_detector_filter *filter, std::vector<Detection> &&buffer)
+{
+	std::lock_guard<std::mutex> lock(filter->bufferPoolMutex);
+	
+	// 确保内存池不超过最大大小
+	if (filter->detectionBufferPool.size() < filter->MAX_BUFFER_POOL_SIZE) {
+		// 清空缓冲区内容，保留容量
+		buffer.clear();
+		filter->detectionBufferPool.push_back(std::move(buffer));
+	}
+}
+
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
@@ -1786,7 +1917,10 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			if (filter->inputBGRA.empty()) {
 				continue;
 			}
-			fullFrame = filter->inputBGRA.clone();
+			// 从内存池获取缓冲区
+			fullFrame = getImageBuffer(filter, filter->inputBGRA.rows, filter->inputBGRA.cols, filter->inputBGRA.type());
+			// 复制数据到缓冲区
+			filter->inputBGRA.copyTo(fullFrame);
 		}
 
 		int fullWidth = fullFrame.cols;
@@ -1799,7 +1933,10 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			cropHeight = std::min(filter->regionHeight, fullHeight - cropY);
 
 			if (cropWidth > 0 && cropHeight > 0) {
-				frame = fullFrame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).clone();
+				// 从内存池获取缓冲区
+				frame = getImageBuffer(filter, cropHeight, cropWidth, fullFrame.type());
+				// 复制ROI区域到缓冲区
+				fullFrame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).copyTo(frame);
 			} else {
 				frame = std::move(fullFrame);
 				cropX = 0;
@@ -1813,134 +1950,175 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		auto startTime = std::chrono::high_resolution_clock::now();
 
-		std::vector<Detection> newDetections;
-		try {
+		// 记录开始时间
+		auto inferenceStartTime = std::chrono::high_resolution_clock::now();
+
+		// 提交异步推理任务
+		auto future = [&]() -> std::future<std::vector<Detection>> {
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (!filter->yoloModel) {
-				continue;
+				std::promise<std::vector<Detection>> emptyPromise;
+				emptyPromise.set_value({});
+				return emptyPromise.get_future();
 			}
-			newDetections = filter->yoloModel->inference(frame);
-		} catch (const std::exception& e) {
-			obs_log(LOG_ERROR, "[YOLO Detector] Inference error: %s", e.what());
-		}
+			return filter->yoloModel->asyncInference(frame);
+		}();
 
-		if (filter->useRegion && cropWidth > 0 && cropHeight > 0) {
-			for (auto& det : newDetections) {
-				float pixelX = det.x * cropWidth + cropX;
-				float pixelY = det.y * cropHeight + cropY;
-				float pixelW = det.width * cropWidth;
-				float pixelH = det.height * cropHeight;
-				float pixelCenterX = det.centerX * cropWidth + cropX;
-				float pixelCenterY = det.centerY * cropHeight + cropY;
-				
-				det.x = pixelX / fullWidth;
-				det.y = pixelY / fullHeight;
-				det.width = pixelW / fullWidth;
-				det.height = pixelH / fullHeight;
-				det.centerX = pixelCenterX / fullWidth;
-				det.centerY = pixelCenterY / fullHeight;
+		// 使用线程池处理推理结果，而不是每次创建新线程
+		submitTask(filter, [filter, future = std::move(future), cropX, cropY, cropWidth, cropHeight, fullWidth, fullHeight, inferenceStartTime, frame = std::move(frame)]() mutable {
+			try {
+				// 从内存池获取检测结果缓冲区
+				std::vector<Detection> newDetections = getDetectionBuffer(filter);
+				// 等待推理结果
+				std::vector<Detection> tempDetections = future.get();
+				// 移动结果到缓冲区
+				newDetections = std::move(tempDetections);
+
+				if (filter->useRegion && cropWidth > 0 && cropHeight > 0) {
+					for (auto& det : newDetections) {
+						float pixelX = det.x * cropWidth + cropX;
+						float pixelY = det.y * cropHeight + cropY;
+						float pixelW = det.width * cropWidth;
+						float pixelH = det.height * cropHeight;
+						float pixelCenterX = det.centerX * cropWidth + cropX;
+						float pixelCenterY = det.centerY * cropHeight + cropY;
+						
+						det.x = pixelX / fullWidth;
+						det.y = pixelY / fullHeight;
+						det.width = pixelW / fullWidth;
+						det.height = pixelH / fullHeight;
+						det.centerX = pixelCenterX / fullWidth;
+						det.centerY = pixelCenterY / fullHeight;
+					}
+				}
+
+				// 计算推理时间
+				auto endTime = std::chrono::high_resolution_clock::now();
+				auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+					endTime - inferenceStartTime
+				).count();
+
+				// 处理目标追踪
+				std::vector<Detection> trackedDetections = getDetectionBuffer(filter);
+				{
+					std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
+					
+					std::vector<Detection>& trackedTargets = filter->trackedTargets;
+					
+					if (trackedTargets.empty()) {
+						for (auto& det : newDetections) {
+							det.trackId = filter->nextTrackId++;
+							det.lostFrames = 0;
+							trackedDetections.push_back(det);
+						}
+					} else {
+						int n = static_cast<int>(newDetections.size());
+						int m = static_cast<int>(trackedTargets.size());
+						
+						std::vector<std::vector<float>> costMatrix(n, std::vector<float>(m, 1.0f));
+						
+						for (int i = 0; i < n; ++i) {
+							cv::Rect2f detBox(
+								newDetections[i].x,
+								newDetections[i].y,
+								newDetections[i].width,
+								newDetections[i].height
+							);
+							
+							for (int j = 0; j < m; ++j) {
+								cv::Rect2f trackBox(
+									trackedTargets[j].x,
+									trackedTargets[j].y,
+									trackedTargets[j].width,
+									trackedTargets[j].height
+								);
+								
+								costMatrix[i][j] = HungarianAlgorithm::calculateIoUDistance(detBox, trackBox);
+							}
+						}
+						
+						std::vector<int> assignment = HungarianAlgorithm::solve(costMatrix);
+						
+						std::vector<bool> detectionMatched(n, false);
+						std::vector<bool> trackMatched(m, false);
+						
+						for (int i = 0; i < n; ++i) {
+							int j = assignment[i];
+							if (j >= 0 && j < m && costMatrix[i][j] < (1.0f - filter->iouThreshold)) {
+								newDetections[i].trackId = trackedTargets[j].trackId;
+								newDetections[i].lostFrames = 0;
+								trackedDetections.push_back(newDetections[i]);
+								detectionMatched[i] = true;
+								trackMatched[j] = true;
+							}
+						}
+						
+						for (int i = 0; i < n; ++i) {
+							if (!detectionMatched[i]) {
+								newDetections[i].trackId = filter->nextTrackId++;
+								newDetections[i].lostFrames = 0;
+								trackedDetections.push_back(newDetections[i]);
+							}
+						}
+						
+						for (int j = 0; j < m; ++j) {
+							if (!trackMatched[j]) {
+								trackedTargets[j].lostFrames++;
+								if (trackedTargets[j].lostFrames <= filter->maxLostFrames) {
+									trackedDetections.push_back(trackedTargets[j]);
+								}
+							}
+						}
+					}
+					
+					filter->trackedTargets = std::move(trackedDetections);
+				}
+
+				// 更新检测结果
+				{
+					std::lock_guard<std::mutex> lock(filter->detectionsMutex);
+					// 释放旧的检测结果缓冲区
+					releaseDetectionBuffer(filter, std::move(filter->detections));
+					// 使用新的检测结果缓冲区
+					filter->detections = std::move(filter->trackedTargets);
+				}
+
+				// 更新推理帧大小信息
+				{
+					std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
+					filter->inferenceFrameWidth = fullWidth;
+					filter->inferenceFrameHeight = fullHeight;
+					filter->cropOffsetX = cropX;
+					filter->cropOffsetY = cropY;
+				}
+
+				// 更新统计信息
+				filter->inferenceCount++;
+				filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
+
+				// 导出坐标
+				if (filter->exportCoordinates && !newDetections.empty()) {
+					exportCoordinatesToFile(filter, fullWidth, fullHeight);
+				}
+
+				// 释放缓冲区到内存池
+				releaseDetectionBuffer(filter, std::move(newDetections));
+				// 释放frame缓冲区到内存池
+				releaseImageBuffer(filter, std::move(frame));
+
+			} catch (const std::exception& e) {
+				obs_log(LOG_ERROR, "[YOLO Detector] Async inference processing error: %s", e.what());
+				// 释放frame缓冲区到内存池
+				releaseImageBuffer(filter, std::move(frame));
 			}
-		}
+		});
 
 		auto endTime = std::chrono::high_resolution_clock::now();
 		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
 			endTime - startTime
 		).count();
-
-		std::vector<Detection> trackedDetections;
-		{
-			std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
-			
-			std::vector<Detection>& trackedTargets = filter->trackedTargets;
-			
-			if (trackedTargets.empty()) {
-				for (auto& det : newDetections) {
-					det.trackId = filter->nextTrackId++;
-					det.lostFrames = 0;
-					trackedDetections.push_back(det);
-				}
-			} else {
-				int n = static_cast<int>(newDetections.size());
-				int m = static_cast<int>(trackedTargets.size());
-				
-				std::vector<std::vector<float>> costMatrix(n, std::vector<float>(m, 1.0f));
-				
-				for (int i = 0; i < n; ++i) {
-					cv::Rect2f detBox(
-						newDetections[i].x,
-						newDetections[i].y,
-						newDetections[i].width,
-						newDetections[i].height
-					);
-					
-					for (int j = 0; j < m; ++j) {
-						cv::Rect2f trackBox(
-							trackedTargets[j].x,
-							trackedTargets[j].y,
-							trackedTargets[j].width,
-							trackedTargets[j].height
-						);
-						
-						costMatrix[i][j] = HungarianAlgorithm::calculateIoUDistance(detBox, trackBox);
-					}
-				}
-				
-				std::vector<int> assignment = HungarianAlgorithm::solve(costMatrix);
-				
-				std::vector<bool> detectionMatched(n, false);
-				std::vector<bool> trackMatched(m, false);
-				
-				for (int i = 0; i < n; ++i) {
-					int j = assignment[i];
-					if (j >= 0 && j < m && costMatrix[i][j] < (1.0f - filter->iouThreshold)) {
-						newDetections[i].trackId = trackedTargets[j].trackId;
-						newDetections[i].lostFrames = 0;
-						trackedDetections.push_back(newDetections[i]);
-						detectionMatched[i] = true;
-						trackMatched[j] = true;
-					}
-				}
-				
-				for (int i = 0; i < n; ++i) {
-					if (!detectionMatched[i]) {
-						newDetections[i].trackId = filter->nextTrackId++;
-						newDetections[i].lostFrames = 0;
-						trackedDetections.push_back(newDetections[i]);
-					}
-				}
-				
-				for (int j = 0; j < m; ++j) {
-					if (!trackMatched[j]) {
-						trackedTargets[j].lostFrames++;
-						if (trackedTargets[j].lostFrames <= filter->maxLostFrames) {
-							trackedDetections.push_back(trackedTargets[j]);
-						}
-					}
-				}
-			}
-			
-			filter->trackedTargets = trackedDetections;
-		}
-
-		{
-			std::lock_guard<std::mutex> lock(filter->detectionsMutex);
-			filter->detections = std::move(trackedDetections);
-		}
-
-		{
-			std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
-			filter->inferenceFrameWidth = fullWidth;
-			filter->inferenceFrameHeight = fullHeight;
-			filter->cropOffsetX = cropX;
-			filter->cropOffsetY = cropY;
-		}
-
-		filter->inferenceCount++;
-		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
-
-		if (filter->exportCoordinates && !newDetections.empty()) {
-			exportCoordinatesToFile(filter, fullWidth, fullHeight);
-		}
+		
+		// 这里可以添加其他不需要等待推理结果的处理逻辑
 	}
 
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread stopped");
@@ -2183,6 +2361,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->nextTrackId = 0;
 		instance->maxLostFrames = 10;
 		instance->iouThreshold = 0.3f;
+		instance->threadPoolRunning = true;
 
 		obs_enter_graphics();
 		instance->solidEffect = obs_get_base_effect(OBS_EFFECT_SOLID);
@@ -2210,6 +2389,11 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		// Create pointer to shared_ptr for the update call
 		auto ptr = new std::shared_ptr<yolo_detector_filter>(instance);
 		yolo_detector_filter_update(ptr, settings);
+
+		// Start thread pool
+		for (int i = 0; i < instance->THREAD_POOL_SIZE; ++i) {
+			instance->threadPool.emplace_back(threadPoolWorker, instance.get());
+		}
 
 		// Start inference thread
 		instance->inferenceRunning = true;
@@ -2244,6 +2428,15 @@ void yolo_detector_filter_destroy(void *data)
 	tf->inferenceRunning = false;
 	if (tf->inferenceThread.joinable()) {
 		tf->inferenceThread.join();
+	}
+
+	// Stop thread pool
+	tf->threadPoolRunning = false;
+	tf->taskCondition.notify_all();
+	for (auto& thread : tf->threadPool) {
+		if (thread.joinable()) {
+			thread.join();
+		}
 	}
 
 #ifdef _WIN32

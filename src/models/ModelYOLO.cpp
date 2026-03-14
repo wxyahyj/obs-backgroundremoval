@@ -45,7 +45,8 @@ ModelYOLO::ModelYOLO(Version version)
       inputWidth_(640),
       inputHeight_(640),
       numClasses_(80),
-      inputBufferSize_(0)
+      inputBufferSize_(0),
+      inferenceThreadRunning_(false)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
     
@@ -55,9 +56,47 @@ ModelYOLO::ModelYOLO(Version version)
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize ORT: %s", e.what());
     }
+    
+    // 启动推理线程
+    inferenceThreadRunning_ = true;
+    inferenceThread_ = std::thread([this]() {
+        while (inferenceThreadRunning_) {
+            std::unique_ptr<InferenceTask> task;
+            
+            {
+                std::unique_lock<std::mutex> lock(inferenceTasksMutex_);
+                inferenceTasksCV_.wait(lock, [this]() { 
+                    return !inferenceThreadRunning_ || !inferenceTasks_.empty(); 
+                });
+                
+                if (!inferenceThreadRunning_) break;
+                
+                if (!inferenceTasks_.empty()) {
+                    task = std::move(inferenceTasks_.front());
+                    inferenceTasks_.pop();
+                }
+            }
+            
+            if (task) {
+                try {
+                    std::vector<Detection> results = doInference(task->input);
+                    task->promise.set_value(results);
+                } catch (const std::exception& e) {
+                    obs_log(LOG_ERROR, "[ModelYOLO] Async inference error: %s", e.what());
+                    task->promise.set_value({});
+                }
+            }
+        }
+    });
 }
 
 ModelYOLO::~ModelYOLO() {
+    // 停止推理线程
+    inferenceThreadRunning_ = false;
+    inferenceTasksCV_.notify_one();
+    if (inferenceThread_.joinable()) {
+        inferenceThread_.join();
+    }
     obs_log(LOG_INFO, "[ModelYOLO] Destroyed");
 }
 
@@ -272,6 +311,24 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
 }
 
 std::vector<Detection> ModelYOLO::inference(const cv::Mat& input) {
+    return doInference(input);
+}
+
+std::future<std::vector<Detection>> ModelYOLO::asyncInference(const cv::Mat& input) {
+    auto task = std::make_unique<InferenceTask>();
+    task->input = input.clone();
+    auto future = task->promise.get_future();
+    
+    {    
+        std::lock_guard<std::mutex> lock(inferenceTasksMutex_);
+        inferenceTasks_.push(std::move(task));
+    }
+    
+    inferenceTasksCV_.notify_one();
+    return future;
+}
+
+std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     
     if (input.empty()) {
         obs_log(LOG_ERROR, "[ModelYOLO] Input image is empty");

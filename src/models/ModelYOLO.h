@@ -7,6 +7,9 @@
 #include <string>
 #include <memory>
 #include <onnxruntime_cxx_api.h>
+#include <future>
+#include <mutex>
+#include <queue>
 
 class ModelYOLO : public ModelBCHW {
 public:
@@ -24,6 +27,7 @@ public:
     void setInputResolution(int resolution);
 
     std::vector<Detection> inference(const cv::Mat& input);
+    std::future<std::vector<Detection>> asyncInference(const cv::Mat& input);
 
     void setConfidenceThreshold(float threshold);
     void setNMSThreshold(float threshold);
@@ -42,6 +46,11 @@ private:
         float scale;
         int padX;
         int padY;
+    };
+
+    struct InferenceTask {
+        cv::Mat input;
+        std::promise<std::vector<Detection>> promise;
     };
 
     std::vector<Detection> postprocessYOLOv5(
@@ -80,6 +89,7 @@ private:
                     float& x1, float& y1, float& x2, float& y2);
 
     LetterboxInfo letterbox(const cv::Mat& input, cv::Mat& output);
+    std::vector<Detection> doInference(const cv::Mat& input);
 
     Version version_;
     float confidenceThreshold_;
@@ -106,6 +116,12 @@ private:
     
     size_t inputBufferSize_;
     std::vector<float> inputBuffer_;
+    
+    std::thread inferenceThread_;
+    std::atomic<bool> inferenceThreadRunning_;
+    std::queue<std::unique_ptr<InferenceTask>> inferenceTasks_;
+    std::mutex inferenceTasksMutex_;
+    std::condition_variable inferenceTasksCV_;
 };
 
 #endif
