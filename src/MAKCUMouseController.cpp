@@ -539,8 +539,8 @@ Detection* MAKCUMouseController::selectTarget()
             float confidenceScore = det.confidence; // 置信度
             float distanceScore = 1.0f / (1.0f + distance); // 距离越近分数越高
             
-            // 综合评分
-            float score = 0.5f * distanceScore + 0.3f * confidenceScore + 0.2f * sizeScore;
+            // 综合评分 - 增加距离因素权重
+            float score = 0.7f * distanceScore + 0.2f * confidenceScore + 0.1f * sizeScore;
             
             if (score > bestScore) {
                 bestScore = score;
@@ -574,6 +574,8 @@ Detection* MAKCUMouseController::selectTarget()
     auto lockElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count();
     
     if (lockElapsed < config.targetSwitchDelayMs) {
+        // 检查当前目标是否在FOV内
+        bool currentTargetInFOV = false;
         for (auto& det : currentDetections) {
             if (det.trackId == currentTargetTrackId) {
                 int targetX = static_cast<int>(det.centerX * frameWidth);
@@ -582,14 +584,23 @@ Detection* MAKCUMouseController::selectTarget()
                 float dy = static_cast<float>(targetY - fovCenterY);
                 float distSq = dx * dx + dy * dy;
                 if (distSq <= fovRadiusSquared) {
+                    currentTargetInFOV = true;
                     return &det;
                 }
             }
         }
-        currentTargetTrackId = bestTrackId;
-        targetLockStartTime = now;
-        currentTargetDistance = bestDistance;
-        return bestTarget;
+        
+        // 如果当前目标不在FOV内，仍然等待延迟时间后再切换
+        if (lockElapsed < config.targetSwitchDelayMs) {
+            // 延迟时间未到，返回nullptr，保持当前目标的锁定状态
+            return nullptr;
+        } else {
+            // 延迟时间已过，切换到新目标
+            currentTargetTrackId = bestTrackId;
+            targetLockStartTime = now;
+            currentTargetDistance = bestDistance;
+            return bestTarget;
+        }
     }
 
     if (currentTargetDistance > 0.0f && config.targetSwitchTolerance > 0.0f) {
