@@ -510,7 +510,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_group(props, "tracking_group", "目标追踪设置", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_float_slider(props, "iou_threshold", "IoU阈值", 0.1, 0.9, 0.05);
-	obs_properties_add_int_slider(props, "max_lost_frames", "最大丢失帧数", 1, 30, 1);
+	obs_properties_add_int_slider(props, "max_lost_frames", "最大丢失帧数", 0, 30, 1);
 	obs_properties_add_int_slider(props, "target_switch_delay", "转火延迟(ms)", 0, 1500, 50);
 	obs_properties_add_float_slider(props, "target_switch_tolerance", "切换容差", 0.0, 0.5, 0.05);
 
@@ -1743,13 +1743,20 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Inference thread started");
 
-	int sleepTime = 5; // 初始休眠时间（毫秒）
+	// 提高线程优先级以减少延迟
+	#ifdef _WIN32
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+	#endif
+
+	int sleepTime = 1; // 减少初始休眠时间以提高响应速度
 
 	while (filter->inferenceRunning) {
 		if (!filter->shouldInference) {
 			// 动态调整休眠时间
 			// 系统负载低时增加休眠时间，负载高时减少休眠时间
 			std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime));
+			// 缓慢增加休眠时间，避免过度延迟
+			sleepTime = std::min(3, sleepTime + 1);
 			continue;
 		}
 
@@ -1757,12 +1764,12 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		if (!filter->isInferencing) {
 			// 推理被禁用了，增加休眠时间
-			sleepTime = std::min(50, sleepTime + 5);
+			sleepTime = std::min(3, sleepTime + 1);
 			continue;
 		}
 
-		// 推理启用时，减少休眠时间以提高响应速度
-		sleepTime = std::max(1, sleepTime - 2);
+		// 推理启用时，立即重置休眠时间以提高响应速度
+		sleepTime = 1;
 
 		cv::Mat fullFrame;
 		cv::Mat frame;
