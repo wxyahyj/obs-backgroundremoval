@@ -1791,10 +1791,11 @@ void threadPoolWorker(yolo_detector_filter *filter)
 }
 
 // 提交任务到线程池
-void submitTask(yolo_detector_filter *filter, std::function<void()> task)
+template<typename F>
+void submitTask(yolo_detector_filter *filter, F &&task)
 {
 	std::unique_lock<std::mutex> lock(filter->taskQueueMutex);
-	filter->taskQueue.push(std::move(task));
+	filter->taskQueue.push(std::function<void()>(std::forward<F>(task)));
 	lock.unlock();
 	filter->taskCondition.notify_one();
 }
