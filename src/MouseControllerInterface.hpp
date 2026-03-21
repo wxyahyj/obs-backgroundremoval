@@ -66,6 +66,11 @@ struct MouseControllerConfig {
     float pGainRampDuration = 0.5f;
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
+    // 预测器参数配置
+    float predictorVelocitySmooth = 0.3f;      // 速度平滑因子（0.0-1.0）
+    float predictorAccelerationSmooth = 0.3f;  // 加速度平滑因子（0.0-1.0）
+    float predictorMaxTime = 0.2f;             // 最大预测时间（秒）
+    int predictorFrameMultiplier = 3;          // 预测帧数倍数
     // 持续自瞄和自动压枪配置
     bool continuousAimEnabled = false;
     bool autoRecoilControlEnabled = false;

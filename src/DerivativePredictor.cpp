@@ -8,9 +8,9 @@ DerivativePredictor::DerivativePredictor()
     , velocityY(0.0f)
     , accelerationX(0.0f)
     , accelerationY(0.0f)
-    , velocitySmoothFactor(0.7f)
-    , accelerationSmoothFactor(0.5f)
-    , maxPredictionTime(0.1f)
+    , velocitySmoothFactor(0.3f)  // 降低平滑，让速度响应更快
+    , accelerationSmoothFactor(0.3f)  // 降低平滑
+    , maxPredictionTime(0.2f)  // 增加预测时间到200ms
     , previousErrorX(0.0f)
     , previousErrorY(0.0f)
     , previousVelocityX(0.0f)

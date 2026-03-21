@@ -206,6 +206,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float pGainRampDuration;
 		float predictionWeightX;
 		float predictionWeightY;
+		// 预测器参数
+		float predictorVelocitySmooth;
+		float predictorAccelerationSmooth;
+		float predictorMaxTime;
+		int predictorFrameMultiplier;
 		// 持续自瞄和自动压枪参数
 		bool continuousAimEnabled;
 		bool autoRecoilControlEnabled;
@@ -260,6 +265,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pGainRampDuration = 0.5f;
 			predictionWeightX = 0.5f;
 			predictionWeightY = 0.1f;
+			// 预测器参数默认值
+			predictorVelocitySmooth = 0.3f;
+			predictorAccelerationSmooth = 0.3f;
+			predictorMaxTime = 0.2f;
+			predictorFrameMultiplier = 3;
 			// 持续自瞄和自动压枪默认值
 			continuousAimEnabled = false;
 			autoRecoilControlEnabled = false;
@@ -622,6 +632,20 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "Y轴预测权重", 0.0, 1.0, 0.1);
 		obs_property_set_long_description(predictionWeightYProp, "Y轴方向的目标预测权重，值越大预测效果越强");
 
+		// 预测器高级参数
+		snprintf(propName, sizeof(propName), "predictor_velocity_smooth_%d", i);
+		obs_property_t *predVelSmoothProp = obs_properties_add_float_slider(props, propName, "速度平滑因子", 0.0, 1.0, 0.05);
+		obs_property_set_long_description(predVelSmoothProp, "速度平滑因子，值越小响应越快但可能抖动，值越大越平滑但延迟高");
+		snprintf(propName, sizeof(propName), "predictor_accel_smooth_%d", i);
+		obs_property_t *predAccelSmoothProp = obs_properties_add_float_slider(props, propName, "加速度平滑因子", 0.0, 1.0, 0.05);
+		obs_property_set_long_description(predAccelSmoothProp, "加速度平滑因子，影响加速度计算的响应速度");
+		snprintf(propName, sizeof(propName), "predictor_max_time_%d", i);
+		obs_property_t *predMaxTimeProp = obs_properties_add_float_slider(props, propName, "最大预测时间(秒)", 0.05, 0.5, 0.05);
+		obs_property_set_long_description(predMaxTimeProp, "最大预测时间，值越大预测越远但可能不稳定");
+		snprintf(propName, sizeof(propName), "predictor_frame_mult_%d", i);
+		obs_property_t *predFrameMultProp = obs_properties_add_int_slider(props, propName, "预测帧数倍数", 1, 10, 1);
+		obs_property_set_long_description(predFrameMultProp, "预测帧数倍数，实际预测时间=deltaTime*倍数");
+
 		// 自动压枪参数
 		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
 		obs_property_t *autoRecoilProp = obs_properties_add_bool(props, propName, "启用自动压枪");
@@ -751,6 +775,14 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "predictor_velocity_smooth_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "predictor_accel_smooth_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "predictor_max_time_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "predictor_frame_mult_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1058,6 +1090,16 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 
+		// 预测器参数默认值
+		snprintf(propName, sizeof(propName), "predictor_velocity_smooth_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
+		snprintf(propName, sizeof(propName), "predictor_accel_smooth_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
+		snprintf(propName, sizeof(propName), "predictor_max_time_%d", i);
+		obs_data_set_default_double(settings, propName, 0.2);
+		snprintf(propName, sizeof(propName), "predictor_frame_mult_%d", i);
+		obs_data_set_default_int(settings, propName, 3);
+
 		// 持续自瞄和自动压枪默认值
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
@@ -1342,6 +1384,16 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
+
+		// 读取预测器参数
+		snprintf(propName, sizeof(propName), "predictor_velocity_smooth_%d", i);
+		tf->mouseConfigs[i].predictorVelocitySmooth = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "predictor_accel_smooth_%d", i);
+		tf->mouseConfigs[i].predictorAccelerationSmooth = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "predictor_max_time_%d", i);
+		tf->mouseConfigs[i].predictorMaxTime = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "predictor_frame_mult_%d", i);
+		tf->mouseConfigs[i].predictorFrameMultiplier = (int)obs_data_get_int(settings, propName);
 
 		// 读取持续自瞄和自动压枪配置
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
@@ -1632,8 +1684,22 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         fprintf(f, "      \"triggerDurationRandomMax\": %d,\n", (int)obs_data_get_int(settings, propName));
         
         snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
-        fprintf(f, "      \"triggerMoveCompensation\": %d\n", (int)obs_data_get_int(settings, propName));
-        
+        fprintf(f, "      \"triggerMoveCompensation\": %d,\n", (int)obs_data_get_int(settings, propName));
+
+        // 预测器参数
+        snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+        fprintf(f, "      \"predictionWeightX\": %.4f,\n", obs_data_get_double(settings, propName));
+        snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+        fprintf(f, "      \"predictionWeightY\": %.4f,\n", obs_data_get_double(settings, propName));
+        snprintf(propName, sizeof(propName), "predictor_velocity_smooth_%d", i);
+        fprintf(f, "      \"predictorVelocitySmooth\": %.4f,\n", obs_data_get_double(settings, propName));
+        snprintf(propName, sizeof(propName), "predictor_accel_smooth_%d", i);
+        fprintf(f, "      \"predictorAccelerationSmooth\": %.4f,\n", obs_data_get_double(settings, propName));
+        snprintf(propName, sizeof(propName), "predictor_max_time_%d", i);
+        fprintf(f, "      \"predictorMaxTime\": %.4f,\n", obs_data_get_double(settings, propName));
+        snprintf(propName, sizeof(propName), "predictor_frame_mult_%d", i);
+        fprintf(f, "      \"predictorFrameMultiplier\": %d\n", (int)obs_data_get_int(settings, propName));
+
         fprintf(f, "    }%s\n", (i < 4) ? "," : "");
     }
     
@@ -2699,6 +2765,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.pGainRampDuration = cfg.pGainRampDuration;
 		mcConfig.predictionWeightX = cfg.predictionWeightX;
 		mcConfig.predictionWeightY = cfg.predictionWeightY;
+		// 预测器参数
+		mcConfig.predictorVelocitySmooth = cfg.predictorVelocitySmooth;
+		mcConfig.predictorAccelerationSmooth = cfg.predictorAccelerationSmooth;
+		mcConfig.predictorMaxTime = cfg.predictorMaxTime;
+		mcConfig.predictorFrameMultiplier = cfg.predictorFrameMultiplier;
 		// 持续自瞄和自动压枪参数
 		mcConfig.continuousAimEnabled = cfg.continuousAimEnabled;
 		mcConfig.autoRecoilControlEnabled = cfg.autoRecoilControlEnabled;

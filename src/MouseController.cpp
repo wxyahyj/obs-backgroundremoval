@@ -68,6 +68,16 @@ void MouseController::updateConfig(const MouseControllerConfig& newConfig)
                           config.autoTriggerInterval != newConfig.autoTriggerInterval ||
                           config.continuousAimEnabled != newConfig.continuousAimEnabled ||
                           config.autoRecoilControlEnabled != newConfig.autoRecoilControlEnabled);
+
+    // 更新预测器参数
+    if (config.predictorVelocitySmooth != newConfig.predictorVelocitySmooth ||
+        config.predictorAccelerationSmooth != newConfig.predictorAccelerationSmooth ||
+        config.predictorMaxTime != newConfig.predictorMaxTime) {
+        predictor.setVelocitySmoothFactor(newConfig.predictorVelocitySmooth);
+        predictor.setAccelerationSmoothFactor(newConfig.predictorAccelerationSmooth);
+        predictor.setMaxPredictionTime(newConfig.predictorMaxTime);
+    }
+
     config = newConfig;
     if (configChanged) {
         obs_log(LOG_INFO, "[MouseController] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, continuousAim=%d, autoRecoil=%d",
@@ -248,42 +258,43 @@ void MouseController::tick()
     }
 
     isMoving = true;
-    
-    // 更新运动预测器
+
+    // 更新运动预测器（使用原始误差）
     predictor.update(errorX, errorY, deltaTime);
-    
-    // 预测目标位置
+
+    // 预测目标位置 - 使用可配置的预测帧数倍数
     float predictedX, predictedY;
-    predictor.predict(deltaTime, predictedX, predictedY);
-    
-    // 误差融合
-    float fusedErrorX = errorX + config.predictionWeightX * predictedX;
-    float fusedErrorY = errorY + config.predictionWeightY * predictedY;
-    
+    float predictionMultiplier = std::max(1, config.predictorFrameMultiplier);
+    predictor.predict(deltaTime * predictionMultiplier, predictedX, predictedY);
+
+    // 误差融合 - 预测权重直接加到目标位置上，而不是加到误差上
+    float targetX = errorX + config.predictionWeightX * predictedX;
+    float targetY = errorY + config.predictionWeightY * predictedY;
+
     // 计算动态P增益，应用P-Gain Ramp
     float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
-    
-    // 计算微分项
-    float deltaErrorX = fusedErrorX - pidPreviousErrorX;
-    float deltaErrorY = fusedErrorY - pidPreviousErrorY;
-    
+
+    // 计算微分项（使用targetX/Y作为当前误差）
+    float deltaErrorX = targetX - pidPreviousErrorX;
+    float deltaErrorY = targetY - pidPreviousErrorY;
+
     float alpha = config.derivativeFilterAlpha;
     filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
     filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
-    
+
     // 计算自适应D增益
     float adaptiveFactorX = 1.0f;
     float adaptiveFactorY = 1.0f;
-    float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, fusedErrorX, adaptiveFactorX);
-    float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, fusedErrorY, adaptiveFactorY);
-    
-    // 计算积分项
-    float integralTermX = calculateIntegral(fusedErrorX, integralX, deltaTime);
-    float integralTermY = calculateIntegral(fusedErrorY, integralY, deltaTime);
-    
-    // PID输出计算
-    float pidOutputX = dynamicP * fusedErrorX + adaptiveDX * filteredDeltaErrorX + integralTermX;
-    float pidOutputY = dynamicP * fusedErrorY + adaptiveDY * filteredDeltaErrorY + integralTermY;
+    float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, targetX, adaptiveFactorX);
+    float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, targetY, adaptiveFactorY);
+
+    // 计算积分项（积分使用原始误差，避免预测导致积分饱和）
+    float integralTermX = calculateIntegral(errorX, integralX, deltaTime);
+    float integralTermY = calculateIntegral(errorY, integralY, deltaTime);
+
+    // PID输出计算（P和D使用预测后的目标位置，I使用原始误差）
+    float pidOutputX = dynamicP * targetX + adaptiveDX * filteredDeltaErrorX + integralTermX;
+    float pidOutputY = dynamicP * targetY + adaptiveDY * filteredDeltaErrorY + integralTermY;
 
     float moveX = pidOutputX;
     float moveY = pidOutputY;
@@ -391,9 +402,9 @@ void MouseController::tick()
         previousRecoilMove = 0.0f;
     }
     
-    // 更新状态
-    pidPreviousErrorX = fusedErrorX;
-    pidPreviousErrorY = fusedErrorY;
+    // 更新状态（保存targetX/Y作为上一次的误差，保持预测连续性）
+    pidPreviousErrorX = targetX;
+    pidPreviousErrorY = targetY;
     previousErrorX = errorX;
     previousErrorY = errorY;
 }

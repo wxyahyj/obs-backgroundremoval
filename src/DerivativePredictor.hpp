@@ -20,6 +20,11 @@ public:
     void update(float errorX, float errorY, float deltaTime);
     void predict(float predictionTime, float& predictedX, float& predictedY);
     void reset();
+
+    // 动态更新参数
+    void setVelocitySmoothFactor(float factor) { velocitySmoothFactor = factor; }
+    void setAccelerationSmoothFactor(float factor) { accelerationSmoothFactor = factor; }
+    void setMaxPredictionTime(float time) { maxPredictionTime = time; }
 };
 
 #endif
