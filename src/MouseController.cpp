@@ -26,6 +26,8 @@ MouseController::MouseController()
     , previousMoveY(0.0f)
     , integralX(0.0f)
     , integralY(0.0f)
+    , lastRecoilTime(std::chrono::steady_clock::now())
+    , isFiring(false)
     , lastTickTime(std::chrono::steady_clock::now())
     , deltaTime(0.016f)
     , hotkeyPressStartTime(std::chrono::steady_clock::now())
@@ -100,7 +102,11 @@ void MouseController::tick()
 
     bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
 
-    if (!hotkeyPressed) {
+    // 判断是否应该瞄准
+    bool shouldAim = config.continuousAimEnabled || hotkeyPressed;
+
+    // 如果不应该瞄准，停止所有操作
+    if (!shouldAim) {
         if (isMoving) {
             isMoving = false;
             resetPidState();
@@ -111,20 +117,26 @@ void MouseController::tick()
         return;
     }
 
-    static bool wasHotkeyPressed = false;
-    if (!wasHotkeyPressed && hotkeyPressed) {
-        hotkeyPressStartTime = std::chrono::steady_clock::now();
-        yUnlockActive = false;
-    }
-    wasHotkeyPressed = hotkeyPressed;
+    // 更新热键状态和Y轴解锁（仅在非持续自瞄模式下）
+    if (!config.continuousAimEnabled) {
+        static bool wasHotkeyPressed = false;
+        if (!wasHotkeyPressed && hotkeyPressed) {
+            hotkeyPressStartTime = std::chrono::steady_clock::now();
+            yUnlockActive = false;
+        }
+        wasHotkeyPressed = hotkeyPressed;
 
-    if (config.yUnlockEnabled) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - hotkeyPressStartTime).count();
-        if (elapsed >= config.yUnlockDelayMs) {
-            yUnlockActive = true;
+        if (config.yUnlockEnabled) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - hotkeyPressStartTime).count();
+            if (elapsed >= config.yUnlockDelayMs) {
+                yUnlockActive = true;
+            }
+        } else {
+            yUnlockActive = false;
         }
     } else {
+        // 持续自瞄模式下，禁用Y轴解锁
         yUnlockActive = false;
     }
 
@@ -276,6 +288,18 @@ void MouseController::tick()
         moveY = 0.0f;
     }
     
+    // 自动压枪逻辑：按下热键（或持续自瞄模式）时压枪
+    if (config.autoRecoilControlEnabled && shouldAim) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRecoilTime).count();
+        
+        if (elapsed >= config.recoilSpeed) {
+            // 压枪：向下移动（Y轴正值）
+            moveY += config.recoilStrength;
+            lastRecoilTime = now;
+        }
+    }
+
     // 平滑处理
     float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
     float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
@@ -574,6 +598,7 @@ void MouseController::performAutoClick()
     input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
     SendInput(1, &input, sizeof(INPUT));
     autoTriggerHolding = true;
+    isFiring = true;
     autoTriggerFireStartTime = std::chrono::steady_clock::now();
     currentFireDuration = config.autoTriggerFireDuration + getRandomDuration();
 }
@@ -587,6 +612,7 @@ void MouseController::releaseAutoTrigger()
         SendInput(1, &input, sizeof(INPUT));
         autoTriggerHolding = false;
     }
+    isFiring = false;
     autoTriggerWaitingForDelay = false;
 }
 

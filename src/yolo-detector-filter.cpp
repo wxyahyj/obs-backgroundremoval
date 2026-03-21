@@ -207,6 +207,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float pGainRampDuration;
 		float predictionWeightX;
 		float predictionWeightY;
+		// 持续自瞄和自动压枪参数
+		bool continuousAimEnabled;
+		bool autoRecoilControlEnabled;
+		float recoilStrength;
+		int recoilSpeed;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -228,11 +233,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			targetYOffset = 0.0f;
 			controllerType = 0;
 			makcuPort = "COM5";
-		makcuBaudRate = 4000000;
-		enableYAxisUnlock = false;
-		yAxisUnlockDelay = 500;
-		enableAutoTrigger = false;
-		triggerRadius = 5;
+			makcuBaudRate = 4000000;
+			enableYAxisUnlock = false;
+			yAxisUnlockDelay = 500;
+			enableAutoTrigger = false;
+			triggerRadius = 5;
 			triggerCooldown = 200;
 			triggerFireDelay = 0;
 			triggerFireDuration = 50;
@@ -252,6 +257,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pGainRampDuration = 0.5f;
 			predictionWeightX = 0.5f;
 			predictionWeightY = 0.1f;
+			// 持续自瞄和自动压枪默认值
+			continuousAimEnabled = false;
+			autoRecoilControlEnabled = false;
+			recoilStrength = 5.0f;
+			recoilSpeed = 16;
 		}
 	};
 
@@ -442,6 +452,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *enableConfigProp = obs_properties_add_bool(props, propName, "启用此配置");
 		obs_property_set_long_description(enableConfigProp, "启用当前鼠标控制配置");
 
+		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
+		obs_property_t *continuousAimProp = obs_properties_add_bool(props, propName, "启用持续自瞄");
+		obs_property_set_long_description(continuousAimProp, "启用后无需按住热键，自动持续瞄准目标");
+
 		snprintf(propName, sizeof(propName), "hotkey_%d", i);
 		obs_property_t *hotkeyList = obs_properties_add_list(props, propName, "热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
@@ -596,6 +610,17 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "Y轴预测权重", 0.0, 1.0, 0.1);
 		obs_property_set_long_description(predictionWeightYProp, "Y轴方向的目标预测权重，值越大预测效果越强");
+
+		// 自动压枪参数
+		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
+		obs_property_t *autoRecoilProp = obs_properties_add_bool(props, propName, "启用自动压枪");
+		obs_property_set_long_description(autoRecoilProp, "开火时自动向下移动鼠标以抵消后坐力");
+		snprintf(propName, sizeof(propName), "recoil_strength_%d", i);
+		obs_property_t *recoilStrengthProp = obs_properties_add_float_slider(props, propName, "压枪强度(像素)", 0.0, 50.0, 1.0);
+		obs_property_set_long_description(recoilStrengthProp, "每次压枪移动的像素数，值越大压枪幅度越大");
+		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
+		obs_property_t *recoilSpeedProp = obs_properties_add_int_slider(props, propName, "压枪速度(ms)", 1, 100, 1);
+		obs_property_set_long_description(recoilSpeedProp, "压枪移动的时间间隔（毫秒），值越小压枪频率越高");
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -636,6 +661,8 @@ static void setMouseBasicPropertiesVisible(obs_properties_t *props, int configIn
 	char propName[64];
 
 	snprintf(propName, sizeof(propName), "enable_config_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "continuous_aim_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "hotkey_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
@@ -699,6 +726,12 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "auto_recoil_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "recoil_strength_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "recoil_speed_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -989,6 +1022,16 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.5);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
+
+		// 持续自瞄和自动压枪默认值
+		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "recoil_strength_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
+		obs_data_set_default_int(settings, propName, 16);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1256,6 +1299,16 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
+
+		// 读取持续自瞄和自动压枪配置
+		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
+		tf->mouseConfigs[i].continuousAimEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
+		tf->mouseConfigs[i].autoRecoilControlEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "recoil_strength_%d", i);
+		tf->mouseConfigs[i].recoilStrength = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
+		tf->mouseConfigs[i].recoilSpeed = (int)obs_data_get_int(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -2597,6 +2650,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.pGainRampDuration = cfg.pGainRampDuration;
 		mcConfig.predictionWeightX = cfg.predictionWeightX;
 		mcConfig.predictionWeightY = cfg.predictionWeightY;
+		// 持续自瞄和自动压枪参数
+		mcConfig.continuousAimEnabled = cfg.continuousAimEnabled;
+		mcConfig.autoRecoilControlEnabled = cfg.autoRecoilControlEnabled;
+		mcConfig.recoilStrength = cfg.recoilStrength;
+		mcConfig.recoilSpeed = cfg.recoilSpeed;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

@@ -67,6 +67,11 @@ struct MouseControllerConfig {
     float pGainRampDuration = 0.5f;
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
+    // 持续自瞄和自动压枪配置
+    bool continuousAimEnabled = false;
+    bool autoRecoilControlEnabled = false;
+    float recoilStrength = 5.0f;
+    int recoilSpeed = 16;
 };
 
 class MouseControllerInterface {

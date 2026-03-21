@@ -65,6 +65,10 @@ private:
     float integralX;
     float integralY;
     
+    // 自动压枪相关
+    std::chrono::steady_clock::time_point lastRecoilTime;
+    bool isFiring;
+    
     // 运动预测器
     DerivativePredictor predictor;
     
