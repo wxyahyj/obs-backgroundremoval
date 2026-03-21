@@ -60,9 +60,7 @@ private:
     float filteredDeltaErrorY;
     float previousErrorX;
     float previousErrorY;
-    int errorSignChangeCount;
-    std::chrono::steady_clock::time_point lastSignChangeTime;
-    
+
     // 积分控制相关
     float integralX;
     float integralY;

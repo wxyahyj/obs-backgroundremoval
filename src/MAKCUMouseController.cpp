@@ -22,8 +22,6 @@ MAKCUMouseController::MAKCUMouseController()
     , filteredDeltaErrorY(0.0f)
     , previousErrorX(0.0f)
     , previousErrorY(0.0f)
-    , errorSignChangeCount(0)
-    , lastSignChangeTime(std::chrono::steady_clock::now())
     , currentVelocityX(0.0f)
     , currentVelocityY(0.0f)
     , currentAccelerationX(0.0f)
@@ -50,7 +48,7 @@ MAKCUMouseController::MAKCUMouseController()
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     connectSerial();
-    
+
     if (serialConnected) {
         move(0, 0);
     }
@@ -70,8 +68,6 @@ MAKCUMouseController::MAKCUMouseController(const std::string& port, int baud)
     , filteredDeltaErrorY(0.0f)
     , previousErrorX(0.0f)
     , previousErrorY(0.0f)
-    , errorSignChangeCount(0)
-    , lastSignChangeTime(std::chrono::steady_clock::now())
     , currentVelocityX(0.0f)
     , currentVelocityY(0.0f)
     , currentAccelerationX(0.0f)
@@ -672,54 +668,11 @@ float MAKCUMouseController::calculateDynamicP(float distance)
 
 float MAKCUMouseController::calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor)
 {
-    if (!config.adaptiveDEnabled) {
-        adaptiveFactor = 1.0f;
-        return config.pidD;
-    }
-    
-    float baseD = config.pidD;
-    
-    float jitterFactor = std::abs(deltaError) / config.dJitterThreshold;
-    jitterFactor = std::min(jitterFactor, 1.0f);
-    
-    float distanceFactor = 1.0f - std::min(distance / 200.0f, 1.0f);
-    
-    float overshootFactor = 0.0f;
-    auto now = std::chrono::steady_clock::now();
-    
-    if ((error > 0 && previousErrorX < 0) || (error < 0 && previousErrorX > 0)) {
-        auto timeSinceLastChange = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - lastSignChangeTime).count();
-        
-        if (timeSinceLastChange < 500) {
-            errorSignChangeCount++;
-        } else {
-            errorSignChangeCount = 1;
-        }
-        lastSignChangeTime = now;
-        
-        if (errorSignChangeCount >= 3) {
-            overshootFactor = 1.0f;
-        } else if (errorSignChangeCount >= 2) {
-            overshootFactor = 0.5f;
-        }
-    }
-    
-    adaptiveFactor = (1.0f - config.dAdaptiveStrength) + 
-                     config.dAdaptiveStrength * (jitterFactor * 0.5f + 
-                                               distanceFactor * 0.3f + 
-                                               overshootFactor * 0.2f);
-    
-    float finalD = baseD * adaptiveFactor;
-    finalD = std::max(config.pidDMin, std::min(finalD, config.pidDMax));
-    
-    static int logCounter = 0;
-    if (logCounter++ % 100 == 0) {
-        obs_log(LOG_INFO, "[MAKCU-AdaptiveD] jitter=%.2f, dist=%.2f, over=%.2f, factor=%.3f, baseD=%.4f, finalD=%.4f",
-                jitterFactor, distanceFactor, overshootFactor, adaptiveFactor, baseD, finalD);
-    }
-    
-    return finalD;
+    UNUSED_PARAMETER(distance);
+    UNUSED_PARAMETER(deltaError);
+    UNUSED_PARAMETER(error);
+    adaptiveFactor = 1.0f;
+    return config.pidD;
 }
 
 float MAKCUMouseController::calculateIntegral(float error, float& integral, float deltaTime)

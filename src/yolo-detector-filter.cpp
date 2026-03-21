@@ -186,11 +186,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int makcuBaudRate;
 		bool enableYAxisUnlock;
 		int yAxisUnlockDelay;
-		bool enableAdaptiveD;
-		float pidDMin;
-		float pidDMax;
-		float dAdaptiveStrength;
-		float dJitterThreshold;
 		bool enableAutoTrigger;
 		int triggerRadius;
 		int triggerCooldown;
@@ -233,16 +228,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			targetYOffset = 0.0f;
 			controllerType = 0;
 			makcuPort = "COM5";
-			makcuBaudRate = 4000000;
-			enableYAxisUnlock = false;
-			yAxisUnlockDelay = 500;
-			enableAdaptiveD = false;
-			pidDMin = 0.001f;
-			pidDMax = 1.0f;
-			dAdaptiveStrength = 0.5f;
-			dJitterThreshold = 10.0f;
-			enableAutoTrigger = false;
-			triggerRadius = 5;
+		makcuBaudRate = 4000000;
+		enableYAxisUnlock = false;
+		yAxisUnlockDelay = 500;
+		enableAutoTrigger = false;
+		triggerRadius = 5;
 			triggerCooldown = 200;
 			triggerFireDelay = 0;
 			triggerFireDuration = 50;
@@ -318,18 +308,22 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_text(props, "inference_status", obs_module_text("InferenceStatus"), OBS_TEXT_INFO);
 
 	obs_property_t *pageList = obs_properties_add_list(props, "settings_page", "设置页面", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(pageList, "YOLO检测设置", 0);
-	obs_property_list_add_int(pageList, "鼠标控制", 1);
-	obs_property_list_add_int(pageList, "FOV设置", 2);
-	obs_property_list_add_int(pageList, "目标追踪", 3);
+	obs_property_list_add_int(pageList, "模型与检测", 0);
+	obs_property_list_add_int(pageList, "视觉与区域", 1);
+	obs_property_list_add_int(pageList, "鼠标控制 - 基础", 2);
+	obs_property_list_add_int(pageList, "鼠标控制 - PID", 3);
+	obs_property_list_add_int(pageList, "鼠标控制 - 扳机", 4);
+	obs_property_list_add_int(pageList, "追踪与高级", 5);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_path(props, "model_path", obs_module_text("ModelPath"), OBS_PATH_FILE, "ONNX Models (*.onnx)", nullptr);
+	obs_property_t *modelPathProp = obs_properties_add_path(props, "model_path", obs_module_text("ModelPath"), OBS_PATH_FILE, "ONNX Models (*.onnx)", nullptr);
+	obs_property_set_long_description(modelPathProp, "选择YOLO ONNX模型文件路径");
 	obs_property_t *modelVersion = obs_properties_add_list(props, "model_version", obs_module_text("ModelVersion"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(modelVersion, "YOLOv5", static_cast<int>(ModelYOLO::Version::YOLOv5));
 	obs_property_list_add_int(modelVersion, "YOLOv8", static_cast<int>(ModelYOLO::Version::YOLOv8));
 	obs_property_list_add_int(modelVersion, "YOLOv11", static_cast<int>(ModelYOLO::Version::YOLOv11));
+	obs_property_set_long_description(modelVersion, "选择YOLO模型版本（V5/V8/V11等）");
 	obs_property_t *useGPUList = obs_properties_add_list(props, "use_gpu", obs_module_text("UseGPU"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(useGPUList, "CPU", USEGPU_CPU);
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
@@ -347,56 +341,90 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 	obs_property_list_add_string(useGPUList, "DirectML", USEGPU_DML);
 #endif
+	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/CPU）");
 	obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", obs_module_text("InputResolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(resolutionList, "320x320", 320);
 	obs_property_list_add_int(resolutionList, "416x416", 416);
 	obs_property_list_add_int(resolutionList, "512x512", 512);
 	obs_property_list_add_int(resolutionList, "640x640", 640);
-	obs_properties_add_int_slider(props, "num_threads", obs_module_text("NumThreads"), 1, 16, 1);
+	obs_property_set_long_description(resolutionList, "模型输入分辨率，影响精度和速度");
+	obs_property_t *numThreadsProp = obs_properties_add_int_slider(props, "num_threads", obs_module_text("NumThreads"), 1, 16, 1);
+	obs_property_set_long_description(numThreadsProp, "CPU推理线程数，建议设置为物理核心数");
 
 	obs_properties_add_group(props, "detection_group", obs_module_text("DetectionConfiguration"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_float_slider(props, "confidence_threshold", obs_module_text("ConfidenceThreshold"), 0.01, 1.0, 0.01);
-	obs_properties_add_float_slider(props, "nms_threshold", obs_module_text("NMSThreshold"), 0.01, 1.0, 0.01);
+	obs_property_t *confThresholdProp = obs_properties_add_float_slider(props, "confidence_threshold", obs_module_text("ConfidenceThreshold"), 0.01, 1.0, 0.01);
+	obs_property_set_long_description(confThresholdProp, "检测置信度阈值，低于此值的检测结果将被过滤");
+	obs_property_t *nmsThresholdProp = obs_properties_add_float_slider(props, "nms_threshold", obs_module_text("NMSThreshold"), 0.01, 1.0, 0.01);
+	obs_property_set_long_description(nmsThresholdProp, "NMS非极大值抑制阈值，用于去除重叠框");
 	obs_property_t *targetClass = obs_properties_add_list(props, "target_class", obs_module_text("TargetClass"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(targetClass, obs_module_text("AllClasses"), -1);
-	obs_properties_add_text(props, "target_classes_text", "目标类别(多个用逗号分隔)", OBS_TEXT_DEFAULT);
-	obs_properties_add_int_slider(props, "inference_interval_frames", obs_module_text("InferenceIntervalFrames"), 0, 10, 1);
+	obs_property_set_long_description(targetClass, "要检测的目标类别");
+	obs_property_t *targetClassesTextProp = obs_properties_add_text(props, "target_classes_text", "目标类别(多个用逗号分隔)", OBS_TEXT_DEFAULT);
+	obs_property_set_long_description(targetClassesTextProp, "指定多个目标类别，用逗号分隔（如：0,1,2）");
+	obs_property_t *inferenceIntervalProp = obs_properties_add_int_slider(props, "inference_interval_frames", obs_module_text("InferenceIntervalFrames"), 0, 10, 1);
+	obs_property_set_long_description(inferenceIntervalProp, "每隔多少帧进行一次推理，0表示每帧都推理");
 
 	obs_properties_add_group(props, "render_group", obs_module_text("RenderConfiguration"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "show_detection_results", obs_module_text("ShowDetectionResults"));
-	obs_properties_add_bool(props, "show_bbox", obs_module_text("ShowBoundingBox"));
-	obs_properties_add_bool(props, "show_label", obs_module_text("ShowLabel"));
-	obs_properties_add_bool(props, "show_confidence", obs_module_text("ShowConfidence"));
-	obs_properties_add_int_slider(props, "bbox_line_width", obs_module_text("LineWidth"), 1, 5, 1);
-	obs_properties_add_color(props, "bbox_color", obs_module_text("BoxColor"));
-	obs_properties_add_float_slider(props, "label_font_scale", obs_module_text("LabelFontScale"), 0.2, 1.0, 0.05);
+	obs_property_t *showDetectionResultsProp = obs_properties_add_bool(props, "show_detection_results", obs_module_text("ShowDetectionResults"));
+	obs_property_set_long_description(showDetectionResultsProp, "是否在视频上显示检测结果");
+	obs_property_t *showBBoxProp = obs_properties_add_bool(props, "show_bbox", obs_module_text("ShowBoundingBox"));
+	obs_property_set_long_description(showBBoxProp, "是否显示目标边界框");
+	obs_property_t *showLabelProp = obs_properties_add_bool(props, "show_label", obs_module_text("ShowLabel"));
+	obs_property_set_long_description(showLabelProp, "是否显示目标类别标签");
+	obs_property_t *showConfidenceProp = obs_properties_add_bool(props, "show_confidence", obs_module_text("ShowConfidence"));
+	obs_property_set_long_description(showConfidenceProp, "是否显示检测置信度");
+	obs_property_t *bboxLineWidthProp = obs_properties_add_int_slider(props, "bbox_line_width", obs_module_text("LineWidth"), 1, 5, 1);
+	obs_property_set_long_description(bboxLineWidthProp, "边界框线宽");
+	obs_property_t *bboxColorProp = obs_properties_add_color(props, "bbox_color", obs_module_text("BoxColor"));
+	obs_property_set_long_description(bboxColorProp, "边界框颜色");
+	obs_property_t *labelFontScaleProp = obs_properties_add_float_slider(props, "label_font_scale", obs_module_text("LabelFontScale"), 0.2, 1.0, 0.05);
+	obs_property_set_long_description(labelFontScaleProp, "标签字体大小");
 
 	obs_properties_add_group(props, "region_group", obs_module_text("RegionDetection"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "use_region", obs_module_text("UseRegionDetection"));
-	obs_properties_add_int(props, "region_x", obs_module_text("RegionX"), 0, 3840, 1);
-	obs_properties_add_int(props, "region_y", obs_module_text("RegionY"), 0, 2160, 1);
-	obs_properties_add_int(props, "region_width", obs_module_text("RegionWidth"), 1, 3840, 1);
-	obs_properties_add_int(props, "region_height", obs_module_text("RegionHeight"), 1, 2160, 1);
+	obs_property_t *useRegionProp = obs_properties_add_bool(props, "use_region", obs_module_text("UseRegionDetection"));
+	obs_property_set_long_description(useRegionProp, "只在指定区域内进行检测");
+	obs_property_t *regionXProp = obs_properties_add_int(props, "region_x", obs_module_text("RegionX"), 0, 3840, 1);
+	obs_property_set_long_description(regionXProp, "检测区域左上角X坐标");
+	obs_property_t *regionYProp = obs_properties_add_int(props, "region_y", obs_module_text("RegionY"), 0, 2160, 1);
+	obs_property_set_long_description(regionYProp, "检测区域左上角Y坐标");
+	obs_property_t *regionWidthProp = obs_properties_add_int(props, "region_width", obs_module_text("RegionWidth"), 1, 3840, 1);
+	obs_property_set_long_description(regionWidthProp, "检测区域宽度");
+	obs_property_t *regionHeightProp = obs_properties_add_int(props, "region_height", obs_module_text("RegionHeight"), 1, 2160, 1);
+	obs_property_set_long_description(regionHeightProp, "检测区域高度");
 
 	obs_properties_add_group(props, "advanced_group", obs_module_text("AdvancedConfiguration"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "export_coordinates", obs_module_text("ExportCoordinates"));
-	obs_properties_add_path(props, "coordinate_output_path", obs_module_text("CoordinateOutputPath"), OBS_PATH_FILE_SAVE, "JSON Files (*.json)", nullptr);
+	obs_property_t *exportCoordinatesProp = obs_properties_add_bool(props, "export_coordinates", obs_module_text("ExportCoordinates"));
+	obs_property_set_long_description(exportCoordinatesProp, "将检测结果坐标导出到JSON文件");
+	obs_property_t *coordinateOutputPathProp = obs_properties_add_path(props, "coordinate_output_path", obs_module_text("CoordinateOutputPath"), OBS_PATH_FILE_SAVE, "JSON Files (*.json)", nullptr);
+	obs_property_set_long_description(coordinateOutputPathProp, "坐标输出文件路径");
 
 	obs_properties_add_group(props, "fov_group", obs_module_text("FOVSettings"), OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "show_fov", obs_module_text("ShowFOV"));
-	obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 1, 500, 1);
-	obs_properties_add_bool(props, "show_fov_circle", obs_module_text("ShowFOVCircle"));
-	obs_properties_add_bool(props, "show_fov_cross", obs_module_text("ShowFOVCross"));
-	obs_properties_add_int_slider(props, "fov_cross_line_scale", obs_module_text("FOVCrossLineScale"), 1, 300, 5);
-	obs_properties_add_int_slider(props, "fov_cross_line_thickness", obs_module_text("FOVCrossLineThickness"), 1, 10, 1);
-	obs_properties_add_int_slider(props, "fov_circle_thickness", obs_module_text("FOVCircleThickness"), 1, 10, 1);
-	obs_properties_add_color(props, "fov_color", obs_module_text("FOVColor"));
+	obs_property_t *showFovProp = obs_properties_add_bool(props, "show_fov", obs_module_text("ShowFOV"));
+	obs_property_set_long_description(showFovProp, "是否显示瞄准FOV区域");
+	obs_property_t *fovRadiusProp = obs_properties_add_int_slider(props, "fov_radius", obs_module_text("FOVRadius"), 1, 500, 1);
+	obs_property_set_long_description(fovRadiusProp, "FOV半径（像素）");
+	obs_property_t *showFovCircleProp = obs_properties_add_bool(props, "show_fov_circle", obs_module_text("ShowFOVCircle"));
+	obs_property_set_long_description(showFovCircleProp, "是否显示FOV圆圈");
+	obs_property_t *showFovCrossProp = obs_properties_add_bool(props, "show_fov_cross", obs_module_text("ShowFOVCross"));
+	obs_property_set_long_description(showFovCrossProp, "是否显示FOV十字线");
+	obs_property_t *fovCrossLineScaleProp = obs_properties_add_int_slider(props, "fov_cross_line_scale", obs_module_text("FOVCrossLineScale"), 1, 300, 5);
+	obs_property_set_long_description(fovCrossLineScaleProp, "FOV十字线长度");
+	obs_property_t *fovCrossLineThicknessProp = obs_properties_add_int_slider(props, "fov_cross_line_thickness", obs_module_text("FOVCrossLineThickness"), 1, 10, 1);
+	obs_property_set_long_description(fovCrossLineThicknessProp, "FOV十字线粗细");
+	obs_property_t *fovCircleThicknessProp = obs_properties_add_int_slider(props, "fov_circle_thickness", obs_module_text("FOVCircleThickness"), 1, 10, 1);
+	obs_property_set_long_description(fovCircleThicknessProp, "FOV圆圈粗细");
+	obs_property_t *fovColorProp = obs_properties_add_color(props, "fov_color", obs_module_text("FOVColor"));
+	obs_property_set_long_description(fovColorProp, "FOV颜色");
 
 	obs_properties_add_group(props, "fov2_group", "动态FOV设置", OBS_GROUP_NORMAL, nullptr);
-	obs_properties_add_bool(props, "use_dynamic_fov", "启用动态FOV");
-	obs_properties_add_bool(props, "show_fov2", "显示第二个FOV");
-	obs_properties_add_int_slider(props, "fov_radius2", "第二个FOV半径", 1, 200, 1);
-	obs_properties_add_color(props, "fov_color2", "第二个FOV颜色");
+	obs_property_t *useDynamicFovProp = obs_properties_add_bool(props, "use_dynamic_fov", "启用动态FOV");
+	obs_property_set_long_description(useDynamicFovProp, "启用动态FOV，根据目标距离自动调整");
+	obs_property_t *showFov2Prop = obs_properties_add_bool(props, "show_fov2", "显示第二个FOV");
+	obs_property_set_long_description(showFov2Prop, "是否显示第二个FOV区域");
+	obs_property_t *fovRadius2Prop = obs_properties_add_int_slider(props, "fov_radius2", "第二个FOV半径", 1, 200, 1);
+	obs_property_set_long_description(fovRadius2Prop, "第二个FOV半径（像素）");
+	obs_property_t *fovColor2Prop = obs_properties_add_color(props, "fov_color2", "第二个FOV颜色");
+	obs_property_set_long_description(fovColor2Prop, "第二个FOV颜色");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -484,17 +512,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		obs_properties_add_int_slider(props, propName, "Y 轴解锁延迟 (ms)", 100, 2000, 50);
 
-		snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", i);
-		obs_properties_add_bool(props, propName, "启用自适应 D 项");
-		snprintf(propName, sizeof(propName), "pid_d_min_%d", i);
-		obs_properties_add_float_slider(props, propName, "D 项最小值", 0.000, 1.0, 0.001);
-		snprintf(propName, sizeof(propName), "pid_d_max_%d", i);
-		obs_properties_add_float_slider(props, propName, "D 项最大值", 0.000, 1.0, 0.001);
-		snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", i);
-		obs_properties_add_float_slider(props, propName, "自适应强度", 0.0, 1.0, 0.05);
-		snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", i);
-		obs_properties_add_float_slider(props, propName, "抖动阈值 (像素)", 0.0, 50.0, 1.0);
-
 		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
 		obs_properties_add_bool(props, propName, "启用自动扳机");
 		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
@@ -564,49 +581,29 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	return props;
 }
 
-static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+// 设置鼠标控制-基础页面的控件可见性
+static void setMouseBasicPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
 	char propName[64];
 
 	snprintf(propName, sizeof(propName), "enable_config_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
 	snprintf(propName, sizeof(propName), "hotkey_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
 	snprintf(propName, sizeof(propName), "controller_type_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
 	snprintf(propName, sizeof(propName), "makcu_port_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
 	snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
-	snprintf(propName, sizeof(propName), "p_min_%d", configIndex);
+	snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "p_max_%d", configIndex);
+	snprintf(propName, sizeof(propName), "max_pixel_move_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "p_slope_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "baseline_compensation_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "d_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
 	snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "max_pixel_move_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-
 	snprintf(propName, sizeof(propName), "screen_offset_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "screen_offset_y_%d", configIndex);
@@ -615,22 +612,47 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "screen_height_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
 
+// 设置鼠标控制-PID页面的控件可见性
+static void setMousePIDPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+{
+	char propName[64];
+
+	snprintf(propName, sizeof(propName), "p_min_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "p_max_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "p_slope_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "integral_limit_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "integral_dead_zone_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "d_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "baseline_compensation_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
 
-	snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "pid_d_min_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "pid_d_max_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
+// 设置鼠标控制-扳机页面的控件可见性
+static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+{
+	char propName[64];
 
 	snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
@@ -653,39 +675,27 @@ static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex,
 	snprintf(propName, sizeof(propName), "enable_trigger_duration_random_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-
-		// 新功能参数可见性设置
-		snprintf(propName, sizeof(propName), "integral_limit_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
-		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
-		obs_property_set_visible(obs_properties_get(props, propName), visible);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
+	int page = (int)obs_data_get_int(settings, "settings_page");
 
 	for (int i = 0; i < 5; i++) {
-		setConfigPropertiesVisible(props, i, i == currentConfig);
+		bool isCurrentConfig = (i == currentConfig);
+		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
+		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
+		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 	}
 
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), true);
-	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), true);
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4);
+	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
 
 	return true;
 }
@@ -694,116 +704,86 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 {
 	int page = (int)obs_data_get_int(settings, "settings_page");
 
-	obs_property_t *model_group = obs_properties_get(props, "model_group");
-	obs_property_t *detection_group = obs_properties_get(props, "detection_group");
-	obs_property_t *render_group = obs_properties_get(props, "render_group");
-	obs_property_t *region_group = obs_properties_get(props, "region_group");
-	obs_property_t *advanced_group = obs_properties_get(props, "advanced_group");
-	obs_property_t *fov_group = obs_properties_get(props, "fov_group");
-	obs_property_t *fov2_group = obs_properties_get(props, "fov2_group");
+	// 页面0: 模型与检测 - 显示模型组和检测组
+	obs_property_set_visible(obs_properties_get(props, "model_group"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "detection_group"), page == 0);
 
-	obs_property_set_visible(model_group, page == 0);
-	obs_property_set_visible(detection_group, page == 0);
-	obs_property_set_visible(render_group, page == 0);
-	obs_property_set_visible(region_group, page == 0);
-	obs_property_set_visible(advanced_group, page == 0);
+	// 页面0: 模型与检测参数
+	obs_property_set_visible(obs_properties_get(props, "model_path"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "model_version"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "use_gpu"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "input_resolution"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "num_threads"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "confidence_threshold"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "nms_threshold"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "target_class"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "target_classes_text"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "inference_interval_frames"), page == 0);
 
-	obs_property_set_visible(fov_group, page == 2);
-	obs_property_set_visible(fov2_group, page == 2);
+	// 页面1: 视觉与区域 - 显示渲染组、区域组和FOV组
+	obs_property_set_visible(obs_properties_get(props, "render_group"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_group"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_group"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov2_group"), page == 1);
 
-	obs_property_t *model_path = obs_properties_get(props, "model_path");
-	obs_property_t *model_version = obs_properties_get(props, "model_version");
-	obs_property_t *use_gpu = obs_properties_get(props, "use_gpu");
-	obs_property_t *input_resolution = obs_properties_get(props, "input_resolution");
-	obs_property_t *num_threads = obs_properties_get(props, "num_threads");
-	obs_property_t *confidence_threshold = obs_properties_get(props, "confidence_threshold");
-	obs_property_t *nms_threshold = obs_properties_get(props, "nms_threshold");
-	obs_property_t *target_class = obs_properties_get(props, "target_class");
-	obs_property_t *target_classes_text = obs_properties_get(props, "target_classes_text");
-	obs_property_t *inference_interval_frames = obs_properties_get(props, "inference_interval_frames");
-	obs_property_t *show_detection_results = obs_properties_get(props, "show_detection_results");
-	obs_property_t *show_bbox = obs_properties_get(props, "show_bbox");
-	obs_property_t *show_label = obs_properties_get(props, "show_label");
-	obs_property_t *show_confidence = obs_properties_get(props, "show_confidence");
-	obs_property_t *bbox_line_width = obs_properties_get(props, "bbox_line_width");
-	obs_property_t *bbox_color = obs_properties_get(props, "bbox_color");
-	obs_property_t *label_font_scale = obs_properties_get(props, "label_font_scale");
-	obs_property_t *use_region = obs_properties_get(props, "use_region");
-	obs_property_t *region_x = obs_properties_get(props, "region_x");
-	obs_property_t *region_y = obs_properties_get(props, "region_y");
-	obs_property_t *region_width = obs_properties_get(props, "region_width");
-	obs_property_t *region_height = obs_properties_get(props, "region_height");
-	obs_property_t *export_coordinates = obs_properties_get(props, "export_coordinates");
-	obs_property_t *coordinate_output_path = obs_properties_get(props, "coordinate_output_path");
-
-	obs_property_set_visible(model_path, page == 0);
-	obs_property_set_visible(model_version, page == 0);
-	obs_property_set_visible(use_gpu, page == 0);
-	obs_property_set_visible(input_resolution, page == 0);
-	obs_property_set_visible(num_threads, page == 0);
-	obs_property_set_visible(confidence_threshold, page == 0);
-	obs_property_set_visible(nms_threshold, page == 0);
-	obs_property_set_visible(target_class, page == 0);
-	obs_property_set_visible(target_classes_text, page == 0);
-	obs_property_set_visible(inference_interval_frames, page == 0);
-	obs_property_set_visible(show_detection_results, page == 0);
-	obs_property_set_visible(show_bbox, page == 0);
-	obs_property_set_visible(show_label, page == 0);
-	obs_property_set_visible(show_confidence, page == 0);
-	obs_property_set_visible(bbox_line_width, page == 0);
-	obs_property_set_visible(bbox_color, page == 0);
-	obs_property_set_visible(label_font_scale, page == 0);
-	obs_property_set_visible(use_region, page == 0);
-	obs_property_set_visible(region_x, page == 0);
-	obs_property_set_visible(region_y, page == 0);
-	obs_property_set_visible(region_width, page == 0);
-	obs_property_set_visible(region_height, page == 0);
-	obs_property_set_visible(export_coordinates, page == 0);
-	obs_property_set_visible(coordinate_output_path, page == 0);
-
-	obs_property_t *show_fov = obs_properties_get(props, "show_fov");
-	obs_property_t *fov_radius = obs_properties_get(props, "fov_radius");
-	obs_property_t *show_fov_circle = obs_properties_get(props, "show_fov_circle");
-	obs_property_t *show_fov_cross = obs_properties_get(props, "show_fov_cross");
-	obs_property_t *fov_cross_line_scale = obs_properties_get(props, "fov_cross_line_scale");
-	obs_property_t *fov_cross_line_thickness = obs_properties_get(props, "fov_cross_line_thickness");
-	obs_property_t *fov_circle_thickness = obs_properties_get(props, "fov_circle_thickness");
-	obs_property_t *fov_color = obs_properties_get(props, "fov_color");
-	obs_property_t *use_dynamic_fov = obs_properties_get(props, "use_dynamic_fov");
-	obs_property_t *show_fov2 = obs_properties_get(props, "show_fov2");
-	obs_property_t *fov_radius2 = obs_properties_get(props, "fov_radius2");
-	obs_property_t *fov_color2 = obs_properties_get(props, "fov_color2");
-
-	obs_property_set_visible(show_fov, page == 2);
-	obs_property_set_visible(fov_radius, page == 2);
-	obs_property_set_visible(show_fov_circle, page == 2);
-	obs_property_set_visible(show_fov_cross, page == 2);
-	obs_property_set_visible(fov_cross_line_scale, page == 2);
-	obs_property_set_visible(fov_cross_line_thickness, page == 2);
-	obs_property_set_visible(fov_circle_thickness, page == 2);
-	obs_property_set_visible(fov_color, page == 2);
-	obs_property_set_visible(use_dynamic_fov, page == 2);
-	obs_property_set_visible(show_fov2, page == 2);
-	obs_property_set_visible(fov_radius2, page == 2);
-	obs_property_set_visible(fov_color2, page == 2);
+	// 页面1: 视觉与区域参数
+	obs_property_set_visible(obs_properties_get(props, "show_detection_results"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_bbox"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_label"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_confidence"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "bbox_line_width"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "bbox_color"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "label_font_scale"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "use_region"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_x"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_y"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_width"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_height"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_radius"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov_circle"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov_cross"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_cross_line_scale"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_cross_line_thickness"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_circle_thickness"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_color"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "use_dynamic_fov"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov2"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_radius2"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_color2"), page == 1);
 
 #ifdef _WIN32
-	obs_property_t *tracking_group = obs_properties_get(props, "tracking_group");
-	obs_property_set_visible(tracking_group, page == 3);
+	// 配置选择器在鼠标控制页面(2,3,4)显示
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4);
 
-	obs_property_t *iou_threshold = obs_properties_get(props, "iou_threshold");
-	obs_property_t *max_lost_frames = obs_properties_get(props, "max_lost_frames");
-	obs_property_set_visible(iou_threshold, page == 3);
-	obs_property_set_visible(max_lost_frames, page == 3);
-
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 1);
-
+	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
 	for (int i = 0; i < 5; i++) {
-		setConfigPropertiesVisible(props, i, page == 1 && i == currentConfig);
+		bool isCurrentConfig = (i == currentConfig);
+		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
+		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
+		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 	}
 
-	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 1);
+	// 测试连接按钮只在基础页面显示
+	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
+
+	// 页面5: 追踪与高级
+	obs_property_set_visible(obs_properties_get(props, "tracking_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "iou_threshold"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "max_lost_frames"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "target_switch_delay"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "target_switch_tolerance"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "floating_window_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "show_floating_window"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "floating_window_width"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "floating_window_height"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "config_management_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "save_config"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "load_config"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "advanced_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "export_coordinates"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "coordinate_output_path"), page == 5);
 #else
 	(void)page;
 #endif
@@ -913,17 +893,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		obs_data_set_default_int(settings, propName, 500);
-
-		snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", i);
-		obs_data_set_default_bool(settings, propName, false);
-		snprintf(propName, sizeof(propName), "pid_d_min_%d", i);
-		obs_data_set_default_double(settings, propName, 0.001);
-		snprintf(propName, sizeof(propName), "pid_d_max_%d", i);
-		obs_data_set_default_double(settings, propName, 1.0);
-		snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", i);
-		obs_data_set_default_double(settings, propName, 0.5);
-		snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", i);
-		obs_data_set_default_double(settings, propName, 10.0);
 
 		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
@@ -1191,17 +1160,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].enableYAxisUnlock = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		tf->mouseConfigs[i].yAxisUnlockDelay = (int)obs_data_get_int(settings, propName);
-
-		snprintf(propName, sizeof(propName), "enable_adaptive_d_%d", i);
-		tf->mouseConfigs[i].enableAdaptiveD = obs_data_get_bool(settings, propName);
-		snprintf(propName, sizeof(propName), "pid_d_min_%d", i);
-		tf->mouseConfigs[i].pidDMin = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "pid_d_max_%d", i);
-		tf->mouseConfigs[i].pidDMax = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "d_adaptive_strength_%d", i);
-		tf->mouseConfigs[i].dAdaptiveStrength = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "d_jitter_threshold_%d", i);
-		tf->mouseConfigs[i].dJitterThreshold = (float)obs_data_get_double(settings, propName);
 
 		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
 		tf->mouseConfigs[i].enableAutoTrigger = obs_data_get_bool(settings, propName);
@@ -2563,11 +2521,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.makcuBaudRate = cfg.makcuBaudRate;
 		mcConfig.yUnlockEnabled = cfg.enableYAxisUnlock;
 		mcConfig.yUnlockDelayMs = cfg.yAxisUnlockDelay;
-		mcConfig.adaptiveDEnabled = cfg.enableAdaptiveD;
-		mcConfig.pidDMin = cfg.pidDMin;
-		mcConfig.pidDMax = cfg.pidDMax;
-		mcConfig.dAdaptiveStrength = cfg.dAdaptiveStrength;
-		mcConfig.dJitterThreshold = cfg.dJitterThreshold;
 		mcConfig.autoTriggerEnabled = cfg.enableAutoTrigger;
 		mcConfig.autoTriggerRadius = cfg.triggerRadius;
 		mcConfig.autoTriggerCooldownMs = cfg.triggerCooldown;
