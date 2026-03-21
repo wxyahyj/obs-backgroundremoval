@@ -28,6 +28,10 @@ MouseController::MouseController()
     , integralY(0.0f)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
+    , previousRecoilMove(0.0f)
+    , bezierCurrentStep(0)
+    , bezierDirection(1.0f)
+    , bezierActive(false)
     , lastTickTime(std::chrono::steady_clock::now())
     , deltaTime(0.016f)
     , hotkeyPressStartTime(std::chrono::steady_clock::now())
@@ -45,6 +49,8 @@ MouseController::MouseController()
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
+    bezierStartPos = { 0, 0 };
+    bezierEndPos = { 0, 0 };
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 }
@@ -59,11 +65,13 @@ void MouseController::updateConfig(const MouseControllerConfig& newConfig)
     bool configChanged = (config.enableMouseControl != newConfig.enableMouseControl ||
                           config.autoTriggerEnabled != newConfig.autoTriggerEnabled ||
                           config.autoTriggerFireDuration != newConfig.autoTriggerFireDuration ||
-                          config.autoTriggerInterval != newConfig.autoTriggerInterval);
+                          config.autoTriggerInterval != newConfig.autoTriggerInterval ||
+                          config.continuousAimEnabled != newConfig.continuousAimEnabled ||
+                          config.autoRecoilControlEnabled != newConfig.autoRecoilControlEnabled);
     config = newConfig;
     if (configChanged) {
-        obs_log(LOG_INFO, "[MouseController] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
-                config.enableMouseControl, config.autoTriggerEnabled, config.autoTriggerFireDuration, config.autoTriggerInterval);
+        obs_log(LOG_INFO, "[MouseController] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, continuousAim=%d, autoRecoil=%d",
+                config.enableMouseControl, config.autoTriggerEnabled, config.continuousAimEnabled, config.autoRecoilControlEnabled);
     }
 }
 
@@ -104,6 +112,14 @@ void MouseController::tick()
 
     // 判断是否应该瞄准
     bool shouldAim = config.continuousAimEnabled || hotkeyPressed;
+
+    // 调试日志
+    static bool lastContinuousAim = false;
+    if (config.continuousAimEnabled != lastContinuousAim) {
+        obs_log(LOG_INFO, "[MouseController] continuousAimEnabled changed to %d, shouldAim=%d, hotkeyPressed=%d",
+                config.continuousAimEnabled, shouldAim, hotkeyPressed);
+        lastContinuousAim = config.continuousAimEnabled;
+    }
 
     // 如果不应该瞄准，停止所有操作
     if (!shouldAim) {
@@ -268,12 +284,9 @@ void MouseController::tick()
     // PID输出计算
     float pidOutputX = dynamicP * fusedErrorX + adaptiveDX * filteredDeltaErrorX + integralTermX;
     float pidOutputY = dynamicP * fusedErrorY + adaptiveDY * filteredDeltaErrorY + integralTermY;
-    
-    float baselineX = fusedErrorX * config.baselineCompensation;
-    float baselineY = fusedErrorY * config.baselineCompensation;
-    
-    float moveX = pidOutputX + baselineX;
-    float moveY = pidOutputY + baselineY;
+
+    float moveX = pidOutputX;
+    float moveY = pidOutputY;
     
     // 限制最大移动量
     float moveDistSquared = moveX * moveX + moveY * moveY;
@@ -287,27 +300,63 @@ void MouseController::tick()
     if (yUnlockActive) {
         moveY = 0.0f;
     }
-    
-    // 自动压枪逻辑：按下热键（或持续自瞄模式）时压枪
-    if (config.autoRecoilControlEnabled && shouldAim) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRecoilTime).count();
-        
-        if (elapsed >= config.recoilSpeed) {
-            // 压枪：向下移动（Y轴正值）
-            moveY += config.recoilStrength;
-            lastRecoilTime = now;
-        }
-    }
 
-    // 平滑处理
-    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
-    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
+    float finalMoveX, finalMoveY;
     
-    previousMoveX = finalMoveX;
-    previousMoveY = finalMoveY;
+    // 贝塞尔曲线移动模式
+    if (config.bezierCurveEnabled) {
+        // 检查是否需要开始新的贝塞尔曲线
+        if (!bezierActive || 
+            std::abs(moveX) > config.deadZonePixels * 2 || 
+            std::abs(moveY) > config.deadZonePixels * 2) {
+            
+            // 获取当前鼠标位置作为起点
+            GetCursorPos(&bezierStartPos);
+            bezierEndPos.x = bezierStartPos.x + static_cast<LONG>(moveX);
+            bezierEndPos.y = bezierStartPos.y + static_cast<LONG>(moveY);
+            bezierCurrentStep = 0;
+            bezierActive = true;
+            
+            // 随机选择曲线方向
+            std::uniform_int_distribution<int> dirDist(0, 1);
+            bezierDirection = (dirDist(randomGenerator) == 0) ? 1.0f : -1.0f;
+        }
+        
+        // 计算贝塞尔曲线增量
+        if (bezierActive && bezierCurrentStep < config.bezierSteps) {
+            BezierPoint start = {static_cast<float>(bezierStartPos.x), static_cast<float>(bezierStartPos.y)};
+            BezierPoint end = {static_cast<float>(bezierEndPos.x), static_cast<float>(bezierEndPos.y)};
+            
+            BezierPoint delta = bezierCurve.getStepDelta(
+                start, end, 
+                config.bezierControlOffset, 
+                bezierCurrentStep, 
+                config.bezierSteps,
+                bezierDirection
+            );
+            
+            finalMoveX = delta.x;
+            finalMoveY = delta.y;
+            bezierCurrentStep++;
+            
+            if (bezierCurrentStep >= config.bezierSteps) {
+                bezierActive = false;
+            }
+        } else {
+            finalMoveX = 0.0f;
+            finalMoveY = 0.0f;
+            bezierActive = false;
+        }
+    } else {
+        // 普通线性移动模式
+        finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
+        finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
+        
+        previousMoveX = finalMoveX;
+        previousMoveY = finalMoveY;
+    }
     
-    // 执行鼠标移动
+    // 执行瞄准鼠标移动
     INPUT input = {};
     input.type = INPUT_MOUSE;
     input.mi.dx = static_cast<LONG>(finalMoveX);
@@ -316,6 +365,31 @@ void MouseController::tick()
     input.mi.time = 0;
     input.mi.dwExtraInfo = 0;
     SendInput(1, &input, sizeof(INPUT));
+    
+    // 自动压枪逻辑：独立的向下移动过程
+    if (config.autoRecoilControlEnabled && shouldAim) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRecoilTime).count();
+        
+        if (elapsed >= config.recoilSpeed) {
+            // 压枪：独立的向下移动（Y轴正值），应用平滑
+            float recoilMove = previousRecoilMove * (1.0f - config.recoilSmoothing) + config.recoilStrength * config.recoilSmoothing;
+            previousRecoilMove = recoilMove;
+            
+            INPUT recoilInput = {};
+            recoilInput.type = INPUT_MOUSE;
+            recoilInput.mi.dx = 0;
+            recoilInput.mi.dy = static_cast<LONG>(recoilMove);
+            recoilInput.mi.dwFlags = MOUSEEVENTF_MOVE;
+            recoilInput.mi.time = 0;
+            recoilInput.mi.dwExtraInfo = 0;
+            SendInput(1, &recoilInput, sizeof(INPUT));
+            lastRecoilTime = now;
+        }
+    } else {
+        // 不压枪时重置平滑状态
+        previousRecoilMove = 0.0f;
+    }
     
     // 更新状态
     pidPreviousErrorX = fusedErrorX;
@@ -565,6 +639,8 @@ void MouseController::resetMotionState()
     currentAccelerationY = 0.0f;
     previousMoveX = 0.0f;
     previousMoveY = 0.0f;
+    bezierActive = false;
+    bezierCurrentStep = 0;
 }
 
 int MouseController::getRandomDelay()

@@ -170,7 +170,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float pMax;
 		float pSlope;
 		float d;
-		float baselineCompensation;
 		float aimSmoothingX;
 		float aimSmoothingY;
 		float maxPixelMove;
@@ -212,6 +211,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool autoRecoilControlEnabled;
 		float recoilStrength;
 		int recoilSpeed;
+		float recoilSmoothing;
+		// 贝塞尔曲线参数
+		bool bezierCurveEnabled;
+		float bezierControlOffset;
+		int bezierSteps;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -220,7 +224,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pMax = 0.6f;
 			pSlope = 1.0f;
 			d = 0.007f;
-			baselineCompensation = 0.85f;
 			aimSmoothingX = 0.7f;
 			aimSmoothingY = 0.5f;
 			maxPixelMove = 128.0f;
@@ -262,6 +265,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			autoRecoilControlEnabled = false;
 			recoilStrength = 5.0f;
 			recoilSpeed = 16;
+			recoilSmoothing = 0.5f;
+			// 贝塞尔曲线默认值
+			bezierCurveEnabled = false;
+			bezierControlOffset = 0.2f;
+			bezierSteps = 10;
 		}
 	};
 
@@ -320,9 +328,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *pageList = obs_properties_add_list(props, "settings_page", "设置页面", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(pageList, "模型与检测", 0);
 	obs_property_list_add_int(pageList, "视觉与区域", 1);
-	obs_property_list_add_int(pageList, "鼠标控制 - 基础", 2);
-	obs_property_list_add_int(pageList, "鼠标控制 - PID", 3);
-	obs_property_list_add_int(pageList, "鼠标控制 - 扳机", 4);
+	obs_property_list_add_int(pageList, "鼠标 - 基础", 2);
+	obs_property_list_add_int(pageList, "鼠标 - PID", 3);
+	obs_property_list_add_int(pageList, "鼠标 - 扳机/压枪", 4);
 	obs_property_list_add_int(pageList, "追踪与高级", 5);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
@@ -448,16 +456,22 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	for (int i = 0; i < 5; i++) {
 		char propName[64];
 
+		// 基础设置分组
 		snprintf(propName, sizeof(propName), "enable_config_%d", i);
 		obs_property_t *enableConfigProp = obs_properties_add_bool(props, propName, "启用此配置");
 		obs_property_set_long_description(enableConfigProp, "启用当前鼠标控制配置");
 
+		// 自瞄模式分组说明
+		snprintf(propName, sizeof(propName), "aim_mode_info_%d", i);
+		obs_property_t *aimModeInfoProp = obs_properties_add_text(props, propName, "自瞄模式", OBS_TEXT_INFO);
+		obs_property_set_long_description(aimModeInfoProp, "选择自瞄工作模式：持续自瞄自动瞄准，或按住热键触发");
+
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
-		obs_property_t *continuousAimProp = obs_properties_add_bool(props, propName, "启用持续自瞄");
-		obs_property_set_long_description(continuousAimProp, "启用后无需按住热键，自动持续瞄准目标");
+		obs_property_t *continuousAimProp = obs_properties_add_bool(props, propName, "持续自瞄模式");
+		obs_property_set_long_description(continuousAimProp, "开启后无需按住热键，检测到目标时自动持续瞄准");
 
 		snprintf(propName, sizeof(propName), "hotkey_%d", i);
-		obs_property_t *hotkeyList = obs_properties_add_list(props, propName, "热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_t *hotkeyList = obs_properties_add_list(props, propName, "触发按键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
 		obs_property_list_add_int(hotkeyList, "鼠标右键", VK_RBUTTON);
 		obs_property_list_add_int(hotkeyList, "侧键1", VK_XBUTTON1);
@@ -502,9 +516,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "p_slope_%d", i);
 		obs_property_t *pSlopeProp = obs_properties_add_float_slider(props, propName, "P增长斜率", 0.00, 10, 0.01);
 		obs_property_set_long_description(pSlopeProp, "距离-增益曲线斜率，控制P值随距离变化的敏感度");
-		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-		obs_property_t *baselineCompProp = obs_properties_add_float_slider(props, propName, "基线补偿", 0.00, 1.00, 0.01);
-		obs_property_set_long_description(baselineCompProp, "近距离补偿系数，用于修正近距离时的瞄准偏差");
 		snprintf(propName, sizeof(propName), "d_%d", i);
 		obs_property_t *dProp = obs_properties_add_float_slider(props, propName, "微分系数", 0.000, 1.00, 0.001);
 		obs_property_set_long_description(dProp, "微分增益，控制对误差变化率的响应");
@@ -621,6 +632,20 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
 		obs_property_t *recoilSpeedProp = obs_properties_add_int_slider(props, propName, "压枪速度(ms)", 1, 100, 1);
 		obs_property_set_long_description(recoilSpeedProp, "压枪移动的时间间隔（毫秒），值越小压枪频率越高");
+		snprintf(propName, sizeof(propName), "recoil_smoothing_%d", i);
+		obs_property_t *recoilSmoothingProp = obs_properties_add_float_slider(props, propName, "压枪平滑", 0.0, 1.0, 0.01);
+		obs_property_set_long_description(recoilSmoothingProp, "压枪移动的平滑系数，值越大响应越快，值越小越平滑");
+		
+		// 贝塞尔曲线设置
+		snprintf(propName, sizeof(propName), "bezier_curve_enabled_%d", i);
+		obs_property_t *bezierEnabledProp = obs_properties_add_bool(props, propName, "启用贝塞尔曲线移动");
+		obs_property_set_long_description(bezierEnabledProp, "使用贝塞尔曲线移动鼠标，轨迹更自然");
+		snprintf(propName, sizeof(propName), "bezier_control_offset_%d", i);
+		obs_property_t *bezierOffsetProp = obs_properties_add_float_slider(props, propName, "曲线弯曲程度", 0.0, 0.5, 0.01);
+		obs_property_set_long_description(bezierOffsetProp, "控制点偏移比例，值越大曲线弯曲越明显");
+		snprintf(propName, sizeof(propName), "bezier_steps_%d", i);
+		obs_property_t *bezierStepsProp = obs_properties_add_int_slider(props, propName, "曲线步数", 1, 30, 1);
+		obs_property_set_long_description(bezierStepsProp, "贝塞尔曲线的步数，步数越多移动越平滑");
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -661,6 +686,8 @@ static void setMouseBasicPropertiesVisible(obs_properties_t *props, int configIn
 	char propName[64];
 
 	snprintf(propName, sizeof(propName), "enable_config_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "aim_mode_info_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "continuous_aim_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
@@ -715,8 +742,6 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "baseline_compensation_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
@@ -726,12 +751,6 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "auto_recoil_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "recoil_strength_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "recoil_speed_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -765,6 +784,24 @@ static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int config
 	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	// 压枪设置
+	snprintf(propName, sizeof(propName), "auto_recoil_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "recoil_strength_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "recoil_speed_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "recoil_smoothing_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+
+	// 贝塞尔曲线设置
+	snprintf(propName, sizeof(propName), "bezier_curve_enabled_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "bezier_control_offset_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "bezier_steps_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -952,8 +989,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.007);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
-		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-		obs_data_set_default_double(settings, propName, 0.85);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		obs_data_set_default_double(settings, propName, 0.7);
@@ -1032,6 +1067,16 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 5.0);
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
 		obs_data_set_default_int(settings, propName, 16);
+		snprintf(propName, sizeof(propName), "recoil_smoothing_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		
+		// 贝塞尔曲线默认值
+		snprintf(propName, sizeof(propName), "bezier_curve_enabled_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "bezier_control_offset_%d", i);
+		obs_data_set_default_double(settings, propName, 0.2);
+		snprintf(propName, sizeof(propName), "bezier_steps_%d", i);
+		obs_data_set_default_int(settings, propName, 10);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1229,8 +1274,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].d = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		tf->mouseConfigs[i].derivativeFilterAlpha = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-		tf->mouseConfigs[i].baselineCompensation = (float)obs_data_get_double(settings, propName);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		tf->mouseConfigs[i].aimSmoothingX = (float)obs_data_get_double(settings, propName);
@@ -1309,6 +1352,16 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].recoilStrength = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
 		tf->mouseConfigs[i].recoilSpeed = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "recoil_smoothing_%d", i);
+		tf->mouseConfigs[i].recoilSmoothing = (float)obs_data_get_double(settings, propName);
+		
+		// 读取贝塞尔曲线配置
+		snprintf(propName, sizeof(propName), "bezier_curve_enabled_%d", i);
+		tf->mouseConfigs[i].bezierCurveEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "bezier_control_offset_%d", i);
+		tf->mouseConfigs[i].bezierControlOffset = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "bezier_steps_%d", i);
+		tf->mouseConfigs[i].bezierSteps = (int)obs_data_get_int(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -1511,10 +1564,7 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         
         snprintf(propName, sizeof(propName), "d_%d", i);
         fprintf(f, "      \"d\": %.4f,\n", obs_data_get_double(settings, propName));
-        
-        snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-        fprintf(f, "      \"baselineCompensation\": %.4f,\n", obs_data_get_double(settings, propName));
-        
+
         snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
         fprintf(f, "      \"derivativeFilterAlpha\": %.4f,\n", obs_data_get_double(settings, propName));
         
@@ -2605,7 +2655,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.pidPMax = cfg.pMax;
 		mcConfig.pidPSlope = cfg.pSlope;
 		mcConfig.pidD = cfg.d;
-		mcConfig.baselineCompensation = cfg.baselineCompensation;
 		mcConfig.aimSmoothingX = cfg.aimSmoothingX;
 		mcConfig.aimSmoothingY = cfg.aimSmoothingY;
 		mcConfig.maxPixelMove = cfg.maxPixelMove;
@@ -2655,6 +2704,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoRecoilControlEnabled = cfg.autoRecoilControlEnabled;
 		mcConfig.recoilStrength = cfg.recoilStrength;
 		mcConfig.recoilSpeed = cfg.recoilSpeed;
+		mcConfig.recoilSmoothing = cfg.recoilSmoothing;
+		// 贝塞尔曲线参数
+		mcConfig.bezierCurveEnabled = cfg.bezierCurveEnabled;
+		mcConfig.bezierControlOffset = cfg.bezierControlOffset;
+		mcConfig.bezierSteps = cfg.bezierSteps;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

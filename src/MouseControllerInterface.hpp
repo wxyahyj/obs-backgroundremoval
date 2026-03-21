@@ -32,7 +32,6 @@ struct MouseControllerConfig {
     float pidPMax = 0.6f;
     float pidPSlope = 1.0f;
     float pidD = 0.007f;
-    float baselineCompensation = 0.85f;
     float aimSmoothingX = 0.7f;
     float aimSmoothingY = 0.5f;
     float maxPixelMove = 128.0f;
@@ -72,6 +71,11 @@ struct MouseControllerConfig {
     bool autoRecoilControlEnabled = false;
     float recoilStrength = 5.0f;
     int recoilSpeed = 16;
+    float recoilSmoothing = 0.5f;  // 压枪平滑系数（0.0-1.0）
+    // 贝塞尔曲线配置
+    bool bezierCurveEnabled = false;
+    float bezierControlOffset = 0.2f;  // 控制点偏移比例（0.0-0.5）
+    int bezierSteps = 10;               // 贝塞尔曲线步数
 };
 
 class MouseControllerInterface {

@@ -11,6 +11,7 @@
 #include <random>
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
+#include "BezierCurve.hpp"
 
 class MAKCUMouseController : public MouseControllerInterface {
 public:
@@ -68,6 +69,15 @@ private:
     // 自动压枪相关
     std::chrono::steady_clock::time_point lastRecoilTime;
     bool isFiring;
+    float previousRecoilMove;  // 上一次压枪移动量（用于平滑）
+    
+    // 贝塞尔曲线相关
+    BezierCurve bezierCurve;
+    int bezierCurrentStep;
+    float bezierDirection;
+    POINT bezierStartPos;
+    POINT bezierEndPos;
+    bool bezierActive;
     
     // 运动预测器
     DerivativePredictor predictor;
