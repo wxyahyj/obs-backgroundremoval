@@ -551,9 +551,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
 		obs_properties_add_float_slider(props, propName, "P-Gain Ramp持续时间(秒)", 0.0, 2.0, 0.1);
 		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
-		obs_properties_add_float_slider(props, propName, "X轴预测权重", 0.0, 1.0, 0.1);
+		obs_property_t *predictionWeightXProp = obs_properties_add_float_slider(props, propName, "X轴预测权重", 0.0, 1.0, 0.1);
+		obs_property_set_long_description(predictionWeightXProp, "X轴方向的目标预测权重，值越大预测效果越强");
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
-		obs_properties_add_float_slider(props, propName, "Y轴预测权重", 0.0, 1.0, 0.1);
+		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "Y轴预测权重", 0.0, 1.0, 0.1);
+		obs_property_set_long_description(predictionWeightYProp, "Y轴方向的目标预测权重，值越大预测效果越强");
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -646,6 +648,10 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
