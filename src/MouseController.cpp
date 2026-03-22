@@ -275,9 +275,11 @@ void MouseController::tick()
     float moveX = pidOutputX + baselineX;
     float moveY = pidOutputY + baselineY;
     
-    // 压枪时降低Y轴PID增益，避免与压枪对抗
-    bool isRecoiling = config.autoRecoilControlEnabled && shouldAim;
-    if (isRecoiling) {
+    // 检测射击状态（鼠标左键按下）
+    bool isFiring = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    
+    // 按下左键时降低Y轴PID增益，避免与压枪对抗
+    if (isFiring && config.autoRecoilControlEnabled && shouldAim) {
         moveY *= config.recoilPidGainScale;  // 使用可配置的增益系数
     }
     
@@ -294,17 +296,15 @@ void MouseController::tick()
         moveY = 0.0f;
     }
     
-    // 自动压枪逻辑：检测射击状态（鼠标左键按下）
-    bool isFiring = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    if (isRecoiling && isFiring) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRecoilTime).count();
+    // 自动压枪逻辑：累积式压枪，每帧都压枪
+    if (config.autoRecoilControlEnabled && shouldAim && isFiring) {
+        // 计算每帧应该压枪的量（基于压枪速度和强度）
+        // recoilSpeed是毫秒间隔，recoilStrength是该间隔内的压枪量
+        float recoilPerMs = config.recoilStrength / static_cast<float>(config.recoilSpeed);
+        float recoilThisFrame = recoilPerMs * deltaTime * 1000.0f;  // deltaTime转毫秒
         
-        if (elapsed >= config.recoilSpeed) {
-            // 压枪：向下移动（Y轴正值）
-            moveY += config.recoilStrength;
-            lastRecoilTime = now;
-        }
+        // 累积到moveY
+        moveY += recoilThisFrame;
     }
 
     // 平滑处理
