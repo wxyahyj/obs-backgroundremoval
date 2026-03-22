@@ -481,7 +481,7 @@ void MAKCUMouseController::tick()
     // 压枪时降低Y轴PID增益，避免与压枪对抗
     bool isRecoiling = config.autoRecoilControlEnabled && shouldAim;
     if (isRecoiling) {
-        moveY *= 0.3f;  // 压枪时Y轴PID增益降低到30%
+        moveY *= config.recoilPidGainScale;  // 使用可配置的增益系数
     }
     
     // 限制最大移动量

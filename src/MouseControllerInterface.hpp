@@ -72,6 +72,7 @@ struct MouseControllerConfig {
     bool autoRecoilControlEnabled = false;
     float recoilStrength = 5.0f;
     int recoilSpeed = 16;
+    float recoilPidGainScale = 0.3f;  // 压枪时Y轴PID增益系数（0.0-1.0）
 };
 
 class MouseControllerInterface {

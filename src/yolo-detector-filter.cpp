@@ -212,6 +212,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool autoRecoilControlEnabled;
 		float recoilStrength;
 		int recoilSpeed;
+		float recoilPidGainScale;  // 压枪时Y轴PID增益系数
 
 		MouseControlConfig() {
 			enabled = false;
@@ -262,6 +263,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			autoRecoilControlEnabled = false;
 			recoilStrength = 5.0f;
 			recoilSpeed = 16;
+			recoilPidGainScale = 0.3f;  // 压枪时Y轴PID增益系数默认30%
 		}
 	};
 
@@ -621,6 +623,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
 		obs_property_t *recoilSpeedProp = obs_properties_add_int_slider(props, propName, "压枪速度(ms)", 1, 100, 1);
 		obs_property_set_long_description(recoilSpeedProp, "压枪移动的时间间隔（毫秒），值越小压枪频率越高");
+		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
+		obs_property_t *recoilPidGainScaleProp = obs_properties_add_float_slider(props, propName, "压枪时Y轴PID增益", 0.0, 1.0, 0.05);
+		obs_property_set_long_description(recoilPidGainScaleProp, "压枪时Y轴PID控制的增益系数，0表示完全禁用Y轴PID，1表示保持原增益");
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -732,6 +737,8 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "recoil_strength_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "recoil_speed_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1032,6 +1039,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 5.0);
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
 		obs_data_set_default_int(settings, propName, 16);
+		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1309,6 +1318,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].recoilStrength = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
 		tf->mouseConfigs[i].recoilSpeed = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
+		tf->mouseConfigs[i].recoilPidGainScale = (float)obs_data_get_double(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -2660,6 +2671,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoRecoilControlEnabled = cfg.autoRecoilControlEnabled;
 		mcConfig.recoilStrength = cfg.recoilStrength;
 		mcConfig.recoilSpeed = cfg.recoilSpeed;
+		mcConfig.recoilPidGainScale = cfg.recoilPidGainScale;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
