@@ -2579,6 +2579,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	auto getActiveConfig = [&tf]() -> int {
 		for (int i = 0; i < 5; i++) {
 			if (tf->mouseConfigs[i].enabled) {
+				// 持续自瞄模式：直接返回该配置
+				if (tf->mouseConfigs[i].continuousAimEnabled) {
+					return i;
+				}
+				// 热键模式：检查热键是否按下
 				if ((GetAsyncKeyState(tf->mouseConfigs[i].hotkey) & 0x8000) != 0) {
 					return i;
 				}

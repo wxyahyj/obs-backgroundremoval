@@ -275,6 +275,12 @@ void MouseController::tick()
     float moveX = pidOutputX + baselineX;
     float moveY = pidOutputY + baselineY;
     
+    // 压枪时降低Y轴PID增益，避免与压枪对抗
+    bool isRecoiling = config.autoRecoilControlEnabled && shouldAim;
+    if (isRecoiling) {
+        moveY *= 0.3f;  // 压枪时Y轴PID增益降低到30%
+    }
+    
     // 限制最大移动量
     float moveDistSquared = moveX * moveX + moveY * moveY;
     float maxMoveSquared = config.maxPixelMove * config.maxPixelMove;
@@ -288,8 +294,9 @@ void MouseController::tick()
         moveY = 0.0f;
     }
     
-    // 自动压枪逻辑：按下热键（或持续自瞄模式）时压枪
-    if (config.autoRecoilControlEnabled && shouldAim) {
+    // 自动压枪逻辑：检测射击状态（鼠标左键按下）
+    bool isFiring = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    if (isRecoiling && isFiring) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRecoilTime).count();
         
