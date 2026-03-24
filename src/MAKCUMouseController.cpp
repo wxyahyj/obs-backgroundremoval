@@ -481,8 +481,8 @@ void MAKCUMouseController::tick()
     // 检测射击状态（鼠标左键按下）
     bool isFiring = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     
-    // 按下左键时降低Y轴PID增益，避免与压枪对抗
-    if (isFiring && config.autoRecoilControlEnabled && shouldAim) {
+    // 按下左键时降低Y轴PID增益，避免与压枪对抗（压枪功能独立，不需要自瞄触发）
+    if (isFiring && config.autoRecoilControlEnabled) {
         moveY *= config.recoilPidGainScale;  // 使用可配置的增益系数
     }
     
@@ -499,8 +499,8 @@ void MAKCUMouseController::tick()
         moveY = 0.0f;
     }
 
-    // 自动压枪逻辑：累积式压枪，每帧都压枪
-    if (config.autoRecoilControlEnabled && shouldAim && isFiring) {
+    // 自动压枪逻辑：独立功能，只要开启压枪且按下左键就压枪，不需要目标识别
+    if (config.autoRecoilControlEnabled && isFiring) {
         // 计算每帧应该压枪的量（基于压枪速度和强度）
         // recoilSpeed是毫秒间隔，recoilStrength是该间隔内的压枪量
         float recoilPerMs = config.recoilStrength / static_cast<float>(config.recoilSpeed);
