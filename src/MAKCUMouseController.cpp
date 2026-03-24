@@ -512,7 +512,7 @@ void MAKCUMouseController::tick()
         stdIntegralX = 0.0f;
         stdIntegralY = 0.0f;
         stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 1.0f;
+        stdIntegralGainY = 0.0f;
         stdLastErrorX = errorX;
         stdLastErrorY = errorY;
     }
@@ -849,7 +849,7 @@ void MAKCUMouseController::resetPidState()
     stdIntegralX = 0.0f;
     stdIntegralY = 0.0f;
     stdIntegralGainX = 0.0f;
-    stdIntegralGainY = 1.0f;
+    stdIntegralGainY = 0.0f;
     stdLastErrorX = 0.0f;
     stdLastErrorY = 0.0f;
 }
