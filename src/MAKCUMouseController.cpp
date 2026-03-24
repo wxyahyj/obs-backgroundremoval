@@ -561,12 +561,6 @@ void MAKCUMouseController::tick()
     } else {
         connectSerial();
     }
-    
-    // 更新状态
-    pidPreviousErrorX = fusedErrorX;
-    pidPreviousErrorY = fusedErrorY;
-    previousErrorX = errorX;
-    previousErrorY = errorY;
 }
 
 Detection* MAKCUMouseController::selectTarget()
