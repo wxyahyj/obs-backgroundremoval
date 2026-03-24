@@ -30,6 +30,12 @@ MAKCUMouseController::MAKCUMouseController()
     , previousMoveY(0.0f)
     , integralX(0.0f)
     , integralY(0.0f)
+    , stdIntegralX(0.0f)
+    , stdIntegralY(0.0f)
+    , stdIntegralGainX(0.0f)
+    , stdIntegralGainY(0.0f)
+    , stdLastErrorX(0.0f)
+    , stdLastErrorY(0.0f)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
     , lastTickTime(std::chrono::steady_clock::now())
@@ -435,48 +441,63 @@ void MAKCUMouseController::tick()
     }
 
     isMoving = true;
-    
-    // 更新运动预测器
-    predictor.update(errorX, errorY, deltaTime);
-    
-    // 预测目标位置
-    float predictedX, predictedY;
-    predictor.predict(deltaTime, predictedX, predictedY);
-    
-    // 误差融合
-    float fusedErrorX = errorX + config.predictionWeightX * predictedX;
-    float fusedErrorY = errorY + config.predictionWeightY * predictedY;
-    
-    // 计算动态P增益，应用P-Gain Ramp
-    float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
-    
-    // 计算微分项
-    float deltaErrorX = fusedErrorX - pidPreviousErrorX;
-    float deltaErrorY = fusedErrorY - pidPreviousErrorY;
-    
-    float alpha = config.derivativeFilterAlpha;
-    filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
-    filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
-    
-    // 计算自适应D增益
-    float adaptiveFactorX = 1.0f;
-    float adaptiveFactorY = 1.0f;
-    float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, fusedErrorX, adaptiveFactorX);
-    float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, fusedErrorY, adaptiveFactorY);
-    
-    // 计算积分项
-    float integralTermX = calculateIntegral(fusedErrorX, integralX, deltaTime);
-    float integralTermY = calculateIntegral(fusedErrorY, integralY, deltaTime);
-    
-    // PID输出计算
-    float pidOutputX = dynamicP * fusedErrorX + adaptiveDX * filteredDeltaErrorX + integralTermX;
-    float pidOutputY = dynamicP * fusedErrorY + adaptiveDY * filteredDeltaErrorY + integralTermY;
-    
-    float baselineX = fusedErrorX * config.baselineCompensation;
-    float baselineY = fusedErrorY * config.baselineCompensation;
-    
-    float moveX = pidOutputX + baselineX;
-    float moveY = pidOutputY + baselineY;
+
+    float moveX, moveY;
+
+    if (config.algorithmType == AlgorithmType::StandardPID) {
+        // 标准PID算法
+        moveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, stdLastErrorX, deltaTime);
+        moveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, stdLastErrorY, deltaTime);
+    } else {
+        // 高级PID算法（默认）
+        // 更新运动预测器
+        predictor.update(errorX, errorY, deltaTime);
+
+        // 预测目标位置
+        float predictedX, predictedY;
+        predictor.predict(deltaTime, predictedX, predictedY);
+
+        // 误差融合
+        float fusedErrorX = errorX + config.predictionWeightX * predictedX;
+        float fusedErrorY = errorY + config.predictionWeightY * predictedY;
+
+        // 计算动态P增益，应用P-Gain Ramp
+        float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
+
+        // 计算微分项
+        float deltaErrorX = fusedErrorX - pidPreviousErrorX;
+        float deltaErrorY = fusedErrorY - pidPreviousErrorY;
+
+        float alpha = config.derivativeFilterAlpha;
+        filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
+        filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
+
+        // 计算自适应D增益
+        float adaptiveFactorX = 1.0f;
+        float adaptiveFactorY = 1.0f;
+        float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, fusedErrorX, adaptiveFactorX);
+        float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, fusedErrorY, adaptiveFactorY);
+
+        // 计算积分项
+        float integralTermX = calculateIntegral(fusedErrorX, integralX, deltaTime);
+        float integralTermY = calculateIntegral(fusedErrorY, integralY, deltaTime);
+
+        // PID输出计算
+        float pidOutputX = dynamicP * fusedErrorX + adaptiveDX * filteredDeltaErrorX + integralTermX;
+        float pidOutputY = dynamicP * fusedErrorY + adaptiveDY * filteredDeltaErrorY + integralTermY;
+
+        float baselineX = fusedErrorX * config.baselineCompensation;
+        float baselineY = fusedErrorY * config.baselineCompensation;
+
+        moveX = pidOutputX + baselineX;
+        moveY = pidOutputY + baselineY;
+
+        // 更新高级PID状态
+        pidPreviousErrorX = fusedErrorX;
+        pidPreviousErrorY = fusedErrorY;
+        previousErrorX = errorX;
+        previousErrorY = errorY;
+    }
     
     // 检测射击状态（鼠标左键按下）
     bool isFiring = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
@@ -735,6 +756,68 @@ float MAKCUMouseController::getCurrentPGain()
     return currentScale;
 }
 
+// 标准PID计算函数
+float MAKCUMouseController::calculateStandardPID(float error, float& integral, float& integralGain, float& lastError, float deltaTime)
+{
+    // 死区处理
+    if (std::abs(error) < config.stdDeadZone) {
+        error = 0.0f;
+    }
+
+    // 比例计算
+    float kp = config.stdKp * error;
+
+    // 积分计算配合积分分离
+    if (adjustStandardIntegral(error, lastError, integralGain))
+    {
+        // 积分累加
+        integral += error;
+
+        // 积分限幅
+        integral = std::clamp(integral, -config.stdIntegralLimit, config.stdIntegralLimit);
+    }
+    else
+    {
+        // 积分清零
+        integral = 0;
+    }
+
+    // 积分计算 + 死区处理
+    float ki = (std::abs(integral) > config.stdIntegralDeadzone) ? config.stdKi * integral : 0;
+
+    // 微分计算
+    float kd = config.stdKd * (error - lastError);
+
+    // 总输出计算
+    float output = kp + ki + kd;
+
+    // 总输出限幅
+    output = std::clamp(output, -config.stdOutputLimit, config.stdOutputLimit);
+
+    // 状态更新
+    lastError = error;
+
+    // 返回输出
+    return output;
+}
+
+bool MAKCUMouseController::adjustStandardIntegral(float error, float lastError, float& integralGain)
+{
+    float errorDerivative = std::abs(error - lastError);
+
+    if (std::abs(error) < config.stdIntegralThreshold) {
+        float adaptRate = config.stdIntegralRate * (1.0f - errorDerivative / (config.stdIntegralThreshold * 2.0f));
+        adaptRate = (adaptRate < 0.0f) ? 0.0f : ((adaptRate > config.stdIntegralRate) ? config.stdIntegralRate : adaptRate);
+        integralGain = (integralGain + adaptRate > 1.0f) ? 1.0f : integralGain + adaptRate;
+    }
+    else {
+        float decay = 0.1f + 0.9f * std::tanh(std::abs(error) / (config.stdIntegralThreshold * 2.0f));
+        integralGain *= (1.0f - 0.05f * decay);
+    }
+    integralGain = (integralGain < 0.0f) ? 0.0f : ((integralGain > 1.0f) ? 1.0f : integralGain);
+    return integralGain > 0.01f;  // 只有当积分增益大于0.01时才进行积分
+}
+
 void MAKCUMouseController::resetPidState()
 {
     pidPreviousErrorX = 0.0f;
@@ -744,6 +827,13 @@ void MAKCUMouseController::resetPidState()
     integralX = 0.0f;
     integralY = 0.0f;
     predictor.reset();
+    // 重置标准PID状态
+    stdIntegralX = 0.0f;
+    stdIntegralY = 0.0f;
+    stdIntegralGainX = 0.0f;
+    stdIntegralGainY = 1.0f;
+    stdLastErrorX = 0.0f;
+    stdLastErrorY = 0.0f;
 }
 
 void MAKCUMouseController::resetMotionState()

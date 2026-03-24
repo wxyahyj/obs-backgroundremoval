@@ -10,6 +10,11 @@ enum class ControllerType {
     MAKCU
 };
 
+enum class AlgorithmType {
+    AdvancedPID,  // 高级PID（当前使用的自适应PID）
+    StandardPID   // 标准PID（经典PID）
+};
+
 struct MouseControllerConfig {
     bool enableMouseControl = false;
     int hotkeyVirtualKey = 0;
@@ -28,6 +33,11 @@ struct MouseControllerConfig {
     int screenOffsetY = 0;
     int screenWidth = 0;
     int screenHeight = 0;
+    
+    // 算法选择
+    AlgorithmType algorithmType = AlgorithmType::AdvancedPID;
+    
+    // 高级PID参数（当前使用的算法）
     float pidPMin = 0.15f;
     float pidPMax = 0.6f;
     float pidPSlope = 1.0f;
@@ -59,7 +69,6 @@ struct MouseControllerConfig {
     int autoTriggerMoveCompensation = 0;
     int targetSwitchDelayMs = 500;
     float targetSwitchTolerance = 0.15f;
-    // 新功能配置选项
     float integralLimit = 100.0f;
     float integralSeparationThreshold = 50.0f;
     float integralDeadZone = 5.0f;
@@ -67,12 +76,24 @@ struct MouseControllerConfig {
     float pGainRampDuration = 0.5f;
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
+    
+    // 标准PID参数（经典PID算法）
+    float stdKp = 0.3f;           // 比例系数
+    float stdKi = 0.01f;          // 积分系数
+    float stdKd = 0.005f;         // 微分系数
+    float stdOutputLimit = 10.0f; // 输出限幅
+    float stdDeadZone = 0.3f;     // 死区
+    float stdIntegralLimit = 100.0f;      // 积分限幅
+    float stdIntegralDeadzone = 1.0f;     // 积分死区
+    float stdIntegralThreshold = 50.0f;   // 积分分离阈值
+    float stdIntegralRate = 0.015f;       // 积分增益变化率
+    
     // 持续自瞄和自动压枪配置
     bool continuousAimEnabled = false;
     bool autoRecoilControlEnabled = false;
     float recoilStrength = 5.0f;
     int recoilSpeed = 16;
-    float recoilPidGainScale = 0.3f;  // 压枪时Y轴PID增益系数（0.0-1.0）
+    float recoilPidGainScale = 0.3f;
 };
 
 class MouseControllerInterface {

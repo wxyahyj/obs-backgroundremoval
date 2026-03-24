@@ -61,6 +61,14 @@ private:
     float integralX;
     float integralY;
     
+    // 标准PID状态变量
+    float stdIntegralX;
+    float stdIntegralY;
+    float stdIntegralGainX;
+    float stdIntegralGainY;
+    float stdLastErrorX;
+    float stdLastErrorY;
+    
     // 自动压枪相关
     std::chrono::steady_clock::time_point lastRecoilTime;
     bool isFiring;
@@ -75,6 +83,8 @@ private:
     float calculateDynamicP(float distance);
     float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
     float calculateIntegral(float error, float& integral, float deltaTime);
+    float calculateStandardPID(float error, float& integral, float& integralGain, float& lastError, float deltaTime);
+    bool adjustStandardIntegral(float error, float lastError, float& integralGain);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
     void moveMouseTo(const POINT& pos);
