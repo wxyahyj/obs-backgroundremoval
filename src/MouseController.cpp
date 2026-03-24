@@ -245,6 +245,16 @@ void MouseController::tick()
         // 标准PID算法
         moveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, stdLastErrorX, deltaTime);
         moveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, stdLastErrorY, deltaTime);
+        
+        // 重置高级PID状态变量，避免算法切换时状态不一致
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
     } else {
         // 高级PID算法（默认）
         // 更新运动预测器
@@ -294,6 +304,14 @@ void MouseController::tick()
         pidPreviousErrorY = fusedErrorY;
         previousErrorX = errorX;
         previousErrorY = errorY;
+        
+        // 重置标准PID状态变量，避免算法切换时状态不一致
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 1.0f;
+        stdLastErrorX = errorX;
+        stdLastErrorY = errorY;
     }
     
     // 检测射击状态（鼠标左键按下）
