@@ -163,6 +163,18 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	static const int MAX_CONFIGS = 5;
 
+	// 全局标准PID参数（独立于各配置）
+	int algorithmTypeGlobal;  // 0=高级PID, 1=标准PID
+	float stdKpGlobal;
+	float stdKiGlobal;
+	float stdKdGlobal;
+	float stdOutputLimitGlobal;
+	float stdDeadZoneGlobal;
+	float stdIntegralLimitGlobal;
+	float stdIntegralDeadzoneGlobal;
+	float stdIntegralThresholdGlobal;
+	float stdIntegralRateGlobal;
+
 	struct MouseControlConfig {
 		bool enabled;
 		int hotkey;
@@ -350,6 +362,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "鼠标控制 - PID", 3);
 	obs_property_list_add_int(pageList, "鼠标控制 - 扳机", 4);
 	obs_property_list_add_int(pageList, "追踪与高级", 5);
+	obs_property_list_add_int(pageList, "标准PID配置", 6);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -657,35 +670,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		obs_property_t *recoilPidGainScaleProp = obs_properties_add_float_slider(props, propName, "压枪时Y轴PID增益", 0.0, 1.0, 0.05);
 		obs_property_set_long_description(recoilPidGainScaleProp, "压枪时Y轴PID控制的增益系数，0表示完全禁用Y轴PID，1表示保持原增益");
-
-		// 标准PID参数（仅当选择标准PID算法时显示）
-		snprintf(propName, sizeof(propName), "std_kp_%d", i);
-		obs_property_t *stdKpProp = obs_properties_add_float_slider(props, propName, "标准PID-Kp", 0.0, 1.0, 0.01);
-		obs_property_set_long_description(stdKpProp, "标准PID的比例系数");
-		snprintf(propName, sizeof(propName), "std_ki_%d", i);
-		obs_property_t *stdKiProp = obs_properties_add_float_slider(props, propName, "标准PID-Ki", 0.0, 0.1, 0.001);
-		obs_property_set_long_description(stdKiProp, "标准PID的积分系数");
-		snprintf(propName, sizeof(propName), "std_kd_%d", i);
-		obs_property_t *stdKdProp = obs_properties_add_float_slider(props, propName, "标准PID-Kd", 0.0, 0.1, 0.001);
-		obs_property_set_long_description(stdKdProp, "标准PID的微分系数");
-		snprintf(propName, sizeof(propName), "std_output_limit_%d", i);
-		obs_property_t *stdOutputLimitProp = obs_properties_add_float_slider(props, propName, "输出限幅", 1.0, 50.0, 1.0);
-		obs_property_set_long_description(stdOutputLimitProp, "PID输出的最大值限制");
-		snprintf(propName, sizeof(propName), "std_dead_zone_%d", i);
-		obs_property_t *stdDeadZoneProp = obs_properties_add_float_slider(props, propName, "死区", 0.0, 10.0, 0.1);
-		obs_property_set_long_description(stdDeadZoneProp, "误差小于此值时不输出");
-		snprintf(propName, sizeof(propName), "std_integral_limit_%d", i);
-		obs_property_t *stdIntegralLimitProp = obs_properties_add_float_slider(props, propName, "积分限幅", 0.0, 500.0, 10.0);
-		obs_property_set_long_description(stdIntegralLimitProp, "积分项的最大值限制");
-		snprintf(propName, sizeof(propName), "std_integral_deadzone_%d", i);
-		obs_property_t *stdIntegralDeadzoneProp = obs_properties_add_float_slider(props, propName, "积分死区", 0.0, 50.0, 0.5);
-		obs_property_set_long_description(stdIntegralDeadzoneProp, "积分小于此值时不计入积分");
-		snprintf(propName, sizeof(propName), "std_integral_threshold_%d", i);
-		obs_property_t *stdIntegralThresholdProp = obs_properties_add_float_slider(props, propName, "积分分离阈值", 0.0, 200.0, 1.0);
-		obs_property_set_long_description(stdIntegralThresholdProp, "误差超过此值时暂停积分");
-		snprintf(propName, sizeof(propName), "std_integral_rate_%d", i);
-		obs_property_t *stdIntegralRateProp = obs_properties_add_float_slider(props, propName, "积分增益率", 0.0, 0.1, 0.001);
-		obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -715,6 +699,35 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_text(props, "avg_inference_time", obs_module_text("AvgInferenceTime"), OBS_TEXT_INFO);
 	obs_properties_add_text(props, "detected_objects", obs_module_text("DetectedObjects"), OBS_TEXT_INFO);
+
+	// 页面6: 标准PID配置
+	obs_properties_add_group(props, "std_pid_group", "标准PID配置", OBS_GROUP_NORMAL, nullptr);
+	
+	// 算法选择（全局）
+	obs_property_t *algorithmTypeList = obs_properties_add_list(props, "algorithm_type_global", "控制算法", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(algorithmTypeList, "高级PID (自适应)", 0);
+	obs_property_list_add_int(algorithmTypeList, "标准PID (经典)", 1);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制");
+	
+	// 标准PID参数
+	obs_property_t *stdKpProp = obs_properties_add_float_slider(props, "std_kp_global", "标准PID-Kp", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(stdKpProp, "标准PID的比例系数");
+	obs_property_t *stdKiProp = obs_properties_add_float_slider(props, "std_ki_global", "标准PID-Ki", 0.0, 0.1, 0.001);
+	obs_property_set_long_description(stdKiProp, "标准PID的积分系数");
+	obs_property_t *stdKdProp = obs_properties_add_float_slider(props, "std_kd_global", "标准PID-Kd", 0.0, 0.1, 0.001);
+	obs_property_set_long_description(stdKdProp, "标准PID的微分系数");
+	obs_property_t *stdOutputLimitProp = obs_properties_add_float_slider(props, "std_output_limit_global", "输出限幅", 1.0, 50.0, 1.0);
+	obs_property_set_long_description(stdOutputLimitProp, "PID输出的最大值限制");
+	obs_property_t *stdDeadZoneProp = obs_properties_add_float_slider(props, "std_dead_zone_global", "死区", 0.0, 10.0, 0.1);
+	obs_property_set_long_description(stdDeadZoneProp, "误差小于此值时不输出");
+	obs_property_t *stdIntegralLimitProp = obs_properties_add_float_slider(props, "std_integral_limit_global", "积分限幅", 0.0, 500.0, 10.0);
+	obs_property_set_long_description(stdIntegralLimitProp, "积分项的最大值限制");
+	obs_property_t *stdIntegralDeadzoneProp = obs_properties_add_float_slider(props, "std_integral_deadzone_global", "积分死区", 0.0, 50.0, 0.5);
+	obs_property_set_long_description(stdIntegralDeadzoneProp, "积分小于此值时不计入积分");
+	obs_property_t *stdIntegralThresholdProp = obs_properties_add_float_slider(props, "std_integral_threshold_global", "积分分离阈值", 0.0, 200.0, 1.0);
+	obs_property_set_long_description(stdIntegralThresholdProp, "误差超过此值时暂停积分");
+	obs_property_t *stdIntegralRateProp = obs_properties_add_float_slider(props, "std_integral_rate_global", "积分增益率", 0.0, 0.1, 0.001);
+	obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -937,6 +950,19 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "advanced_group"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "export_coordinates"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "coordinate_output_path"), page == 5);
+	
+	// 页面6: 标准PID配置
+	obs_property_set_visible(obs_properties_get(props, "std_pid_group"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_kp_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_ki_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_kd_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_output_limit_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_dead_zone_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_limit_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 6);
 #else
 	(void)page;
 #endif
@@ -1134,6 +1160,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "target_switch_delay", 500);
     obs_data_set_default_double(settings, "target_switch_tolerance", 0.15);
     obs_data_set_default_int(settings, "settings_page", 0);
+    
+    // 全局标准PID参数默认值
+    obs_data_set_default_int(settings, "algorithm_type_global", 0);  // 默认高级PID
+    obs_data_set_default_double(settings, "std_kp_global", 0.3);
+    obs_data_set_default_double(settings, "std_ki_global", 0.01);
+    obs_data_set_default_double(settings, "std_kd_global", 0.005);
+    obs_data_set_default_double(settings, "std_output_limit_global", 10.0);
+    obs_data_set_default_double(settings, "std_dead_zone_global", 0.3);
+    obs_data_set_default_double(settings, "std_integral_limit_global", 100.0);
+    obs_data_set_default_double(settings, "std_integral_deadzone_global", 1.0);
+    obs_data_set_default_double(settings, "std_integral_threshold_global", 50.0);
+    obs_data_set_default_double(settings, "std_integral_rate_global", 0.015);
 #endif
 }
 
@@ -1405,33 +1443,25 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		tf->mouseConfigs[i].recoilPidGainScale = (float)obs_data_get_double(settings, propName);
 
-		// 读取算法选择
-		snprintf(propName, sizeof(propName), "algorithm_type_%d", i);
-		tf->mouseConfigs[i].algorithmType = (int)obs_data_get_int(settings, propName);
-
-		// 读取标准PID参数
-		snprintf(propName, sizeof(propName), "std_kp_%d", i);
-		tf->mouseConfigs[i].stdKp = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_ki_%d", i);
-		tf->mouseConfigs[i].stdKi = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_kd_%d", i);
-		tf->mouseConfigs[i].stdKd = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_output_limit_%d", i);
-		tf->mouseConfigs[i].stdOutputLimit = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_dead_zone_%d", i);
-		tf->mouseConfigs[i].stdDeadZone = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_integral_limit_%d", i);
-		tf->mouseConfigs[i].stdIntegralLimit = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_integral_deadzone_%d", i);
-		tf->mouseConfigs[i].stdIntegralDeadzone = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_integral_threshold_%d", i);
-		tf->mouseConfigs[i].stdIntegralThreshold = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "std_integral_rate_%d", i);
-		tf->mouseConfigs[i].stdIntegralRate = (float)obs_data_get_double(settings, propName);
+		// 读取算法选择（已弃用，现在使用全局设置）
+		// snprintf(propName, sizeof(propName), "algorithm_type_%d", i);
+		// tf->mouseConfigs[i].algorithmType = (int)obs_data_get_int(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
 	tf->targetSwitchTolerance = (float)obs_data_get_double(settings, "target_switch_tolerance");
+
+	// 读取全局标准PID参数
+	tf->algorithmTypeGlobal = (int)obs_data_get_int(settings, "algorithm_type_global");
+	tf->stdKpGlobal = (float)obs_data_get_double(settings, "std_kp_global");
+	tf->stdKiGlobal = (float)obs_data_get_double(settings, "std_ki_global");
+	tf->stdKdGlobal = (float)obs_data_get_double(settings, "std_kd_global");
+	tf->stdOutputLimitGlobal = (float)obs_data_get_double(settings, "std_output_limit_global");
+	tf->stdDeadZoneGlobal = (float)obs_data_get_double(settings, "std_dead_zone_global");
+	tf->stdIntegralLimitGlobal = (float)obs_data_get_double(settings, "std_integral_limit_global");
+	tf->stdIntegralDeadzoneGlobal = (float)obs_data_get_double(settings, "std_integral_deadzone_global");
+	tf->stdIntegralThresholdGlobal = (float)obs_data_get_double(settings, "std_integral_threshold_global");
+	tf->stdIntegralRateGlobal = (float)obs_data_get_double(settings, "std_integral_rate_global");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -2780,18 +2810,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.recoilStrength = cfg.recoilStrength;
 		mcConfig.recoilSpeed = cfg.recoilSpeed;
 		mcConfig.recoilPidGainScale = cfg.recoilPidGainScale;
-		// 算法选择
-		mcConfig.algorithmType = static_cast<AlgorithmType>(cfg.algorithmType);
-		// 标准PID参数
-		mcConfig.stdKp = cfg.stdKp;
-		mcConfig.stdKi = cfg.stdKi;
-		mcConfig.stdKd = cfg.stdKd;
-		mcConfig.stdOutputLimit = cfg.stdOutputLimit;
-		mcConfig.stdDeadZone = cfg.stdDeadZone;
-		mcConfig.stdIntegralLimit = cfg.stdIntegralLimit;
-		mcConfig.stdIntegralDeadzone = cfg.stdIntegralDeadzone;
-		mcConfig.stdIntegralThreshold = cfg.stdIntegralThreshold;
-		mcConfig.stdIntegralRate = cfg.stdIntegralRate;
+		// 算法选择（使用全局设置）
+		mcConfig.algorithmType = static_cast<AlgorithmType>(tf->algorithmTypeGlobal);
+		// 标准PID参数（使用全局设置）
+		mcConfig.stdKp = tf->stdKpGlobal;
+		mcConfig.stdKi = tf->stdKiGlobal;
+		mcConfig.stdKd = tf->stdKdGlobal;
+		mcConfig.stdOutputLimit = tf->stdOutputLimitGlobal;
+		mcConfig.stdDeadZone = tf->stdDeadZoneGlobal;
+		mcConfig.stdIntegralLimit = tf->stdIntegralLimitGlobal;
+		mcConfig.stdIntegralDeadzone = tf->stdIntegralDeadzoneGlobal;
+		mcConfig.stdIntegralThreshold = tf->stdIntegralThresholdGlobal;
+		mcConfig.stdIntegralRate = tf->stdIntegralRateGlobal;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
