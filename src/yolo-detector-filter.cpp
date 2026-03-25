@@ -1442,10 +1442,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].recoilSpeed = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		tf->mouseConfigs[i].recoilPidGainScale = (float)obs_data_get_double(settings, propName);
-
-		// 读取算法选择（已弃用，现在使用全局设置）
-		// snprintf(propName, sizeof(propName), "algorithm_type_%d", i);
-		// tf->mouseConfigs[i].algorithmType = (int)obs_data_get_int(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
