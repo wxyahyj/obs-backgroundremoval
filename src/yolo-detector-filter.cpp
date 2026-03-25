@@ -532,13 +532,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_list_add_int(baudRateList, "4000000 (4Mbps)", 4000000);
 		obs_property_set_long_description(baudRateList, "MAKCU串口波特率");
 
-		// 算法选择
-		snprintf(propName, sizeof(propName), "algorithm_type_%d", i);
-		obs_property_t *algorithmTypeList = obs_properties_add_list(props, propName, "控制算法", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-		obs_property_list_add_int(algorithmTypeList, "高级PID (自适应)", 0);
-		obs_property_list_add_int(algorithmTypeList, "标准PID (经典)", 1);
-		obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制");
-
 		snprintf(propName, sizeof(propName), "p_min_%d", i);
 		obs_property_t *pMinProp = obs_properties_add_float_slider(props, propName, "P最小值", 0.00, 1.00, 0.01);
 		obs_property_set_long_description(pMinProp, "最小比例增益，远距离时使用");
@@ -1127,30 +1120,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 16);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.3);
-
-		// 算法选择默认值
-		snprintf(propName, sizeof(propName), "algorithm_type_%d", i);
-		obs_data_set_default_int(settings, propName, 0);  // 默认高级PID
-
-		// 标准PID参数默认值
-		snprintf(propName, sizeof(propName), "std_kp_%d", i);
-		obs_data_set_default_double(settings, propName, 0.3);
-		snprintf(propName, sizeof(propName), "std_ki_%d", i);
-		obs_data_set_default_double(settings, propName, 0.01);
-		snprintf(propName, sizeof(propName), "std_kd_%d", i);
-		obs_data_set_default_double(settings, propName, 0.005);
-		snprintf(propName, sizeof(propName), "std_output_limit_%d", i);
-		obs_data_set_default_double(settings, propName, 10.0);
-		snprintf(propName, sizeof(propName), "std_dead_zone_%d", i);
-		obs_data_set_default_double(settings, propName, 0.3);
-		snprintf(propName, sizeof(propName), "std_integral_limit_%d", i);
-		obs_data_set_default_double(settings, propName, 100.0);
-		snprintf(propName, sizeof(propName), "std_integral_deadzone_%d", i);
-		obs_data_set_default_double(settings, propName, 1.0);
-		snprintf(propName, sizeof(propName), "std_integral_threshold_%d", i);
-		obs_data_set_default_double(settings, propName, 50.0);
-		snprintf(propName, sizeof(propName), "std_integral_rate_%d", i);
-		obs_data_set_default_double(settings, propName, 0.015);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
