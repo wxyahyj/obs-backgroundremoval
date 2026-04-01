@@ -132,7 +132,7 @@ void KalmanFilter::update(float measuredX, float measuredY, float confidence)
     float s[2][2];
 
     // H^T
-    matTranspose4x2(measurementMatrix, ht);
+    matTranspose2x4(measurementMatrix, ht);
 
     // P * H^T
     matMul4x4_4x2(covariance, ht, ph);
@@ -208,8 +208,8 @@ void KalmanFilter::getPrediction(float predictionTime, float& predX, float& pred
     // 基于当前状态进行预测
     // x_pred = x + vx * t
     // y_pred = y + vy * t
-    predX = state[2] * predictionTime + 0.5f * 0.0f * predictionTime * predictionTime;
-    predY = state[3] * predictionTime + 0.5f * 0.0f * predictionTime * predictionTime;
+    predX = state[0] + state[2] * predictionTime;
+    predY = state[1] + state[3] * predictionTime;
 }
 
 void KalmanFilter::getState(float& x, float& y, float& vx, float& vy)
@@ -338,6 +338,15 @@ void KalmanFilter::matTranspose4x2(const float mat[4][2], float result[2][4])
 {
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 2; j++) {
+            result[j][i] = mat[i][j];
+        }
+    }
+}
+
+void KalmanFilter::matTranspose2x4(const float mat[2][4], float result[4][2])
+{
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
             result[j][i] = mat[i][j];
         }
     }

@@ -36,6 +36,7 @@ private:
     void matMul2x4_4x2(const float a[2][4], const float b[4][2], float result[2][2]);
     void matTranspose4x4(const float mat[4][4], float result[4][4]);
     void matTranspose4x2(const float mat[4][2], float result[2][4]);
+    void matTranspose2x4(const float mat[2][4], float result[4][2]);
     bool matInverse2x2(const float mat[2][2], float result[2][2]);
 
     // 初始化矩阵
