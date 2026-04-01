@@ -3,6 +3,7 @@
 #include "TargetTracker.hpp"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 // TrackedTarget 实现
 TrackedTarget::TrackedTarget()
@@ -293,25 +294,26 @@ void TargetTracker::associateDetections(const std::vector<Detection>& detections
     matchedDetectionIndices.clear();
     matchedTargetIds.clear();
     unmatchedDetectionIndices.clear();
-    
+
     std::vector<bool> detectionMatched(detections.size(), false);
-    std::vector<bool> targetMatched(trackedTargets.size(), false);
-    
+    // 使用unordered_map来安全地跟踪匹配状态，避免persistentId作为数组索引的越界问题
+    std::unordered_map<int, bool> targetMatched;
+
     // 第一阶段：使用IOU匹配
     for (size_t detIdx = 0; detIdx < detections.size(); detIdx++) {
         float bestIOU = iouThreshold;
         int bestTargetId = -1;
-        
+
         for (auto& pair : trackedTargets) {
             if (targetMatched[pair.first]) continue;
-            
+
             float iou = pair.second.getIOU(detections[detIdx]);
             if (iou > bestIOU) {
                 bestIOU = iou;
                 bestTargetId = pair.first;
             }
         }
-        
+
         if (bestTargetId >= 0) {
             matchedDetectionIndices.push_back(static_cast<int>(detIdx));
             matchedTargetIds.push_back(bestTargetId);
@@ -319,33 +321,33 @@ void TargetTracker::associateDetections(const std::vector<Detection>& detections
             targetMatched[bestTargetId] = true;
         }
     }
-    
+
     // 第二阶段：对未匹配的检测，使用卡尔曼预测位置+距离匹配
     for (size_t detIdx = 0; detIdx < detections.size(); detIdx++) {
         if (detectionMatched[detIdx]) continue;
-        
+
         float bestDistance = distanceThreshold;
         int bestTargetId = -1;
-        
+
         for (auto& pair : trackedTargets) {
             if (targetMatched[pair.first]) continue;
             if (!pair.second.kalmanInitialized) continue;
-            
+
             // 使用卡尔曼滤波器预测位置
             float predX, predY;
             pair.second.predict(deltaTime, predX, predY);
-            
+
             // 计算预测位置与检测的距离
             float dx = (predX - detections[detIdx].centerX) * frameWidth;
             float dy = (predY - detections[detIdx].centerY) * frameHeight;
             float distance = std::sqrt(dx * dx + dy * dy);
-            
+
             if (distance < bestDistance) {
                 bestDistance = distance;
                 bestTargetId = pair.first;
             }
         }
-        
+
         if (bestTargetId >= 0) {
             matchedDetectionIndices.push_back(static_cast<int>(detIdx));
             matchedTargetIds.push_back(bestTargetId);
@@ -353,7 +355,7 @@ void TargetTracker::associateDetections(const std::vector<Detection>& detections
             targetMatched[bestTargetId] = true;
         }
     }
-    
+
     // 收集未匹配的检测
     for (size_t i = 0; i < detections.size(); i++) {
         if (!detectionMatched[i]) {
