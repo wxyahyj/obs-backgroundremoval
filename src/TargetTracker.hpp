@@ -100,15 +100,18 @@ public:
     
 private:
     // 数据关联：将检测与现有跟踪目标匹配
-    void associateDetections(const std::vector<Detection>& detections, 
+    void associateDetections(const std::vector<Detection>& detections,
                             std::vector<int>& matchedDetectionIndices,
                             std::vector<int>& matchedTargetIds,
                             std::vector<int>& unmatchedDetectionIndices,
-                            int frameWidth, int frameHeight);
-    
+                            int frameWidth, int frameHeight, float deltaTime);
+
+    // 辅助函数：检查目标是否已匹配
+    static bool isTargetMatched(const std::unordered_map<int, bool>& targetMatched, int targetId);
+
     // 创建新目标
     int createNewTarget(const Detection& det);
-    
+
     // 清理丢失太久的目标
     void cleanupLostTargets();
 };

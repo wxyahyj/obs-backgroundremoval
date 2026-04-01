@@ -172,8 +172,8 @@ void TargetTracker::update(const std::vector<Detection>& detections, float delta
     std::vector<int> matchedTargetIds;
     std::vector<int> unmatchedDetectionIndices;
     
-    associateDetections(detections, matchedDetectionIndices, matchedTargetIds, 
-                        unmatchedDetectionIndices, frameWidth, frameHeight);
+    associateDetections(detections, matchedDetectionIndices, matchedTargetIds,
+                        unmatchedDetectionIndices, frameWidth, frameHeight, deltaTime);
     
     // 2. 更新匹配的跟踪目标
     for (size_t i = 0; i < matchedDetectionIndices.size(); i++) {
@@ -285,11 +285,16 @@ void TargetTracker::reset()
     currentPersistentId = -1;
 }
 
+bool TargetTracker::isTargetMatched(const std::unordered_map<int, bool>& targetMatched, int targetId)
+{
+    return targetMatched.count(targetId) && targetMatched.at(targetId);
+}
+
 void TargetTracker::associateDetections(const std::vector<Detection>& detections,
                                         std::vector<int>& matchedDetectionIndices,
                                         std::vector<int>& matchedTargetIds,
                                         std::vector<int>& unmatchedDetectionIndices,
-                                        int frameWidth, int frameHeight)
+                                        int frameWidth, int frameHeight, float deltaTime)
 {
     matchedDetectionIndices.clear();
     matchedTargetIds.clear();
@@ -305,7 +310,8 @@ void TargetTracker::associateDetections(const std::vector<Detection>& detections
         int bestTargetId = -1;
 
         for (auto& pair : trackedTargets) {
-            if (targetMatched[pair.first]) continue;
+            // 检查目标是否已匹配
+            if (isTargetMatched(targetMatched, pair.first)) continue;
 
             float iou = pair.second.getIOU(detections[detIdx]);
             if (iou > bestIOU) {
@@ -330,7 +336,8 @@ void TargetTracker::associateDetections(const std::vector<Detection>& detections
         int bestTargetId = -1;
 
         for (auto& pair : trackedTargets) {
-            if (targetMatched[pair.first]) continue;
+            // 检查目标是否已匹配
+            if (isTargetMatched(targetMatched, pair.first)) continue;
             if (!pair.second.kalmanInitialized) continue;
 
             // 使用卡尔曼滤波器预测位置
