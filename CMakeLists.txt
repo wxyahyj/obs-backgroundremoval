@@ -234,6 +234,7 @@ if(WIN32)
       src/MAKCUMouseController.cpp
       src/DerivativePredictor.cpp
       src/KalmanFilter.cpp
+      src/TargetTracker.cpp
       src/MouseControllerFactory.cpp
       src/ConfigManager.cpp
       src/HungarianAlgorithm.cpp

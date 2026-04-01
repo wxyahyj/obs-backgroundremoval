@@ -356,6 +356,15 @@ void MAKCUMouseController::tick()
     deltaTime = std::max(0.001f, std::min(deltaTime, 0.05f));
     lastTickTime = now;
 
+    // 更新目标跟踪器
+    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth :
+                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
+    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight :
+                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
+
+    targetTracker.update(currentDetections, deltaTime, frameWidth, frameHeight);
+
+    // 使用增强的目标选择
     Detection* target = selectTarget();
     if (!target) {
         if (isMoving) {
@@ -593,125 +602,66 @@ Detection* MAKCUMouseController::selectTarget()
     if (currentDetections.empty()) {
         currentTargetTrackId = -1;
         currentTargetDistance = 0.0f;
+        targetTracker.unlock();
         return nullptr;
     }
 
-    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
+    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth :
                      ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
-    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
+    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight :
                       ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
     int fovCenterX = frameWidth / 2;
     int fovCenterY = frameHeight / 2;
-    float fovRadiusSquared = static_cast<float>(config.fovRadiusPixels * config.fovRadiusPixels);
+    float fovRadius = static_cast<float>(config.fovRadiusPixels);
 
-    Detection* bestTarget = nullptr;
-    float bestScore = -1.0f;
-    int bestTrackId = -1;
-    float bestDistance = std::numeric_limits<float>::max();
+    // 使用增强的目标跟踪器获取最佳目标
+    TrackedTarget* trackedTarget = targetTracker.getBestTarget(frameWidth, frameHeight, fovCenterX, fovCenterY, fovRadius);
 
-    for (auto& det : currentDetections) {
-        int targetX = static_cast<int>(det.centerX * frameWidth);
-        int targetY = static_cast<int>(det.centerY * frameHeight);
-        
-        float dx = static_cast<float>(targetX - fovCenterX);
-        float dy = static_cast<float>(targetY - fovCenterY);
-        float distanceSquared = dx * dx + dy * dy;
-
-        if (distanceSquared <= fovRadiusSquared) {
-            float distance = std::sqrt(distanceSquared);
-            
-            // 计算目标评分，考虑距离、大小和置信度
-            float sizeScore = std::min(det.width * det.height, 0.1f); // 目标大小
-            float confidenceScore = det.confidence; // 置信度
-            float distanceScore = 1.0f / (1.0f + distance); // 距离越近分数越高
-            
-            // 综合评分 - 增加距离因素权重
-            float score = 0.7f * distanceScore + 0.2f * confidenceScore + 0.1f * sizeScore;
-            
-            if (score > bestScore) {
-                bestScore = score;
-                bestTarget = &det;
-                bestTrackId = det.trackId;
-                bestDistance = distance;
-            }
-        }
-    }
-
-    if (!bestTarget) {
+    if (!trackedTarget) {
         currentTargetTrackId = -1;
         currentTargetDistance = 0.0f;
         return nullptr;
     }
 
-    auto now = std::chrono::steady_clock::now();
+    // 更新当前跟踪ID（使用persistentId）
+    currentTargetTrackId = trackedTarget->persistentId;
 
-    if (currentTargetTrackId == -1) {
-        currentTargetTrackId = bestTrackId;
-        targetLockStartTime = now;
-        currentTargetDistance = bestDistance;
-        return bestTarget;
-    }
-
-    if (bestTrackId == currentTargetTrackId) {
-        currentTargetDistance = bestDistance;
-        return bestTarget;
-    }
-
-    auto lockElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count();
-    
-    if (lockElapsed < config.targetSwitchDelayMs) {
-        // 检查当前目标是否在FOV内
-        bool currentTargetInFOV = false;
-        for (auto& det : currentDetections) {
-            if (det.trackId == currentTargetTrackId) {
-                int targetX = static_cast<int>(det.centerX * frameWidth);
-                int targetY = static_cast<int>(det.centerY * frameHeight);
-                float dx = static_cast<float>(targetX - fovCenterX);
-                float dy = static_cast<float>(targetY - fovCenterY);
-                float distSq = dx * dx + dy * dy;
-                if (distSq <= fovRadiusSquared) {
-                    currentTargetInFOV = true;
-                    return &det;
-                }
-            }
-        }
-        
-        // 如果当前目标不在FOV内，仍然等待延迟时间后再切换
-        if (lockElapsed < config.targetSwitchDelayMs) {
-            // 延迟时间未到，返回nullptr，保持当前目标的锁定状态
-            return nullptr;
-        } else {
-            // 延迟时间已过，切换到新目标
-            currentTargetTrackId = bestTrackId;
-            targetLockStartTime = now;
-            currentTargetDistance = bestDistance;
-            return bestTarget;
+    // 在原始检测中查找对应的Detection
+    for (auto& det : currentDetections) {
+        // 使用IOU匹配找到对应的检测
+        if (trackedTarget->getIOU(det) > 0.5f) {
+            // 计算距离
+            float pixelX = det.centerX * frameWidth;
+            float pixelY = det.centerY * frameHeight;
+            float dx = pixelX - fovCenterX;
+            float dy = pixelY - fovCenterY;
+            currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+            return &det;
         }
     }
 
-    if (currentTargetDistance > 0.0f && config.targetSwitchTolerance > 0.0f) {
-        float improvement = (currentTargetDistance - bestDistance) / currentTargetDistance;
-        if (improvement < config.targetSwitchTolerance) {
-            for (auto& det : currentDetections) {
-                if (det.trackId == currentTargetTrackId) {
-                    int targetX = static_cast<int>(det.centerX * frameWidth);
-                    int targetY = static_cast<int>(det.centerY * frameHeight);
-                    float dx = static_cast<float>(targetX - fovCenterX);
-                    float dy = static_cast<float>(targetY - fovCenterY);
-                    float distSq = dx * dx + dy * dy;
-                    if (distSq <= fovRadiusSquared) {
-                        return &det;
-                    }
-                }
-            }
+    // 如果找不到精确匹配，返回最接近的检测
+    float minDistance = std::numeric_limits<float>::max();
+    Detection* closestDet = nullptr;
+
+    for (auto& det : currentDetections) {
+        float dist = trackedTarget->getDistanceToDetection(det, frameWidth, frameHeight);
+        if (dist < minDistance) {
+            minDistance = dist;
+            closestDet = &det;
         }
     }
 
-    currentTargetTrackId = bestTrackId;
-    targetLockStartTime = now;
-    currentTargetDistance = bestDistance;
-    return bestTarget;
+    if (closestDet) {
+        float pixelX = closestDet->centerX * frameWidth;
+        float pixelY = closestDet->centerY * frameHeight;
+        float dx = pixelX - fovCenterX;
+        float dy = pixelY - fovCenterY;
+        currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+    }
+
+    return closestDet;
 }
 
 POINT MAKCUMouseController::convertToScreenCoordinates(const Detection& det)
