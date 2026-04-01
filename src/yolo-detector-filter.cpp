@@ -237,6 +237,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float stdIntegralDeadzone;
 		float stdIntegralThreshold;
 		float stdIntegralRate;
+		// 卡尔曼滤波器参数
+		bool useKalmanFilter;
+		float kalmanProcessNoise;
+		float kalmanMeasurementNoise;
+		float kalmanConfidenceScale;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -300,6 +305,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			stdIntegralDeadzone = 1.0f;
 			stdIntegralThreshold = 50.0f;
 			stdIntegralRate = 0.015f;
+			// 卡尔曼滤波器参数默认值
+			useKalmanFilter = true;
+			kalmanProcessNoise = 0.01f;
+			kalmanMeasurementNoise = 1.0f;
+			kalmanConfidenceScale = 1.0f;
 		}
 	};
 
@@ -347,6 +357,7 @@ const char *yolo_detector_filter_getname(void *unused)
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
+static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 
 obs_properties_t *yolo_detector_filter_properties(void *data)
 {
@@ -362,7 +373,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "鼠标控制 - PID", 3);
 	obs_property_list_add_int(pageList, "鼠标控制 - 扳机", 4);
 	obs_property_list_add_int(pageList, "追踪与高级", 5);
-	obs_property_list_add_int(pageList, "标准PID配置", 6);
+	obs_property_list_add_int(pageList, "卡尔曼滤波器", 6);
+	obs_property_list_add_int(pageList, "标准PID配置", 7);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -665,6 +677,29 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_set_long_description(recoilPidGainScaleProp, "压枪时Y轴PID控制的增益系数，0表示完全禁用Y轴PID，1表示保持原增益");
 	}
 
+	// 卡尔曼滤波器独立配置组
+	obs_properties_add_group(props, "kalman_filter_group", "卡尔曼滤波器设置", OBS_GROUP_NORMAL, nullptr);
+	
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+		
+		snprintf(propName, sizeof(propName), "use_kalman_filter_%d", i);
+		obs_property_t *useKalmanFilterProp = obs_properties_add_bool(props, propName, "启用卡尔曼滤波器");
+		obs_property_set_long_description(useKalmanFilterProp, "使用卡尔曼滤波器进行目标运动预测，替代原有的简单导数预测器。开启后可以提高对移动目标的跟踪精度，特别是在目标运动模式复杂或检测噪声较大的情况下。");
+		
+		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
+		obs_property_t *kalmanProcessNoiseProp = obs_properties_add_float_slider(props, propName, "过程噪声", 0.001f, 0.1f, 0.001f);
+		obs_property_set_long_description(kalmanProcessNoiseProp, "卡尔曼滤波器的过程噪声Q。值越大表示对系统模型的信任度越低，滤波器会更依赖测量值。增大此值会使跟踪更敏感但可能引入更多噪声；减小此值会使跟踪更平滑但可能响应变慢。建议范围：0.001-0.05");
+		
+		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
+		obs_property_t *kalmanMeasurementNoiseProp = obs_properties_add_float_slider(props, propName, "测量噪声", 0.1f, 10.0f, 0.1f);
+		obs_property_set_long_description(kalmanMeasurementNoiseProp, "卡尔曼滤波器的测量噪声R。值越大表示对检测结果的信任度越低，滤波器会更依赖预测值。增大此值会使预测更占主导，适合检测噪声大的场景；减小此值会使检测更占主导，适合检测精度高的场景。建议范围：0.5-5.0");
+		
+		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
+		obs_property_t *kalmanConfidenceScaleProp = obs_properties_add_float_slider(props, propName, "置信度缩放", 0.1f, 5.0f, 0.1f);
+		obs_property_set_long_description(kalmanConfidenceScaleProp, "置信度缩放因子，用于根据检测置信度动态调整测量噪声。值越大，高置信度检测对滤波器的影响越大。建议范围：0.5-2.0");
+	}
+
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
 
 	obs_properties_add_group(props, "tracking_group", "目标追踪设置", OBS_GROUP_NORMAL, nullptr);
@@ -808,6 +843,21 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
+// 设置卡尔曼滤波器页面的控件可见性
+static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+{
+	char propName[64];
+
+	snprintf(propName, sizeof(propName), "use_kalman_filter_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "kalman_process_noise_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
+
 // 设置鼠标控制-扳机页面的控件可见性
 static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
@@ -851,9 +901,10 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
+		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
 
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4);
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
 
 	return true;
@@ -912,8 +963,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "fov_color2"), page == 1);
 
 #ifdef _WIN32
-	// 配置选择器在鼠标控制页面(2,3,4)显示
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4);
+	// 配置选择器在鼠标控制页面(2,3,4)和卡尔曼滤波器页面(6)显示
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6);
 
 	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
@@ -922,6 +973,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
+		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
 
 	// 测试连接按钮只在基础页面显示
@@ -943,19 +995,22 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "advanced_group"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "export_coordinates"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "coordinate_output_path"), page == 5);
-	
-	// 页面6: 标准PID配置
-	obs_property_set_visible(obs_properties_get(props, "std_pid_group"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_kp_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_ki_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_kd_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_output_limit_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_dead_zone_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_limit_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 6);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 6);
+
+	// 页面6: 卡尔曼滤波器
+	obs_property_set_visible(obs_properties_get(props, "kalman_filter_group"), page == 6);
+
+	// 页面7: 标准PID配置
+	obs_property_set_visible(obs_properties_get(props, "std_pid_group"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_kp_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_ki_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_kd_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_output_limit_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_dead_zone_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_limit_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 7);
 #else
 	(void)page;
 #endif
@@ -1120,6 +1175,15 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 16);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.3);
+		// 卡尔曼滤波器参数默认值
+		snprintf(propName, sizeof(propName), "use_kalman_filter_%d", i);
+		obs_data_set_default_bool(settings, propName, true);
+		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
+		obs_data_set_default_double(settings, propName, 0.01);
+		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1411,6 +1475,15 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].recoilSpeed = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		tf->mouseConfigs[i].recoilPidGainScale = (float)obs_data_get_double(settings, propName);
+		// 卡尔曼滤波器参数
+		snprintf(propName, sizeof(propName), "use_kalman_filter_%d", i);
+		tf->mouseConfigs[i].useKalmanFilter = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
+		tf->mouseConfigs[i].kalmanProcessNoise = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
+		tf->mouseConfigs[i].kalmanMeasurementNoise = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
+		tf->mouseConfigs[i].kalmanConfidenceScale = (float)obs_data_get_double(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -2775,6 +2848,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.recoilStrength = cfg.recoilStrength;
 		mcConfig.recoilSpeed = cfg.recoilSpeed;
 		mcConfig.recoilPidGainScale = cfg.recoilPidGainScale;
+		// 卡尔曼滤波器参数
+		mcConfig.useKalmanFilter = cfg.useKalmanFilter;
+		mcConfig.kalmanProcessNoise = cfg.kalmanProcessNoise;
+		mcConfig.kalmanMeasurementNoise = cfg.kalmanMeasurementNoise;
+		mcConfig.kalmanConfidenceScale = cfg.kalmanConfidenceScale;
 		// 算法选择（使用全局设置）
 		mcConfig.algorithmType = static_cast<AlgorithmType>(tf->algorithmTypeGlobal);
 		// 标准PID参数（使用全局设置）

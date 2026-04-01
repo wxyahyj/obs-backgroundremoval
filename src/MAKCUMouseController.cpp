@@ -52,6 +52,7 @@ MAKCUMouseController::MAKCUMouseController()
     , currentTargetTrackId(-1)
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
+    , kalmanFilterInitialized(false)
 {
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
@@ -460,12 +461,36 @@ void MAKCUMouseController::tick()
         integralY = 0.0f;
     } else {
         // 高级PID算法（默认）
-        // 更新运动预测器
-        predictor.update(errorX, errorY, deltaTime);
+        float predictedX = 0.0f, predictedY = 0.0f;
 
-        // 预测目标位置
-        float predictedX, predictedY;
-        predictor.predict(deltaTime, predictedX, predictedY);
+        if (config.useKalmanFilter) {
+            // 使用卡尔曼滤波器
+            if (!kalmanFilterInitialized) {
+                kalmanFilter.init(targetPixelX, targetPixelY);
+                kalmanFilter.setProcessNoise(config.kalmanProcessNoise);
+                kalmanFilter.setMeasurementNoise(config.kalmanMeasurementNoise);
+                kalmanFilter.setConfidenceScale(config.kalmanConfidenceScale);
+                kalmanFilterInitialized = true;
+            }
+
+            // 更新卡尔曼滤波器参数
+            kalmanFilter.setProcessNoise(config.kalmanProcessNoise);
+            kalmanFilter.setMeasurementNoise(config.kalmanMeasurementNoise);
+            kalmanFilter.setConfidenceScale(config.kalmanConfidenceScale);
+
+            // 预测步骤
+            kalmanFilter.predict(deltaTime);
+
+            // 更新步骤
+            kalmanFilter.update(targetPixelX, targetPixelY, target->confidence);
+
+            // 获取预测位置
+            kalmanFilter.getPrediction(deltaTime, predictedX, predictedY);
+        } else {
+            // 使用原有的DerivativePredictor
+            predictor.update(errorX, errorY, deltaTime);
+            predictor.predict(deltaTime, predictedX, predictedY);
+        }
 
         // 误差融合
         float fusedErrorX = errorX + config.predictionWeightX * predictedX;
@@ -839,6 +864,9 @@ void MAKCUMouseController::resetPidState()
     integralX = 0.0f;
     integralY = 0.0f;
     predictor.reset();
+    // 重置卡尔曼滤波器
+    kalmanFilter.reset();
+    kalmanFilterInitialized = false;
     // 重置标准PID状态
     stdIntegralX = 0.0f;
     stdIntegralY = 0.0f;

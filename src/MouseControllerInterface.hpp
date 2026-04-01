@@ -76,7 +76,13 @@ struct MouseControllerConfig {
     float pGainRampDuration = 0.5f;
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
-    
+
+    // 卡尔曼滤波器配置
+    bool useKalmanFilter = true;           // 是否启用卡尔曼滤波
+    float kalmanProcessNoise = 0.01f;      // 过程噪声
+    float kalmanMeasurementNoise = 1.0f;   // 测量噪声
+    float kalmanConfidenceScale = 1.0f;    // 置信度缩放因子
+
     // 标准PID参数（经典PID算法）
     float stdKp = 0.3f;           // 比例系数
     float stdKi = 0.01f;          // 积分系数

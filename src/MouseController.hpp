@@ -10,6 +10,7 @@
 #include <chrono>
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
+#include "KalmanFilter.hpp"
 
 class MouseController : public MouseControllerInterface {
 public:
@@ -75,6 +76,10 @@ private:
     
     // 运动预测器
     DerivativePredictor predictor;
+
+    // 卡尔曼滤波器
+    KalmanFilter kalmanFilter;
+    bool kalmanFilterInitialized;
     
     // 时间步长自适应
     std::chrono::steady_clock::time_point lastTickTime;

@@ -225,7 +225,11 @@ std::string ConfigManager::configToJson(const ExtendedMouseControllerConfig& con
     oss << "  \"pGainRampInitialScale\": " << config.pGainRampInitialScale << ",\n";
     oss << "  \"pGainRampDuration\": " << config.pGainRampDuration << ",\n";
     oss << "  \"predictionWeightX\": " << config.predictionWeightX << ",\n";
-    oss << "  \"predictionWeightY\": " << config.predictionWeightY << "\n";
+    oss << "  \"predictionWeightY\": " << config.predictionWeightY << ",\n";
+    oss << "  \"useKalmanFilter\": " << (config.useKalmanFilter ? "true" : "false") << ",\n";
+    oss << "  \"kalmanProcessNoise\": " << config.kalmanProcessNoise << ",\n";
+    oss << "  \"kalmanMeasurementNoise\": " << config.kalmanMeasurementNoise << ",\n";
+    oss << "  \"kalmanConfidenceScale\": " << config.kalmanConfidenceScale << "\n";
     oss << "}\n";
     return oss.str();
 }
@@ -441,10 +445,22 @@ bool ConfigManager::jsonToConfig(const std::string& json, ExtendedMouseControlle
     
     numVal = extractNumber("predictionWeightX");
     if (numVal.first) config.predictionWeightX = static_cast<float>(numVal.second);
-    
+
     numVal = extractNumber("predictionWeightY");
     if (numVal.first) config.predictionWeightY = static_cast<float>(numVal.second);
-    
+
+    boolVal = extractBool("useKalmanFilter");
+    if (boolVal.first) config.useKalmanFilter = boolVal.second;
+
+    numVal = extractNumber("kalmanProcessNoise");
+    if (numVal.first) config.kalmanProcessNoise = static_cast<float>(numVal.second);
+
+    numVal = extractNumber("kalmanMeasurementNoise");
+    if (numVal.first) config.kalmanMeasurementNoise = static_cast<float>(numVal.second);
+
+    numVal = extractNumber("kalmanConfidenceScale");
+    if (numVal.first) config.kalmanConfidenceScale = static_cast<float>(numVal.second);
+
     return true;
 }
 

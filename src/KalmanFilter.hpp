@@ -1,0 +1,85 @@
+#ifndef KALMAN_FILTER_HPP
+#define KALMAN_FILTER_HPP
+
+class KalmanFilter {
+private:
+    // 状态向量 [x, y, vx, vy]
+    float state[4];
+
+    // 误差协方差矩阵 (4x4)
+    float covariance[4][4];
+
+    // 过程噪声协方差
+    float processNoise[4][4];
+
+    // 测量噪声协方差
+    float measurementNoise[2][2];
+
+    // 状态转移矩阵
+    float stateTransition[4][4];
+
+    // 观测矩阵
+    float measurementMatrix[2][4];
+
+    // 时间步长
+    float dt;
+
+    // 自适应参数
+    float baseProcessNoise;
+    float baseMeasurementNoise;
+    float confidenceScale;
+
+    // 矩阵运算辅助函数
+    void matMul4x4(const float a[4][4], const float b[4][4], float result[4][4]);
+    void matMul4x4_4x2(const float a[4][4], const float b[4][2], float result[4][2]);
+    void matMul2x4_4x4(const float a[2][4], const float b[4][4], float result[2][4]);
+    void matMul2x4_4x2(const float a[2][4], const float b[4][2], float result[2][2]);
+    void matTranspose4x4(const float mat[4][4], float result[4][4]);
+    void matTranspose4x2(const float mat[4][2], float result[2][4]);
+    bool matInverse2x2(const float mat[2][2], float result[2][2]);
+
+    // 初始化矩阵
+    void initializeMatrices();
+
+public:
+    KalmanFilter();
+
+    // 初始化滤波器
+    void init(float x, float y);
+
+    // 预测步骤
+    void predict(float deltaTime);
+
+    // 更新步骤
+    void update(float measuredX, float measuredY, float confidence = 1.0f);
+
+    // 获取预测位置
+    void getPrediction(float predictionTime, float& predX, float& predY);
+
+    // 获取当前状态估计
+    void getState(float& x, float& y, float& vx, float& vy);
+
+    // 获取当前位置
+    void getPosition(float& x, float& y);
+
+    // 获取当前速度
+    void getVelocity(float& vx, float& vy);
+
+    // 重置滤波器
+    void reset();
+
+    // 设置噪声参数
+    void setProcessNoise(float q);
+    void setMeasurementNoise(float r);
+    void setConfidenceScale(float scale);
+
+    // 获取噪声参数
+    float getProcessNoise() const { return baseProcessNoise; }
+    float getMeasurementNoise() const { return baseMeasurementNoise; }
+    float getConfidenceScale() const { return confidenceScale; }
+
+    // 检查滤波器是否已初始化
+    bool isInitialized() const;
+};
+
+#endif // KALMAN_FILTER_HPP

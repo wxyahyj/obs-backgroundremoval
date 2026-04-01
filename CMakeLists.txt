@@ -233,6 +233,7 @@ if(WIN32)
       src/MouseController.cpp
       src/MAKCUMouseController.cpp
       src/DerivativePredictor.cpp
+      src/KalmanFilter.cpp
       src/MouseControllerFactory.cpp
       src/ConfigManager.cpp
       src/HungarianAlgorithm.cpp
