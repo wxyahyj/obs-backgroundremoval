@@ -180,11 +180,6 @@ void MouseController::tick()
         return;
     }
 
-    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 
-                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
-    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 
-                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
-
     float fovCenterX = frameWidth / 2.0f;
     float fovCenterY = frameHeight / 2.0f;
 
