@@ -531,8 +531,8 @@ void MAKCUMouseController::tick()
         float baselineX = fusedErrorX * config.baselineCompensation;
         float baselineY = fusedErrorY * config.baselineCompensation;
 
-        float moveX = pidOutputX + baselineX;
-        float moveY = pidOutputY + baselineY;
+        moveX = pidOutputX + baselineX;
+        moveY = pidOutputY + baselineY;
 
         // 详细日志输出
         static int logCounter = 0;

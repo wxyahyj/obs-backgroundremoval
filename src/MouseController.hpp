@@ -84,13 +84,6 @@ private:
     KalmanFilter kalmanFilter;
     bool kalmanFilterInitialized;
 
-    // 预测抑制相关
-    float lastTargetPixelX;
-    float lastTargetPixelY;
-    float lastVelocityX;
-    float lastVelocityY;
-    bool hasLastTarget;
-
     // 增强的目标跟踪器
     TargetTracker targetTracker;
 

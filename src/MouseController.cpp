@@ -49,11 +49,6 @@ MouseController::MouseController()
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
     , kalmanFilterInitialized(false)
-    , lastTargetPixelX(0.0f)
-    , lastTargetPixelY(0.0f)
-    , lastVelocityX(0.0f)
-    , lastVelocityY(0.0f)
-    , hasLastTarget(false)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -333,8 +328,8 @@ void MouseController::tick()
         float baselineX = fusedErrorX * config.baselineCompensation;
         float baselineY = fusedErrorY * config.baselineCompensation;
 
-        float moveX = pidOutputX + baselineX;
-        float moveY = pidOutputY + baselineY;
+        moveX = pidOutputX + baselineX;
+        moveY = pidOutputY + baselineY;
 
         // 详细日志输出
         static int logCounter = 0;
