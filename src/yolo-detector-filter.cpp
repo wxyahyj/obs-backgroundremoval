@@ -217,6 +217,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float integralLimit;
 		float integralSeparationThreshold;
 		float integralDeadZone;
+		float integralRate;
 		float pGainRampInitialScale;
 		float pGainRampDuration;
 		float predictionWeightX;
@@ -286,6 +287,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			integralLimit = 100.0f;
 			integralSeparationThreshold = 50.0f;
 			integralDeadZone = 5.0f;
+			integralRate = 0.015f;
 			pGainRampInitialScale = 0.6f;
 			pGainRampDuration = 0.5f;
 			predictionWeightX = 0.5f;
