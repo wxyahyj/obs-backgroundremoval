@@ -710,4 +710,15 @@ std::string MouseController::getCurrentWeapon() const
     return currentWeapon;
 }
 
+bool MouseController::getKalmanPrediction(float& predX, float& predY) const
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!kalmanFilterInitialized || !config.useKalmanFilter) {
+        return false;
+    }
+    // 获取预测的绝对坐标位置
+    kalmanFilter.getPrediction(deltaTime, predX, predY);
+    return true;
+}
+
 #endif

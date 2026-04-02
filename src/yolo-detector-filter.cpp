@@ -2012,6 +2012,38 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 {
 	std::lock_guard<std::mutex> lock(filter->floatingWindowMutex);
 	frame.copyTo(filter->floatingWindowFrame);
+
+#ifdef _WIN32
+	// 绘制卡尔曼预测位置
+	if (filter->mouseController) {
+		float predX, predY;
+		if (filter->mouseController->getKalmanPrediction(predX, predY)) {
+			int frameWidth = filter->floatingWindowFrame.cols;
+			int frameHeight = filter->floatingWindowFrame.rows;
+
+			// 确保坐标在有效范围内
+			if (predX >= 0 && predX < frameWidth && predY >= 0 && predY < frameHeight) {
+				cv::Point center(static_cast<int>(predX), static_cast<int>(predY));
+
+				// 绘制绿色空心圆
+				cv::circle(filter->floatingWindowFrame, center, 10, cv::Scalar(0, 255, 0), 2);
+				// 绘制绿色实心圆心
+				cv::circle(filter->floatingWindowFrame, center, 3, cv::Scalar(0, 255, 0), -1);
+
+				// 绘制十字标记
+				int crossSize = 15;
+				cv::line(filter->floatingWindowFrame,
+					cv::Point(static_cast<int>(predX) - crossSize, static_cast<int>(predY)),
+					cv::Point(static_cast<int>(predX) + crossSize, static_cast<int>(predY)),
+					cv::Scalar(0, 255, 0), 2);
+				cv::line(filter->floatingWindowFrame,
+					cv::Point(static_cast<int>(predX), static_cast<int>(predY) - crossSize),
+					cv::Point(static_cast<int>(predX), static_cast<int>(predY) + crossSize),
+					cv::Scalar(0, 255, 0), 2);
+			}
+		}
+	}
+#endif
 }
 
 static void renderFloatingWindow(yolo_detector_filter *filter)

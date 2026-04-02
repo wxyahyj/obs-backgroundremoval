@@ -119,6 +119,10 @@ public:
     virtual std::string getCurrentWeapon() const = 0;
     
     virtual ControllerType getControllerType() const = 0;
+
+    // 获取卡尔曼滤波器预测的目标位置（绝对坐标，用于可视化）
+    // 返回值：是否成功获取预测位置
+    virtual bool getKalmanPrediction(float& predX, float& predY) const = 0;
 };
 
 #endif

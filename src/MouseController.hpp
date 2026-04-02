@@ -32,6 +32,8 @@ public:
     
     ControllerType getControllerType() const override { return ControllerType::WindowsAPI; }
 
+    bool getKalmanPrediction(float& predX, float& predY) const override;
+
 private:
     mutable std::mutex mutex;
     MouseControllerConfig config;

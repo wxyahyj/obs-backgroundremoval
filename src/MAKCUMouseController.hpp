@@ -32,7 +32,9 @@ public:
     std::string getCurrentWeapon() const override;
     
     ControllerType getControllerType() const override { return ControllerType::MAKCU; }
-    
+
+    bool getKalmanPrediction(float& predX, float& predY) const override;
+
     bool isConnected();
     bool testCommunication();
 
