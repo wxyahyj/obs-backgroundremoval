@@ -563,7 +563,7 @@ float MouseController::calculateIntegral(float error, float& integral, float& in
 
     if (adjustIntegralGain(error, lastError, integralGain))
     {
-        integral += error * deltaTime;
+        integral += error;
         integral = std::max(-config.integralLimit, std::min(integral, config.integralLimit));
     }
     else
@@ -571,7 +571,7 @@ float MouseController::calculateIntegral(float error, float& integral, float& in
         integral = 0;
     }
 
-    float ki = (std::abs(integral) > config.integralDeadZone) ? config.pidI * integral : 0;
+    float ki = config.pidI * integral;
     
     return ki;
 }
