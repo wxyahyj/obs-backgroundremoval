@@ -203,7 +203,7 @@ void KalmanFilter::update(float measuredX, float measuredY, float confidence)
     std::memcpy(covariance, newCovariance, sizeof(covariance));
 }
 
-void KalmanFilter::getPrediction(float predictionTime, float& predX, float& predY)
+void KalmanFilter::getPrediction(float predictionTime, float& predX, float& predY) const
 {
     // 基于当前状态进行预测
     // x_pred = x + vx * t
