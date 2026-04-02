@@ -575,8 +575,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *aimSmoothYProp = obs_properties_add_float_slider(props, propName, "Y轴平滑度", 0.00, 1.0, 0.01);
 		obs_property_set_long_description(aimSmoothYProp, "Y轴鼠标移动平滑系数，值越大越平滑但延迟越高");
 		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
-		obs_property_t *targetYOffsetProp = obs_properties_add_float_slider(props, propName, "Y轴目标偏移", -50.0, 50.0, 1.0);
-		obs_property_set_long_description(targetYOffsetProp, "目标Y轴偏移量，用于补偿不同游戏的准星位置");
+		obs_property_t *targetYOffsetProp = obs_properties_add_float_slider(props, propName, "Y轴目标偏移(%)", -50.0, 50.0, 1.0);
+		obs_property_set_long_description(targetYOffsetProp, "目标Y轴偏移量（相对于目标框高度的百分比），正值向上偏移，负值向下偏移");
 		snprintf(propName, sizeof(propName), "max_pixel_move_%d", i);
 		obs_property_t *maxPixelMoveProp = obs_properties_add_float_slider(props, propName, "最大移动量", 0.0, 200.0, 1.0);
 		obs_property_set_long_description(maxPixelMoveProp, "单次最大移动像素数，限制最大移动速度");

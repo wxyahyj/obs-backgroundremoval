@@ -184,7 +184,9 @@ void MouseController::tick()
     float fovCenterY = frameHeight / 2.0f;
 
     float targetPixelX = target->centerX * frameWidth;
-    float targetPixelY = target->centerY * frameHeight - config.targetYOffset;
+    // Y轴偏移：相对于目标框高度的百分比（-50到50表示-50%到+50%）
+    float yOffsetPixels = config.targetYOffset * 0.01f * target->height * frameHeight;
+    float targetPixelY = target->centerY * frameHeight - yOffsetPixels;
 
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
@@ -483,7 +485,9 @@ POINT MouseController::convertToScreenCoordinates(const Detection& det)
                       ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
 
     float screenPixelX = det.centerX * frameWidth + config.screenOffsetX;
-    float screenPixelY = det.centerY * frameHeight - config.targetYOffset + config.screenOffsetY;
+    // Y轴偏移：相对于目标框高度的百分比
+    float yOffsetPixels = config.targetYOffset * 0.01f * det.height * frameHeight;
+    float screenPixelY = det.centerY * frameHeight - yOffsetPixels + config.screenOffsetY;
 
     POINT result;
     result.x = static_cast<LONG>(screenPixelX);
