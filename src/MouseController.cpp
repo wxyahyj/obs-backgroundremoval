@@ -285,13 +285,8 @@ void MouseController::tick()
             // 更新步骤
             kalmanFilter.update(targetPixelX, targetPixelY, target->confidence);
 
-            // 获取预测位置（绝对坐标）
-            float kalmanPredX = 0.0f, kalmanPredY = 0.0f;
-            kalmanFilter.getPrediction(deltaTime, kalmanPredX, kalmanPredY);
-
-            // Kalman输出是绝对坐标，需要转换为相对于当前位置的偏移量
-            predictedX = kalmanPredX - targetPixelX;
-            predictedY = kalmanPredY - targetPixelY;
+            // 获取预测偏移量（直接返回相对偏移，可用于PID误差融合）
+            kalmanFilter.getPredictionOffset(deltaTime, targetPixelX, targetPixelY, predictedX, predictedY);
         } else {
             // 使用原有的DerivativePredictor
             predictor.update(errorX, errorY, deltaTime);

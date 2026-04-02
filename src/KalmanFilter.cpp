@@ -212,6 +212,17 @@ void KalmanFilter::getPrediction(float predictionTime, float& predX, float& pred
     predY = state[1] + state[3] * predictionTime;
 }
 
+void KalmanFilter::getPredictionOffset(float predictionTime, float currentX, float currentY, float& offsetX, float& offsetY)
+{
+    // 获取绝对坐标的预测位置
+    float predX, predY;
+    getPrediction(predictionTime, predX, predY);
+
+    // 转换为相对于当前位置的偏移量
+    offsetX = predX - currentX;
+    offsetY = predY - currentY;
+}
+
 void KalmanFilter::getState(float& x, float& y, float& vx, float& vy)
 {
     x = state[0];

@@ -57,6 +57,9 @@ public:
     // 获取预测位置
     void getPrediction(float predictionTime, float& predX, float& predY);
 
+    // 获取预测偏移量（相对于当前测量位置的偏移，可直接用于PID误差融合）
+    void getPredictionOffset(float predictionTime, float currentX, float currentY, float& offsetX, float& offsetY);
+
     // 获取当前状态估计
     void getState(float& x, float& y, float& vx, float& vy);
 
