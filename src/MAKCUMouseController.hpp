@@ -80,6 +80,8 @@ private:
     float stdLastErrorY;
     float stdFilteredDeltaErrorX;  // 标准PID微分滤波状态
     float stdFilteredDeltaErrorY;
+    float stdPreviousMoveX;  // 标准PID平滑状态
+    float stdPreviousMoveY;
     
     // 自动压枪相关
     std::chrono::steady_clock::time_point lastRecoilTime;

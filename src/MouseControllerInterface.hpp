@@ -89,13 +89,15 @@ struct MouseControllerConfig {
     float stdKp = 0.3f;           // 比例系数
     float stdKi = 0.01f;          // 积分系数
     float stdKd = 0.005f;         // 微分系数
-    float stdOutputLimit = 10.0f; // 输出限幅
+    float stdOutputLimit = 50.0f; // 输出限幅
     float stdDeadZone = 0.3f;     // 死区
     float stdIntegralLimit = 100.0f;      // 积分限幅
     float stdIntegralDeadzone = 1.0f;     // 积分死区
     float stdIntegralThreshold = 50.0f;   // 积分分离阈值
     float stdIntegralRate = 0.015f;       // 积分增益变化率
     float stdDerivativeFilterAlpha = 0.2f; // 微分滤波系数（和高级PID一致）
+    float stdSmoothingX = 0.7f;   // 标准PID输出X轴平滑系数
+    float stdSmoothingY = 0.5f;   // 标准PID输出Y轴平滑系数
     
     // 持续自瞄和自动压枪配置
     bool continuousAimEnabled = false;

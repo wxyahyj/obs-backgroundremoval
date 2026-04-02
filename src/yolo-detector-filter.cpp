@@ -175,6 +175,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float stdIntegralThresholdGlobal;
 	float stdIntegralRateGlobal;
 	float stdDerivativeFilterAlphaGlobal;
+	float stdSmoothingXGlobal;
+	float stdSmoothingYGlobal;
 
 	struct MouseControlConfig {
 		bool enabled;
@@ -751,11 +753,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	// 标准PID参数
 	obs_property_t *stdKpProp = obs_properties_add_float_slider(props, "std_kp_global", "标准PID-Kp", 0.0, 1.0, 0.01);
 	obs_property_set_long_description(stdKpProp, "标准PID的比例系数");
-	obs_property_t *stdKiProp = obs_properties_add_float_slider(props, "std_ki_global", "标准PID-Ki", 0.0, 0.1, 0.001);
+	obs_property_t *stdKiProp = obs_properties_add_float_slider(props, "std_ki_global", "标准PID-Ki", 0.0, 1.0, 0.001);
 	obs_property_set_long_description(stdKiProp, "标准PID的积分系数");
-	obs_property_t *stdKdProp = obs_properties_add_float_slider(props, "std_kd_global", "标准PID-Kd", 0.0, 0.1, 0.001);
+	obs_property_t *stdKdProp = obs_properties_add_float_slider(props, "std_kd_global", "标准PID-Kd", 0.0, 1.0, 0.001);
 	obs_property_set_long_description(stdKdProp, "标准PID的微分系数");
-	obs_property_t *stdOutputLimitProp = obs_properties_add_float_slider(props, "std_output_limit_global", "输出限幅", 1.0, 50.0, 1.0);
+	obs_property_t *stdOutputLimitProp = obs_properties_add_float_slider(props, "std_output_limit_global", "输出限幅", 1.0, 200.0, 1.0);
 	obs_property_set_long_description(stdOutputLimitProp, "PID输出的最大值限制");
 	obs_property_t *stdDeadZoneProp = obs_properties_add_float_slider(props, "std_dead_zone_global", "死区", 0.0, 10.0, 0.1);
 	obs_property_set_long_description(stdDeadZoneProp, "误差小于此值时不输出");
@@ -769,6 +771,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
 	obs_property_t *stdDerivativeFilterProp = obs_properties_add_float_slider(props, "std_derivative_filter_alpha_global", "微分滤波系数", 0.01, 1.0, 0.01);
 	obs_property_set_long_description(stdDerivativeFilterProp, "标准PID微分项低通滤波系数，值越大响应越快，值越小越平滑但延迟");
+	obs_property_t *stdSmoothingXProp = obs_properties_add_float_slider(props, "std_smoothing_x_global", "X轴平滑度", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(stdSmoothingXProp, "标准PID输出X轴平滑系数，值越大响应越快，值越小越平滑");
+	obs_property_t *stdSmoothingYProp = obs_properties_add_float_slider(props, "std_smoothing_y_global", "Y轴平滑度", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(stdSmoothingYProp, "标准PID输出Y轴平滑系数，值越大响应越快，值越小越平滑");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -1029,6 +1035,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_smoothing_x_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_smoothing_y_global"), page == 7);
 #else
 	(void)page;
 #endif
@@ -1221,13 +1229,15 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "std_kp_global", 0.3);
     obs_data_set_default_double(settings, "std_ki_global", 0.01);
     obs_data_set_default_double(settings, "std_kd_global", 0.005);
-    obs_data_set_default_double(settings, "std_output_limit_global", 10.0);
+    obs_data_set_default_double(settings, "std_output_limit_global", 50.0);
     obs_data_set_default_double(settings, "std_dead_zone_global", 0.3);
     obs_data_set_default_double(settings, "std_integral_limit_global", 100.0);
     obs_data_set_default_double(settings, "std_integral_deadzone_global", 1.0);
     obs_data_set_default_double(settings, "std_integral_threshold_global", 50.0);
     obs_data_set_default_double(settings, "std_integral_rate_global", 0.015);
     obs_data_set_default_double(settings, "std_derivative_filter_alpha_global", 0.2);
+    obs_data_set_default_double(settings, "std_smoothing_x_global", 0.7);
+    obs_data_set_default_double(settings, "std_smoothing_y_global", 0.5);
 #endif
 }
 
@@ -1528,6 +1538,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->stdIntegralThresholdGlobal = (float)obs_data_get_double(settings, "std_integral_threshold_global");
 	tf->stdIntegralRateGlobal = (float)obs_data_get_double(settings, "std_integral_rate_global");
 	tf->stdDerivativeFilterAlphaGlobal = (float)obs_data_get_double(settings, "std_derivative_filter_alpha_global");
+	tf->stdSmoothingXGlobal = (float)obs_data_get_double(settings, "std_smoothing_x_global");
+	tf->stdSmoothingYGlobal = (float)obs_data_get_double(settings, "std_smoothing_y_global");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -2927,6 +2939,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.stdIntegralThreshold = tf->stdIntegralThresholdGlobal;
 		mcConfig.stdIntegralRate = tf->stdIntegralRateGlobal;
 		mcConfig.stdDerivativeFilterAlpha = tf->stdDerivativeFilterAlphaGlobal;
+		mcConfig.stdSmoothingX = tf->stdSmoothingXGlobal;
+		mcConfig.stdSmoothingY = tf->stdSmoothingYGlobal;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

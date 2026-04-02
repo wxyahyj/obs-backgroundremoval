@@ -36,6 +36,8 @@ MouseController::MouseController()
     , stdLastErrorY(0.0f)
     , stdFilteredDeltaErrorX(0.0f)
     , stdFilteredDeltaErrorY(0.0f)
+    , stdPreviousMoveX(0.0f)
+    , stdPreviousMoveY(0.0f)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
     , lastTickTime(std::chrono::steady_clock::now())
@@ -254,17 +256,23 @@ void MouseController::tick()
 
     if (config.algorithmType == AlgorithmType::StandardPID) {
         // 标准PID算法
-        moveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, 
+        float rawMoveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, 
                                       stdLastErrorX, stdFilteredDeltaErrorX, deltaTime);
-        moveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, 
+        float rawMoveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, 
                                       stdLastErrorY, stdFilteredDeltaErrorY, deltaTime);
+        
+        // 标准PID独立平滑处理
+        moveX = stdPreviousMoveX * (1.0f - config.stdSmoothingX) + rawMoveX * config.stdSmoothingX;
+        moveY = stdPreviousMoveY * (1.0f - config.stdSmoothingY) + rawMoveY * config.stdSmoothingY;
+        stdPreviousMoveX = moveX;
+        stdPreviousMoveY = moveY;
         
         // 详细日志输出
         static int stdLogCounter = 0;
         if (++stdLogCounter >= 30) {
             stdLogCounter = 0;
-            blog(LOG_INFO, "[标准PID] errorX=%.1f errorY=%.1f | moveX=%.1f moveY=%.1f | stdKp=%.2f stdKd=%.3f",
-                 errorX, errorY, moveX, moveY, config.stdKp, config.stdKd);
+            blog(LOG_INFO, "[标准PID] errorX=%.1f errorY=%.1f | rawMoveX=%.1f rawMoveY=%.1f | moveX=%.1f moveY=%.1f | stdKp=%.2f stdKd=%.3f",
+                 errorX, errorY, rawMoveX, rawMoveY, moveX, moveY, config.stdKp, config.stdKd);
         }
         
         // 重置高级PID状态变量，避免算法切换时状态不一致
@@ -608,6 +616,10 @@ void MouseController::resetPidState()
     stdIntegralGainY = 0.0f;
     stdLastErrorX = 0.0f;
     stdLastErrorY = 0.0f;
+    stdFilteredDeltaErrorX = 0.0f;
+    stdFilteredDeltaErrorY = 0.0f;
+    stdPreviousMoveX = 0.0f;
+    stdPreviousMoveY = 0.0f;
 }
 
 float MouseController::calculateDynamicP(float distance)
