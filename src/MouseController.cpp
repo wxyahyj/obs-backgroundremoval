@@ -49,6 +49,11 @@ MouseController::MouseController()
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
     , kalmanFilterInitialized(false)
+    , lastTargetPixelX(0.0f)
+    , lastTargetPixelY(0.0f)
+    , lastVelocityX(0.0f)
+    , lastVelocityY(0.0f)
+    , hasLastTarget(false)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -251,6 +256,14 @@ void MouseController::tick()
         moveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, stdLastErrorX, deltaTime);
         moveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, stdLastErrorY, deltaTime);
         
+        // 详细日志输出
+        static int stdLogCounter = 0;
+        if (++stdLogCounter >= 30) {
+            stdLogCounter = 0;
+            blog(LOG_INFO, "[标准PID] errorX=%.1f errorY=%.1f | moveX=%.1f moveY=%.1f | stdKp=%.2f stdKd=%.3f",
+                 errorX, errorY, moveX, moveY, config.stdKp, config.stdKd);
+        }
+        
         // 重置高级PID状态变量，避免算法切换时状态不一致
         pidPreviousErrorX = 0.0f;
         pidPreviousErrorY = 0.0f;
@@ -304,29 +317,36 @@ void MouseController::tick()
         float deltaErrorX = fusedErrorX - pidPreviousErrorX;
         float deltaErrorY = fusedErrorY - pidPreviousErrorY;
 
+        // 微分滤波
         float alpha = config.derivativeFilterAlpha;
         filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
         filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
 
-        // 计算自适应D增益
-        float adaptiveFactorX = 1.0f;
-        float adaptiveFactorY = 1.0f;
-        float adaptiveDX = calculateAdaptiveD(distance, deltaErrorX, fusedErrorX, adaptiveFactorX);
-        float adaptiveDY = calculateAdaptiveD(distance, deltaErrorY, fusedErrorY, adaptiveFactorY);
-
-        // 计算积分项
+        // 积分项
         float integralTermX = calculateIntegral(fusedErrorX, integralX, deltaTime);
         float integralTermY = calculateIntegral(fusedErrorY, integralY, deltaTime);
 
-        // PID输出计算
-        float pidOutputX = dynamicP * fusedErrorX + adaptiveDX * filteredDeltaErrorX + integralTermX;
-        float pidOutputY = dynamicP * fusedErrorY + adaptiveDY * filteredDeltaErrorY + integralTermY;
+        // PID输出（直接使用pidD，移除了自适应D）
+        float pidOutputX = dynamicP * fusedErrorX + config.pidD * filteredDeltaErrorX + integralTermX;
+        float pidOutputY = dynamicP * fusedErrorY + config.pidD * filteredDeltaErrorY + integralTermY;
 
         float baselineX = fusedErrorX * config.baselineCompensation;
         float baselineY = fusedErrorY * config.baselineCompensation;
 
-        moveX = pidOutputX + baselineX;
-        moveY = pidOutputY + baselineY;
+        float moveX = pidOutputX + baselineX;
+        float moveY = pidOutputY + baselineY;
+
+        // 详细日志输出
+        static int logCounter = 0;
+        if (++logCounter >= 30) {  // 每30帧输出一次
+            logCounter = 0;
+            blog(LOG_INFO, "[高级PID] errorX=%.1f errorY=%.1f | fusedX=%.1f fusedY=%.1f | dynamicP=%.3f",
+                 errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
+            blog(LOG_INFO, "[高级PID] deltaErrX=%.1f deltaErrY=%.1f | filteredDeltaX=%.1f filteredDeltaY=%.1f",
+                 deltaErrorX, deltaErrorY, filteredDeltaErrorX, filteredDeltaErrorY);
+            blog(LOG_INFO, "[高级PID] integralX=%.1f integralY=%.1f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
+                 integralTermX, integralTermY, pidOutputX, pidOutputY, moveX, moveY);
+        }
 
         // 更新高级PID状态
         pidPreviousErrorX = fusedErrorX;
