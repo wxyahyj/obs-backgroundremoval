@@ -174,6 +174,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float stdIntegralDeadzoneGlobal;
 	float stdIntegralThresholdGlobal;
 	float stdIntegralRateGlobal;
+	float stdDerivativeFilterAlphaGlobal;
 
 	struct MouseControlConfig {
 		bool enabled;
@@ -654,6 +655,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
 		obs_property_t *integralDeadZoneProp = obs_properties_add_float_slider(props, propName, "积分死区", 0.0, 50.0, 0.1);
 		obs_property_set_long_description(integralDeadZoneProp, "积分死区，误差小于此值时不进行积分");
+		snprintf(propName, sizeof(propName), "integral_rate_%d", i);
+		obs_property_t *integralRateProp = obs_properties_add_float_slider(props, propName, "积分增益率", 0.0, 0.1, 0.001);
+		obs_property_set_long_description(integralRateProp, "积分增益的变化速率，值越大积分增益增加越快");
 		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
 		obs_property_t *pGainRampInitialProp = obs_properties_add_float_slider(props, propName, "P-Gain Ramp初始比例", 0.0, 1.0, 0.1);
 		obs_property_set_long_description(pGainRampInitialProp, "P-Gain Ramp初始比例，热键按下初期使用较低的P值");
@@ -761,6 +765,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(stdIntegralThresholdProp, "误差超过此值时暂停积分");
 	obs_property_t *stdIntegralRateProp = obs_properties_add_float_slider(props, "std_integral_rate_global", "积分增益率", 0.0, 0.1, 0.001);
 	obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
+	obs_property_t *stdDerivativeFilterProp = obs_properties_add_float_slider(props, "std_derivative_filter_alpha_global", "微分滤波系数", 0.01, 1.0, 0.01);
+	obs_property_set_long_description(stdDerivativeFilterProp, "标准PID微分项低通滤波系数，值越大响应越快，值越平滑滑但延迟");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -822,7 +828,11 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "integral_dead_zone_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "integral_rate_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "d_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "i_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
@@ -1016,6 +1026,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 7);
 #else
 	(void)page;
 #endif
@@ -1162,6 +1173,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 50.0);
 		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
 		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "integral_rate_%d", i);
+		obs_data_set_default_double(settings, propName, 0.015);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.6);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
@@ -1212,6 +1225,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "std_integral_deadzone_global", 1.0);
     obs_data_set_default_double(settings, "std_integral_threshold_global", 50.0);
     obs_data_set_default_double(settings, "std_integral_rate_global", 0.015);
+    obs_data_set_default_double(settings, "std_derivative_filter_alpha_global", 0.2);
 #endif
 }
 
@@ -1464,6 +1478,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].integralSeparationThreshold = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
 		tf->mouseConfigs[i].integralDeadZone = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "integral_rate_%d", i);
+		tf->mouseConfigs[i].integralRate = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
 		tf->mouseConfigs[i].pGainRampInitialScale = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
@@ -1509,6 +1525,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->stdIntegralDeadzoneGlobal = (float)obs_data_get_double(settings, "std_integral_deadzone_global");
 	tf->stdIntegralThresholdGlobal = (float)obs_data_get_double(settings, "std_integral_threshold_global");
 	tf->stdIntegralRateGlobal = (float)obs_data_get_double(settings, "std_integral_rate_global");
+	tf->stdDerivativeFilterAlphaGlobal = (float)obs_data_get_double(settings, "std_derivative_filter_alpha_global");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -2907,6 +2924,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.stdIntegralDeadzone = tf->stdIntegralDeadzoneGlobal;
 		mcConfig.stdIntegralThreshold = tf->stdIntegralThresholdGlobal;
 		mcConfig.stdIntegralRate = tf->stdIntegralRateGlobal;
+		mcConfig.stdDerivativeFilterAlpha = tf->stdDerivativeFilterAlphaGlobal;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

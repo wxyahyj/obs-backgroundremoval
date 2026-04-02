@@ -30,12 +30,16 @@ MAKCUMouseController::MAKCUMouseController()
     , previousMoveY(0.0f)
     , integralX(0.0f)
     , integralY(0.0f)
+    , integralGainX(0.0f)
+    , integralGainY(0.0f)
     , stdIntegralX(0.0f)
     , stdIntegralY(0.0f)
     , stdIntegralGainX(0.0f)
     , stdIntegralGainY(0.0f)
     , stdLastErrorX(0.0f)
     , stdLastErrorY(0.0f)
+    , stdFilteredDeltaErrorX(0.0f)
+    , stdFilteredDeltaErrorY(0.0f)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
     , lastTickTime(std::chrono::steady_clock::now())
@@ -453,8 +457,10 @@ void MAKCUMouseController::tick()
 
     if (config.algorithmType == AlgorithmType::StandardPID) {
         // 标准PID算法
-        moveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, stdLastErrorX, deltaTime);
-        moveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, stdLastErrorY, deltaTime);
+        moveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, 
+                                      stdLastErrorX, stdFilteredDeltaErrorX, deltaTime);
+        moveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, 
+                                      stdLastErrorY, stdFilteredDeltaErrorY, deltaTime);
         
         // 详细日志输出
         static int stdLogCounter = 0;
@@ -523,8 +529,8 @@ void MAKCUMouseController::tick()
         filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
 
         // 积分项
-        float integralTermX = calculateIntegral(fusedErrorX, integralX, deltaTime);
-        float integralTermY = calculateIntegral(fusedErrorY, integralY, deltaTime);
+        float integralTermX = calculateIntegral(fusedErrorX, integralX, integralGainX, pidPreviousErrorX, deltaTime);
+        float integralTermY = calculateIntegral(fusedErrorY, integralY, integralGainY, pidPreviousErrorY, deltaTime);
 
         // PID输出（直接使用pidD，移除了自适应D）
         float pidOutputX = dynamicP * fusedErrorX + config.pidD * filteredDeltaErrorX + integralTermX;
@@ -561,6 +567,8 @@ void MAKCUMouseController::tick()
         stdIntegralGainY = 0.0f;
         stdLastErrorX = errorX;
         stdLastErrorY = errorY;
+        stdFilteredDeltaErrorX = 0.0f;
+        stdFilteredDeltaErrorY = 0.0f;
     }
     
     // 检测射击状态（鼠标左键按下）
@@ -730,20 +738,42 @@ float MAKCUMouseController::calculateAdaptiveD(float distance, float deltaError,
     return config.pidD;
 }
 
-float MAKCUMouseController::calculateIntegral(float error, float& integral, float deltaTime)
+bool MAKCUMouseController::adjustIntegralGain(float error, float lastError, float& integralGain)
+{
+    float errorDerivative = std::abs(error - lastError);
+
+    if (std::abs(error) < config.integralSeparationThreshold) {
+        float adaptRate = config.integralRate * (1.0f - errorDerivative / (config.integralSeparationThreshold * 2.0f));
+        adaptRate = (adaptRate < 0.0f) ? 0.0f : ((adaptRate > config.integralRate) ? config.integralRate : adaptRate);
+        integralGain = (integralGain + adaptRate > 1.0f) ? 1.0f : integralGain + adaptRate;
+    }
+    else {
+        float decay = 0.1f + 0.9f * std::tanh(std::abs(error) / (config.integralSeparationThreshold * 2.0f));
+        integralGain *= (1.0f - 0.05f * decay);
+    }
+    integralGain = (integralGain < 0.0f) ? 0.0f : ((integralGain > 1.0f) ? 1.0f : integralGain);
+    return integralGain > 0.01f;
+}
+
+float MAKCUMouseController::calculateIntegral(float error, float& integral, float& integralGain, float lastError, float deltaTime)
 {
     if (std::abs(error) < config.integralDeadZone) {
         return 0.0f;
     }
-    
-    if (std::abs(error) > config.integralSeparationThreshold) {
-        return 0.0f;
+
+    if (adjustIntegralGain(error, lastError, integralGain))
+    {
+        integral += error * deltaTime;
+        integral = std::max(-config.integralLimit, std::min(integral, config.integralLimit));
     }
+    else
+    {
+        integral = 0;
+    }
+
+    float ki = (std::abs(integral) > config.integralDeadZone) ? config.pidI * integral : 0;
     
-    integral += error * deltaTime;
-    integral = std::max(-config.integralLimit, std::min(integral, config.integralLimit));
-    
-    return integral * config.pidI;  // 乘以积分系数
+    return ki;
 }
 
 float MAKCUMouseController::getCurrentPGain()
@@ -758,7 +788,8 @@ float MAKCUMouseController::getCurrentPGain()
 }
 
 // 标准PID计算函数
-float MAKCUMouseController::calculateStandardPID(float error, float& integral, float& integralGain, float& lastError, float deltaTime)
+float MAKCUMouseController::calculateStandardPID(float error, float& integral, float& integralGain, 
+                                                   float& lastError, float& filteredDeltaError, float deltaTime)
 {
     // 死区处理
     if (std::abs(error) < config.stdDeadZone) {
@@ -786,8 +817,11 @@ float MAKCUMouseController::calculateStandardPID(float error, float& integral, f
     // 积分计算 + 死区处理
     float ki = (std::abs(integral) > config.stdIntegralDeadzone) ? config.stdKi * integral : 0;
 
-    // 微分计算
-    float kd = config.stdKd * (error - lastError);
+    // 微分计算 + 低通滤波（和高级PID一致）
+    float deltaError = error - lastError;
+    filteredDeltaError = config.stdDerivativeFilterAlpha * deltaError + 
+                         (1.0f - config.stdDerivativeFilterAlpha) * filteredDeltaError;
+    float kd = config.stdKd * filteredDeltaError;
 
     // 总输出计算
     float output = kp + ki + kd;
@@ -827,6 +861,8 @@ void MAKCUMouseController::resetPidState()
     filteredDeltaErrorY = 0.0f;
     integralX = 0.0f;
     integralY = 0.0f;
+    integralGainX = 0.0f;
+    integralGainY = 0.0f;
     predictor.reset();
     // 重置卡尔曼滤波器
     kalmanFilter.reset();

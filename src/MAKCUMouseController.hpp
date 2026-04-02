@@ -68,6 +68,8 @@ private:
     // 积分控制相关
     float integralX;
     float integralY;
+    float integralGainX;  // 高级PID积分增益
+    float integralGainY;
     
     // 标准PID状态变量
     float stdIntegralX;
@@ -76,6 +78,8 @@ private:
     float stdIntegralGainY;
     float stdLastErrorX;
     float stdLastErrorY;
+    float stdFilteredDeltaErrorX;  // 标准PID微分滤波状态
+    float stdFilteredDeltaErrorY;
     
     // 自动压枪相关
     std::chrono::steady_clock::time_point lastRecoilTime;
@@ -108,8 +112,10 @@ private:
     
     float calculateDynamicP(float distance);
     float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
-    float calculateIntegral(float error, float& integral, float deltaTime);
-    float calculateStandardPID(float error, float& integral, float& integralGain, float& lastError, float deltaTime);
+    float calculateIntegral(float error, float& integral, float& integralGain, float lastError, float deltaTime);
+    bool adjustIntegralGain(float error, float lastError, float& integralGain);
+    float calculateStandardPID(float error, float& integral, float& integralGain, 
+                               float& lastError, float& filteredDeltaError, float deltaTime);
     bool adjustStandardIntegral(float error, float lastError, float& integralGain);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);

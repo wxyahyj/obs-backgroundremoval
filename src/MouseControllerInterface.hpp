@@ -73,6 +73,7 @@ struct MouseControllerConfig {
     float integralLimit = 100.0f;
     float integralSeparationThreshold = 50.0f;
     float integralDeadZone = 5.0f;
+    float integralRate = 0.015f;  // 积分增益变化率（和标准PID一致）
     float pGainRampInitialScale = 0.6f;
     float pGainRampDuration = 0.5f;
     float predictionWeightX = 0.5f;
@@ -94,6 +95,7 @@ struct MouseControllerConfig {
     float stdIntegralDeadzone = 1.0f;     // 积分死区
     float stdIntegralThreshold = 50.0f;   // 积分分离阈值
     float stdIntegralRate = 0.015f;       // 积分增益变化率
+    float stdDerivativeFilterAlpha = 0.2f; // 微分滤波系数（和高级PID一致）
     
     // 持续自瞄和自动压枪配置
     bool continuousAimEnabled = false;
