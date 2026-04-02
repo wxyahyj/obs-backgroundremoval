@@ -182,6 +182,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float pMax;
 		float pSlope;
 		float d;
+		float i;
 		float baselineCompensation;
 		float aimSmoothingX;
 		float aimSmoothingY;
@@ -250,6 +251,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pMax = 0.6f;
 			pSlope = 1.0f;
 			d = 0.007f;
+			i = 0.01f;
 			baselineCompensation = 0.85f;
 			aimSmoothingX = 0.7f;
 			aimSmoothingY = 0.5f;
@@ -559,6 +561,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "d_%d", i);
 		obs_property_t *dProp = obs_properties_add_float_slider(props, propName, "微分系数", 0.000, 1.00, 0.001);
 		obs_property_set_long_description(dProp, "微分增益，控制对误差变化率的响应");
+		snprintf(propName, sizeof(propName), "i_%d", i);
+		obs_property_t *iProp = obs_properties_add_float_slider(props, propName, "积分系数", 0.000, 0.10, 0.001);
+		obs_property_set_long_description(iProp, "积分增益，用于消除稳态误差");
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_property_t *derivFilterProp = obs_properties_add_float_slider(props, propName, "微分滤波系数", 0.01, 1.00, 0.01);
 		obs_property_set_long_description(derivFilterProp, "微分滤波系数，用于平滑D项，减少抖动");
@@ -1091,6 +1096,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 1.0);
 		snprintf(propName, sizeof(propName), "d_%d", i);
 		obs_data_set_default_double(settings, propName, 0.007);
+		snprintf(propName, sizeof(propName), "i_%d", i);
+		obs_data_set_default_double(settings, propName, 0.01);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
 		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
@@ -1391,6 +1398,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].pSlope = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "d_%d", i);
 		tf->mouseConfigs[i].d = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "i_%d", i);
+		tf->mouseConfigs[i].i = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		tf->mouseConfigs[i].derivativeFilterAlpha = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
@@ -2829,6 +2838,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.pidPMax = cfg.pMax;
 		mcConfig.pidPSlope = cfg.pSlope;
 		mcConfig.pidD = cfg.d;
+		mcConfig.pidI = cfg.i;
 		mcConfig.baselineCompensation = cfg.baselineCompensation;
 		mcConfig.aimSmoothingX = cfg.aimSmoothingX;
 		mcConfig.aimSmoothingY = cfg.aimSmoothingY;

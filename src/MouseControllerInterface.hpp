@@ -42,6 +42,7 @@ struct MouseControllerConfig {
     float pidPMax = 0.6f;
     float pidPSlope = 1.0f;
     float pidD = 0.007f;
+    float pidI = 0.01f;  // 积分系数（和标准PID的stdKi一致）
     float baselineCompensation = 0.85f;
     float aimSmoothingX = 0.7f;
     float aimSmoothingY = 0.5f;

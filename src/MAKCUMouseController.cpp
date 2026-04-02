@@ -542,8 +542,8 @@ void MAKCUMouseController::tick()
                  errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
             blog(LOG_INFO, "[MAKCU高级PID] deltaErrX=%.1f deltaErrY=%.1f | filteredDeltaX=%.1f filteredDeltaY=%.1f",
                  deltaErrorX, deltaErrorY, filteredDeltaErrorX, filteredDeltaErrorY);
-            blog(LOG_INFO, "[MAKCU高级PID] integralX=%.1f integralY=%.1f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
-                 integralTermX, integralTermY, pidOutputX, pidOutputY, moveX, moveY);
+            blog(LOG_INFO, "[MAKCU高级PID] integralX=%.1f integralY=%.1f | pidI=%.3f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
+                 integralTermX, integralTermY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
         }
 
         // 更新高级PID状态
@@ -739,7 +739,7 @@ float MAKCUMouseController::calculateIntegral(float error, float& integral, floa
     integral += error * deltaTime;
     integral = std::max(-config.integralLimit, std::min(integral, config.integralLimit));
     
-    return integral;
+    return integral * config.pidI;  // 乘以积分系数
 }
 
 float MAKCUMouseController::getCurrentPGain()
