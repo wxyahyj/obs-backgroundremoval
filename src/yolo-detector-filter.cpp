@@ -766,7 +766,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *stdIntegralRateProp = obs_properties_add_float_slider(props, "std_integral_rate_global", "积分增益率", 0.0, 0.1, 0.001);
 	obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
 	obs_property_t *stdDerivativeFilterProp = obs_properties_add_float_slider(props, "std_derivative_filter_alpha_global", "微分滤波系数", 0.01, 1.0, 0.01);
-	obs_property_set_long_description(stdDerivativeFilterProp, "标准PID微分项低通滤波系数，值越大响应越快，值越平滑滑但延迟");
+	obs_property_set_long_description(stdDerivativeFilterProp, "标准PID微分项低通滤波系数，值越大响应越快，值越小越平滑但延迟");
 
 	UNUSED_PARAMETER(data);
 	return props;
