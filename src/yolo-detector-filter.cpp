@@ -3373,10 +3373,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		float centerX = 0.5f;
 		float centerY = 0.5f;
 
-		// 当前使用的FOV半径
-		float currentFOVRadius = tf->isInFOV2Mode ? 
-			(static_cast<float>(tf->fovRadius2) / static_cast<float>(obs_source_get_base_width(tf->source))) :
-			(static_cast<float>(tf->fovRadius) / static_cast<float>(obs_source_get_base_width(tf->source)));
+		// 当前使用的FOV半径（归一化）
+		float currentFOVRadius = tf->currentFovRadius / static_cast<float>(obs_source_get_base_width(tf->source));
 
 		// 检查FOV内是否有目标
 		bool hasTargetInCurrentFOV = false;
