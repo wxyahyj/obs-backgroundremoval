@@ -3185,7 +3185,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		ControllerType newType = static_cast<ControllerType>(cfg.controllerType);
 		if (!tf->mouseController || tf->mouseController->getControllerType() != newType) {
 			tf->mouseController = MouseControllerFactory::createController(newType, cfg.makcuPort, cfg.makcuBaudRate);
-			setupPidDataCallback(tf);
+			setupPidDataCallback(tf.get());
 		}
 
 		MouseControllerConfig mcConfig;
