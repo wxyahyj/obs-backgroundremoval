@@ -46,6 +46,7 @@ ModelYOLO::ModelYOLO(Version version)
       inputHeight_(640),
       numClasses_(80),
       inputBufferSize_(0),
+      useIOBinding_(false),
       inferenceThreadRunning_(false)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
@@ -156,6 +157,12 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                 
                 trt_options.trt_engine_cache_enable = 1;
                 trt_options.trt_fp16_enable = 1;
+                trt_options.trt_max_workspace_size = 1ULL << 30;  // 1GB工作空间
+                trt_options.trt_dla_enable = 0;  // DLA核心（Jetson设备可用）
+                trt_options.trt_dla_core = 0;
+                trt_options.trt_int8_enable = 0;  // INT8需要校准，暂不启用
+                trt_options.trt_max_partition_iterations = 1000;  // 最大分区迭代次数
+                trt_options.trt_min_subgraph_size = 1;  // 最小子图大小
                 
 #ifdef _WIN32
                 std::wstring modelPathW(modelPath.begin(), modelPath.end());
@@ -275,6 +282,26 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         inputBuffer_.resize(inputBufferSize_);
         obs_log(LOG_INFO, "[ModelYOLO] Allocated input buffer size: %zu", inputBufferSize_);
         
+        // 初始化IOBinding（仅GPU模式）
+        if (currentUseGPU != "cpu") {
+            try {
+                ioBinding_ = std::make_unique<Ort::IoBinding>(*session_);
+                
+                // 预分配输出缓冲区
+                size_t outputSize = 1;
+                for (auto dim : outputDims_[0]) {
+                    outputSize *= dim;
+                }
+                outputBuffer_.resize(outputSize);
+                
+                useIOBinding_ = true;
+                obs_log(LOG_INFO, "[ModelYOLO] IOBinding enabled for GPU optimization");
+            } catch (const std::exception& e) {
+                obs_log(LOG_WARNING, "[ModelYOLO] Failed to initialize IOBinding: %s, using standard inference", e.what());
+                useIOBinding_ = false;
+            }
+        }
+        
         name = "YOLO";
         
         obs_log(LOG_INFO, "[ModelYOLO] Model loaded successfully");
@@ -289,24 +316,43 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
 }
 
 void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
-    cv::Mat rgb;
-    if (input.channels() == 4) {
-        cv::cvtColor(input, rgb, cv::COLOR_BGRA2RGB);
-    } else if (input.channels() == 3) {
-        cv::cvtColor(input, rgb, cv::COLOR_BGR2RGB);
-    } else {
-        rgb = input;
-    }
-
-    cv::Mat floatMat;
-    rgb.convertTo(floatMat, CV_32F, 1.0f / 255.0f);
-
-    std::vector<cv::Mat> channels(3);
-    cv::split(floatMat, channels);
-
     const int channelSize = inputWidth_ * inputHeight_;
-    for (int c = 0; c < 3; ++c) {
-        std::memcpy(outputBuffer + c * channelSize, channels[c].data, channelSize * sizeof(float));
+    
+    if (input.channels() == 4) {
+        const unsigned char* inputData = input.data;
+        float* rChannel = outputBuffer;
+        float* gChannel = outputBuffer + channelSize;
+        float* bChannel = outputBuffer + channelSize * 2;
+        
+        for (int i = 0; i < channelSize; ++i) {
+            rChannel[i] = inputData[i * 4 + 2] / 255.0f;
+            gChannel[i] = inputData[i * 4 + 1] / 255.0f;
+            bChannel[i] = inputData[i * 4 + 0] / 255.0f;
+        }
+    } else if (input.channels() == 3) {
+        const unsigned char* inputData = input.data;
+        float* rChannel = outputBuffer;
+        float* gChannel = outputBuffer + channelSize;
+        float* bChannel = outputBuffer + channelSize * 2;
+        
+        for (int i = 0; i < channelSize; ++i) {
+            rChannel[i] = inputData[i * 3 + 2] / 255.0f;
+            gChannel[i] = inputData[i * 3 + 1] / 255.0f;
+            bChannel[i] = inputData[i * 3 + 0] / 255.0f;
+        }
+    } else {
+        cv::Mat rgb;
+        cv::cvtColor(input, rgb, cv::COLOR_GRAY2RGB);
+        
+        cv::Mat floatMat;
+        rgb.convertTo(floatMat, CV_32F, 1.0f / 255.0f);
+        
+        std::vector<cv::Mat> channels(3);
+        cv::split(floatMat, channels);
+        
+        for (int c = 0; c < 3; ++c) {
+            std::memcpy(outputBuffer + c * channelSize, channels[c].data, channelSize * sizeof(float));
+        }
     }
 }
 

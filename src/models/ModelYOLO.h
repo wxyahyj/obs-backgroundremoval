@@ -105,6 +105,9 @@ private:
 
     std::unique_ptr<Ort::Env> env_;
     std::unique_ptr<Ort::Session> session_;
+    std::unique_ptr<Ort::IoBinding> ioBinding_;
+    Ort::MemoryInfo cudaMemoryInfo_;
+    Ort::Allocator cudaAllocator_;
     std::vector<Ort::AllocatedStringPtr> inputNames_;
     std::vector<Ort::AllocatedStringPtr> outputNames_;
     std::vector<std::vector<int64_t>> inputDims_;
@@ -116,6 +119,8 @@ private:
     
     size_t inputBufferSize_;
     std::vector<float> inputBuffer_;
+    std::vector<float> outputBuffer_;  // 预分配输出缓冲区
+    bool useIOBinding_;  // 是否使用IOBinding
     
     std::thread inferenceThread_;
     std::atomic<bool> inferenceThreadRunning_;

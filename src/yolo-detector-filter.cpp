@@ -2241,36 +2241,35 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			if (filter->inputBGRA.empty()) {
 				continue;
 			}
-			// 从内存池获取缓冲区
-			fullFrame = getImageBuffer(filter, filter->inputBGRA.rows, filter->inputBGRA.cols, filter->inputBGRA.type());
-			// 复制数据到缓冲区
-			filter->inputBGRA.copyTo(fullFrame);
-		}
+			
+			int fullWidth = filter->inputBGRA.cols;
+			int fullHeight = filter->inputBGRA.rows;
 
-		int fullWidth = fullFrame.cols;
-		int fullHeight = fullFrame.rows;
+			if (filter->useRegion) {
+				cropX = std::max(0, filter->regionX);
+				cropY = std::max(0, filter->regionY);
+				cropWidth = std::min(filter->regionWidth, fullWidth - cropX);
+				cropHeight = std::min(filter->regionHeight, fullHeight - cropY);
 
-		if (filter->useRegion) {
-			cropX = std::max(0, filter->regionX);
-			cropY = std::max(0, filter->regionY);
-			cropWidth = std::min(filter->regionWidth, fullWidth - cropX);
-			cropHeight = std::min(filter->regionHeight, fullHeight - cropY);
-
-			if (cropWidth > 0 && cropHeight > 0) {
-				// 从内存池获取缓冲区
-				frame = getImageBuffer(filter, cropHeight, cropWidth, fullFrame.type());
-				// 复制ROI区域到缓冲区
-				fullFrame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).copyTo(frame);
+				if (cropWidth > 0 && cropHeight > 0) {
+					frame = getImageBuffer(filter, cropHeight, cropWidth, filter->inputBGRA.type());
+					filter->inputBGRA(cv::Rect(cropX, cropY, cropWidth, cropHeight)).copyTo(frame);
+				} else {
+					frame = getImageBuffer(filter, fullHeight, fullWidth, filter->inputBGRA.type());
+					filter->inputBGRA.copyTo(frame);
+					cropX = 0;
+					cropY = 0;
+					cropWidth = fullWidth;
+					cropHeight = fullHeight;
+				}
 			} else {
-				frame = std::move(fullFrame);
-				cropX = 0;
-				cropY = 0;
-				cropWidth = fullWidth;
-				cropHeight = fullHeight;
+				frame = getImageBuffer(filter, fullHeight, fullWidth, filter->inputBGRA.type());
+				filter->inputBGRA.copyTo(frame);
 			}
-		} else {
-			frame = std::move(fullFrame);
 		}
+
+		int fullWidth = filter->inputBGRA.cols;
+		int fullHeight = filter->inputBGRA.rows;
 
 		auto startTime = std::chrono::high_resolution_clock::now();
 
