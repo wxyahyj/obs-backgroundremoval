@@ -60,6 +60,12 @@ private:
     float filteredDeltaErrorY;
     float previousErrorX;
     float previousErrorY;
+    
+    // 目标速度计算
+    float previousTargetX;
+    float previousTargetY;
+    float targetVelocityX;  // 目标X速度（像素/帧）
+    float targetVelocityY;  // 目标Y速度（像素/帧）
 
     // 积分控制相关
     float integralX;
@@ -116,6 +122,10 @@ private:
     int getRandomDuration();
     float getCurrentPGain();
     
+    void setPidDataCallback(PidDataCallback callback) override {
+        pidDataCallback_ = callback;
+    }
+    
     std::chrono::steady_clock::time_point hotkeyPressStartTime;
     bool yUnlockActive;
     std::chrono::steady_clock::time_point lastAutoTriggerTime;
@@ -131,6 +141,8 @@ private:
     float currentTargetDistance;
     
     std::string currentWeapon;
+    
+    PidDataCallback pidDataCallback_;
 };
 
 #endif

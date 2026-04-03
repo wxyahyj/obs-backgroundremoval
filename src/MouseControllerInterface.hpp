@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include <functional>
 #include "models/Detection.h"
 
 enum class ControllerType {
@@ -14,6 +15,22 @@ enum class AlgorithmType {
     AdvancedPID,  // 高级PID（当前使用的自适应PID）
     StandardPID   // 标准PID（经典PID）
 };
+
+// PID数据回调函数类型
+struct PidDebugData {
+    float errorX;
+    float errorY;
+    float outputX;
+    float outputY;
+    float targetX;
+    float targetY;
+    float targetVelocityX;  // 目标X速度（像素/帧）
+    float targetVelocityY;  // 目标Y速度（像素/帧）
+    float currentKp;        // 当前使用的Kp
+    float currentKi;        // 当前使用的Ki
+    float currentKd;        // 当前使用的Kd
+};
+using PidDataCallback = std::function<void(const PidDebugData&)>;
 
 struct MouseControllerConfig {
     bool enableMouseControl = false;
@@ -125,9 +142,12 @@ public:
     
     virtual ControllerType getControllerType() const = 0;
 
-    // 获取卡尔曼滤波器预测的目标位置（绝对坐标，用于可视化）
+    // 获取卡尔曼滤波器预测的目标位置（绝对坐标， 用于可视化）
     // 返回值：是否成功获取预测位置
     virtual bool getKalmanPrediction(float& predX, float& predY) const = 0;
+    
+    // 设置PID数据回调函数（用于调试可视化）
+    virtual void setPidDataCallback(PidDataCallback callback) = 0;
 };
 
 #endif

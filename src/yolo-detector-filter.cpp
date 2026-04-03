@@ -26,6 +26,8 @@
 #include <thread>
 #include <chrono>
 #include <sstream>
+#include <functional>
+#include <deque>
 
 #include <plugin-support.h>
 #include "models/ModelYOLO.h"
@@ -160,6 +162,35 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	HWND floatingWindowHandle;
 	std::mutex floatingWindowMutex;
 	cv::Mat floatingWindowFrame;
+
+	// PID调试数据
+	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
+	struct PidDataPoint {
+		float errorX;
+		float errorY;
+		float outputX;
+		float outputY;
+		float targetX;
+		float targetY;
+		float targetVelocityX;  // 目标X速度（像素/帧）
+		float targetVelocityY;  // 目标Y速度（像素/帧）
+		float currentKp;        // 当前使用的Kp
+		float currentKi;        // 当前使用的Ki
+		float currentKd;        // 当前使用的Kd
+		std::chrono::steady_clock::time_point timestamp;
+	};
+	std::deque<PidDataPoint> pidHistory;
+	std::mutex pidHistoryMutex;
+	bool showPidDebugWindow;
+	HWND pidDebugWindowHandle;
+	int pidDebugWindowWidth;
+	int pidDebugWindowHeight;
+	int pidDebugWindowX;
+	int pidDebugWindowY;
+	bool pidDebugWindowDragging;
+	POINT pidDebugWindowDragOffset;
+	std::mutex pidDebugWindowMutex;
+	cv::Mat pidDebugWindowFrame;
 
 	static const int MAX_CONFIGS = 5;
 
@@ -353,6 +384,10 @@ static void createFloatingWindow(yolo_detector_filter *filter);
 static void destroyFloatingWindow(yolo_detector_filter *filter);
 static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame);
 static void renderFloatingWindow(yolo_detector_filter *filter);
+static void setupPidDataCallback(yolo_detector_filter *filter);
+static void createPidDebugWindow(yolo_detector_filter *filter);
+static void destroyPidDebugWindow(yolo_detector_filter *filter);
+static void updatePidDebugWindow(yolo_detector_filter *filter);
 #endif
 
 const char *yolo_detector_filter_getname(void *unused)
@@ -732,6 +767,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(floatingWindowWidthProp, "浮动窗口的宽度");
 	obs_property_t *floatingWindowHeightProp = obs_properties_add_int_slider(props, "floating_window_height", obs_module_text("WindowHeight"), 240, 1080, 10);
 	obs_property_set_long_description(floatingWindowHeightProp, "浮动窗口的高度");
+	obs_property_t *showPidDebugWindowProp = obs_properties_add_bool(props, "show_pid_debug_window", "显示PID调试曲线");
+	obs_property_set_long_description(showPidDebugWindowProp, "在浮动窗口中显示PID调试曲线，方便调整参数");
 
 	obs_properties_add_group(props, "config_management_group", "配置管理", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_button(props, "save_config", "保存配置", saveConfigCallback);
@@ -1010,9 +1047,10 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "target_switch_tolerance"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "floating_window_group"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "show_floating_window"), page == 5);
-	obs_property_set_visible(obs_properties_get(props, "floating_window_width"), page == 5);
-	obs_property_set_visible(obs_properties_get(props, "floating_window_height"), page == 5);
-	obs_property_set_visible(obs_properties_get(props, "config_management_group"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "floating_window_width"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "floating_window_height"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "show_pid_debug_window"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "config_management_group"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "save_config"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "load_config"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "advanced_group"), page == 5);
@@ -1088,6 +1126,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "show_floating_window", false);
 	obs_data_set_default_int(settings, "floating_window_width", 640);
 	obs_data_set_default_int(settings, "floating_window_height", 480);
+	obs_data_set_default_bool(settings, "show_pid_debug_window", false);
+#endif
 
 	obs_data_set_default_int(settings, "mouse_config_select", 0);
 
@@ -1381,6 +1421,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	bool newShowFloatingWindow = obs_data_get_bool(settings, "show_floating_window");
 	int newFloatingWindowWidth = (int)obs_data_get_int(settings, "floating_window_width");
 	int newFloatingWindowHeight = (int)obs_data_get_int(settings, "floating_window_height");
+	bool newShowPidDebugWindow = obs_data_get_bool(settings, "show_pid_debug_window");
 
 	if (newShowFloatingWindow != tf->showFloatingWindow || 
 	    newFloatingWindowWidth != tf->floatingWindowWidth || 
@@ -1393,6 +1434,15 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			createFloatingWindow(tf.get());
 		} else {
 			destroyFloatingWindow(tf.get());
+		}
+	}
+
+	if (newShowPidDebugWindow != tf->showPidDebugWindow) {
+		tf->showPidDebugWindow = newShowPidDebugWindow;
+		if (tf->showPidDebugWindow) {
+			createPidDebugWindow(tf.get());
+		} else {
+			destroyPidDebugWindow(tf.get());
 		}
 	}
 
@@ -1551,6 +1601,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 
 	if (!tf->mouseController && hasEnabledConfig) {
 		tf->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI, "", 0);
+		setupPidDataCallback(tf.get());
 		obs_log(LOG_INFO, "Created mouse controller for multi-config mode");
 	}
 
@@ -2086,12 +2137,279 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 #endif
 }
 
+static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
+{
+	if (!filter || filter->pidHistory.empty()) {
+		return;
+	}
+	
+	std::lock_guard<std::mutex> lock(filter->pidHistoryMutex);
+	
+	int width = canvas.cols;
+	int height = canvas.rows;
+	int graphHeight = height / 4;
+	
+	canvas.setTo(cv::Scalar(30, 30, 30));
+	
+	for (int i = 0; i <= 4; i++) {
+		int y = i * graphHeight;
+		cv::line(canvas, cv::Point(0, y), cv::Point(width, y), cv::Scalar(60, 60, 60), 1);
+	}
+	
+	for (int i = 0; i < 4; i++) {
+		int y = i * graphHeight + graphHeight / 2;
+		cv::line(canvas, cv::Point(0, y), cv::Point(width, y), cv::Scalar(80, 80, 80), 1);
+	}
+	
+	float maxVelocity = 500.0f;
+	float maxError = 100.0f;
+	float maxOutput = 50.0f;
+	float maxKp = 1.0f;
+	float maxKi = 0.1f;
+	float maxKd = 0.1f;
+	
+	for (const auto &data : filter->pidHistory) {
+		maxVelocity = std::max(maxVelocity, std::max(std::abs(data.targetVelocityX), std::abs(data.targetVelocityY)));
+		maxError = std::max(maxError, std::max(std::abs(data.errorX), std::abs(data.errorY)));
+		maxOutput = std::max(maxOutput, std::max(std::abs(data.outputX), std::abs(data.outputY)));
+		maxKp = std::max(maxKp, std::abs(data.currentKp));
+		maxKi = std::max(maxKi, std::abs(data.currentKi));
+		maxKd = std::max(maxKd, std::abs(data.currentKd));
+	}
+	
+	auto drawCurveFromData = [&](int graphIndex, std::function<float(const yolo_detector_filter::PidDataPoint&)> getValue, float maxValue, const cv::Scalar &color) {
+		int baseY = graphIndex * graphHeight + graphHeight / 2;
+		float scale = (graphHeight / 2 - 10) / maxValue;
+		
+		std::vector<cv::Point> points;
+		int x = 0;
+		int step = std::max(1, width / static_cast<int>(filter->pidHistory.size()));
+		
+		for (const auto &data : filter->pidHistory) {
+			float value = getValue(data);
+			int y = baseY - static_cast<int>(value * scale);
+			y = std::max(graphIndex * graphHeight + 5, std::min(y, (graphIndex + 1) * graphHeight - 5));
+			points.push_back(cv::Point(x, y));
+			x += step;
+			if (x >= width) break;
+		}
+		
+		if (points.size() > 1) {
+			cv::polylines(canvas, points, false, color, 2);
+		}
+	};
+	
+	drawCurveFromData(0, [](const yolo_detector_filter::PidDataPoint &d) { return d.targetVelocityX; }, maxVelocity, cv::Scalar(0, 0, 255));
+	drawCurveFromData(0, [](const yolo_detector_filter::PidDataPoint &d) { return d.targetVelocityY; }, maxVelocity, cv::Scalar(0, 255, 0));
+	
+	drawCurveFromData(1, [](const yolo_detector_filter::PidDataPoint &d) { return d.errorX; }, maxError, cv::Scalar(0, 0, 255));
+	drawCurveFromData(1, [](const yolo_detector_filter::PidDataPoint &d) { return d.errorY; }, maxError, cv::Scalar(0, 255, 0));
+	
+	drawCurveFromData(2, [](const yolo_detector_filter::PidDataPoint &d) { return d.outputX; }, maxOutput, cv::Scalar(255, 0, 0));
+	drawCurveFromData(2, [](const yolo_detector_filter::PidDataPoint &d) { return d.outputY; }, maxOutput, cv::Scalar(0, 255, 255));
+	
+	drawCurveFromData(3, [](const yolo_detector_filter::PidDataPoint &d) { return d.currentKp * 10; }, maxKp * 10, cv::Scalar(0, 0, 255));
+	drawCurveFromData(3, [](const yolo_detector_filter::PidDataPoint &d) { return d.currentKi * 10; }, maxKi * 10, cv::Scalar(0, 255, 0));
+	drawCurveFromData(3, [](const yolo_detector_filter::PidDataPoint &d) { return d.currentKd * 10; }, maxKd * 10, cv::Scalar(255, 0, 0));
+	
+	cv::putText(canvas, "Target Vel X/Y", cv::Point(5, 15), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+	cv::putText(canvas, "Error X/Y", cv::Point(5, graphHeight + 15), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+	cv::putText(canvas, "Output X/Y", cv::Point(5, graphHeight * 2 + 15), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+	cv::putText(canvas, "Kp/Ki/Kd (x10)", cv::Point(5, graphHeight * 3 + 15), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+	
+	if (!filter->pidHistory.empty()) {
+		const auto &latest = filter->pidHistory.back();
+		char buf[128];
+		snprintf(buf, sizeof(buf), "vX:%.0f vY:%.0f | eX:%.1f eY:%.1f | Kp:%.3f Ki:%.4f Kd:%.4f", 
+				latest.targetVelocityX, latest.targetVelocityY,
+				latest.errorX, latest.errorY,
+				latest.currentKp, latest.currentKi, latest.currentKd);
+		cv::putText(canvas, buf, cv::Point(5, height - 10), cv::FONT_HERSHEY_SIMPLEX, 0.35, cv::Scalar(255, 255, 255), 1);
+	}
+}
+
 static void renderFloatingWindow(yolo_detector_filter *filter)
 {
 	if (!filter->floatingWindowHandle || filter->floatingWindowFrame.empty()) {
 		return;
 	}
 	InvalidateRect(filter->floatingWindowHandle, NULL, FALSE);
+}
+
+static void setupPidDataCallback(yolo_detector_filter *filter)
+{
+	if (!filter || !filter->mouseController) {
+		return;
+	}
+	
+	filter->mouseController->setPidDataCallback([filter](const PidDebugData &data) {
+		std::lock_guard<std::mutex> lock(filter->pidHistoryMutex);
+		
+		yolo_detector_filter::PidDataPoint point;
+		point.errorX = data.errorX;
+		point.errorY = data.errorY;
+		point.outputX = data.outputX;
+		point.outputY = data.outputY;
+		point.targetX = data.targetX;
+		point.targetY = data.targetY;
+		point.targetVelocityX = data.targetVelocityX;
+		point.targetVelocityY = data.targetVelocityY;
+		point.currentKp = data.currentKp;
+		point.currentKi = data.currentKi;
+		point.currentKd = data.currentKd;
+		point.timestamp = std::chrono::steady_clock::now();
+		
+		filter->pidHistory.push_back(point);
+		
+		while (filter->pidHistory.size() > filter->PID_HISTORY_SIZE) {
+			filter->pidHistory.pop_front();
+		}
+	});
+}
+
+static yolo_detector_filter *g_pidDebugWindowFilter = nullptr;
+
+static LRESULT CALLBACK PidDebugWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	yolo_detector_filter *filter = g_pidDebugWindowFilter;
+
+	switch (msg) {
+	case WM_PAINT: {
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hwnd, &ps);
+		
+		if (filter) {
+			std::lock_guard<std::mutex> lock(filter->pidDebugWindowMutex);
+			if (!filter->pidDebugWindowFrame.empty()) {
+				BITMAPINFO bmi = {};
+				bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+				bmi.bmiHeader.biWidth = filter->pidDebugWindowFrame.cols;
+				bmi.bmiHeader.biHeight = -filter->pidDebugWindowFrame.rows;
+				bmi.bmiHeader.biPlanes = 1;
+				bmi.bmiHeader.biBitCount = 24;
+				bmi.bmiHeader.biCompression = BI_RGB;
+				SetDIBitsToDevice(hdc, 0, 0, filter->pidDebugWindowFrame.cols, filter->pidDebugWindowFrame.rows,
+					0, 0, 0, filter->pidDebugWindowFrame.rows, filter->pidDebugWindowFrame.data, &bmi, DIB_RGB_COLORS);
+			}
+		}
+		
+		EndPaint(hwnd, &ps);
+		break;
+	}
+	case WM_LBUTTONDOWN: {
+		if (filter) {
+			filter->pidDebugWindowDragging = true;
+			POINT pt;
+			GetCursorPos(&pt);
+			filter->pidDebugWindowDragOffset.x = pt.x - filter->pidDebugWindowX;
+			filter->pidDebugWindowDragOffset.y = pt.y - filter->pidDebugWindowY;
+			SetCapture(hwnd);
+		}
+		break;
+	}
+	case WM_LBUTTONUP: {
+		if (filter) {
+			filter->pidDebugWindowDragging = false;
+			ReleaseCapture();
+		}
+		break;
+	}
+	case WM_MOUSEMOVE: {
+		if (filter && filter->pidDebugWindowDragging) {
+			POINT pt;
+			GetCursorPos(&pt);
+			SetWindowPos(hwnd, NULL, pt.x - filter->pidDebugWindowDragOffset.x, pt.y - filter->pidDebugWindowDragOffset.y,
+				0, 0, SWP_NOSIZE | SWP_NOZORDER);
+			filter->pidDebugWindowX = pt.x - filter->pidDebugWindowDragOffset.x;
+			filter->pidDebugWindowY = pt.y - filter->pidDebugWindowDragOffset.y;
+		}
+		break;
+	}
+	case WM_CLOSE: {
+		if (filter) {
+			filter->showPidDebugWindow = false;
+			destroyPidDebugWindow(filter);
+			obs_data_t *settings = obs_source_get_settings(filter->source);
+			if (settings) {
+				obs_data_set_bool(settings, "show_pid_debug_window", false);
+				obs_data_release(settings);
+			}
+		}
+		break;
+	}
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		break;
+	default:
+		return DefWindowProc(hwnd, msg, wParam, lParam);
+	}
+	return 0;
+}
+
+static void createPidDebugWindow(yolo_detector_filter *filter)
+{
+	if (filter->pidDebugWindowHandle) {
+		return;
+	}
+
+	g_pidDebugWindowFilter = filter;
+
+	WNDCLASS wc = {};
+	wc.lpfnWndProc = PidDebugWindowProc;
+	wc.hInstance = GetModuleHandle(NULL);
+	wc.lpszClassName = L"YOLODetectorPidDebugWindow";
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+
+	RegisterClass(&wc);
+
+	int x = filter->pidDebugWindowX;
+	int y = filter->pidDebugWindowY;
+	if (x == 0 && y == 0) {
+		x = GetSystemMetrics(SM_CXSCREEN) / 2 - filter->pidDebugWindowWidth / 2;
+		y = GetSystemMetrics(SM_CYSCREEN) / 2 - filter->pidDebugWindowHeight / 2 + 100;
+	}
+
+	filter->pidDebugWindowHandle = CreateWindowEx(
+		WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+		L"YOLODetectorPidDebugWindow",
+		L"PID Debug",
+		WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+		x, y,
+		filter->pidDebugWindowWidth, filter->pidDebugWindowHeight,
+		NULL, NULL, GetModuleHandle(NULL), filter
+	);
+
+	filter->pidDebugWindowX = x;
+	filter->pidDebugWindowY = y;
+	filter->pidDebugWindowDragging = false;
+
+	obs_log(LOG_INFO, "[YOLO Detector] PID debug window created");
+}
+
+static void destroyPidDebugWindow(yolo_detector_filter *filter)
+{
+	if (filter->pidDebugWindowHandle) {
+		DestroyWindow(filter->pidDebugWindowHandle);
+		filter->pidDebugWindowHandle = nullptr;
+		g_pidDebugWindowFilter = nullptr;
+		obs_log(LOG_INFO, "[YOLO Detector] PID debug window destroyed");
+	}
+}
+
+static void updatePidDebugWindow(yolo_detector_filter *filter)
+{
+	if (!filter->pidDebugWindowHandle) {
+		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(filter->pidDebugWindowMutex);
+		filter->pidDebugWindowFrame.create(filter->pidDebugWindowHeight, filter->pidDebugWindowWidth, CV_8UC3);
+		drawPidDebugGraph(filter, filter->pidDebugWindowFrame);
+	}
+
+	InvalidateRect(filter->pidDebugWindowHandle, NULL, FALSE);
 }
 #endif
 
@@ -2677,11 +2995,20 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->floatingWindowDragging = false;
 		instance->floatingWindowHandle = nullptr;
 
+		instance->showPidDebugWindow = false;
+		instance->pidDebugWindowHandle = nullptr;
+		instance->pidDebugWindowWidth = 600;
+		instance->pidDebugWindowHeight = 400;
+		instance->pidDebugWindowX = 0;
+		instance->pidDebugWindowY = 0;
+		instance->pidDebugWindowDragging = false;
+
 		for (int i = 0; i < 5; i++) {
 			instance->mouseConfigs[i] = yolo_detector_filter::MouseControlConfig();
 		}
 		instance->currentConfigIndex = 0;
 		instance->mouseController = MouseControllerFactory::createController(ControllerType::WindowsAPI, "", 0);
+		setupPidDataCallback(instance.get());
 
 		instance->configName = "";
 		instance->configList = "";
@@ -2857,6 +3184,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		ControllerType newType = static_cast<ControllerType>(cfg.controllerType);
 		if (!tf->mouseController || tf->mouseController->getControllerType() != newType) {
 			tf->mouseController = MouseControllerFactory::createController(newType, cfg.makcuPort, cfg.makcuBaudRate);
+			setupPidDataCallback(tf);
 		}
 
 		MouseControllerConfig mcConfig;
@@ -3342,6 +3670,10 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				updateFloatingWindowFrame(tf.get(), croppedFrame);
 			}
 			renderFloatingWindow(tf.get());
+		}
+
+		if (tf->showPidDebugWindow && tf->pidDebugWindowHandle) {
+			updatePidDebugWindow(tf.get());
 		}
 	}
 #endif

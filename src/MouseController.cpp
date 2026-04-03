@@ -38,6 +38,10 @@ MouseController::MouseController()
     , stdFilteredDeltaErrorY(0.0f)
     , stdPreviousMoveX(0.0f)
     , stdPreviousMoveY(0.0f)
+    , previousTargetX(0.0f)
+    , previousTargetY(0.0f)
+    , targetVelocityX(0.0f)
+    , targetVelocityY(0.0f)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
     , lastTickTime(std::chrono::steady_clock::now())
@@ -194,6 +198,14 @@ void MouseController::tick()
     float yOffsetPixels = config.targetYOffset * 0.01f * target->height * frameHeight;
     float targetPixelY = target->centerY * frameHeight - yOffsetPixels;
 
+    // 计算目标速度（像素/帧）
+    if (deltaTime > 0.001f) {
+        targetVelocityX = (targetPixelX - previousTargetX) / deltaTime;
+        targetVelocityY = (targetPixelY - previousTargetY) / deltaTime;
+    }
+    previousTargetX = targetPixelX;
+    previousTargetY = targetPixelY;
+
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
 
@@ -273,6 +285,23 @@ void MouseController::tick()
             stdLogCounter = 0;
             blog(LOG_INFO, "[标准PID] errorX=%.1f errorY=%.1f | rawMoveX=%.1f rawMoveY=%.1f | moveX=%.1f moveY=%.1f | stdKp=%.2f stdKd=%.3f",
                  errorX, errorY, rawMoveX, rawMoveY, moveX, moveY, config.stdKp, config.stdKd);
+        }
+        
+        // 记录PID调试数据
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.stdKp;
+            data.currentKi = config.stdKi;
+            data.currentKd = config.stdKd;
+            pidDataCallback_(data);
         }
         
         // 重置高级PID状态变量，避免算法切换时状态不一致
@@ -357,6 +386,23 @@ void MouseController::tick()
                  deltaErrorX, deltaErrorY, filteredDeltaErrorX, filteredDeltaErrorY);
             blog(LOG_INFO, "[高级PID] integralX=%.1f integralY=%.1f | pidI=%.3f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
                  integralTermX, integralTermY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
+        }
+
+        // 记录PID调试数据
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = dynamicP;
+            data.currentKi = config.pidI;
+            data.currentKd = config.pidD;
+            pidDataCallback_(data);
         }
 
         // 更新高级PID状态
