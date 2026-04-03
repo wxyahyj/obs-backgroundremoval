@@ -146,7 +146,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::unordered_map<ImageBufferKey, std::vector<cv::Mat>, ImageBufferKeyHash> imageBufferPool;
 	std::vector<std::vector<Detection>> detectionBufferPool;
 	std::mutex bufferPoolMutex;
-	const int MAX_BUFFER_POOL_SIZE = 10;
+	const int MAX_BUFFER_POOL_SIZE = 3;
 	const int THREAD_POOL_SIZE = 4;
 
 #ifdef _WIN32

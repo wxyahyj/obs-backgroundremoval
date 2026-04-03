@@ -116,6 +116,10 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         if (currentUseGPU != "cpu") {
             sessionOptions.DisableMemPattern();
             sessionOptions.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+            
+            // Arena配置 - 减少内存预分配
+            sessionOptions.AddConfigEntry("session.arena_extend_strategy", "kSameAsRequested");
+            sessionOptions.AddConfigEntry("memory.enable_memory_arena_shrinkage", "1");
         } else {
             sessionOptions.SetInterOpNumThreads(numThreads);
             sessionOptions.SetIntraOpNumThreads(numThreads);
