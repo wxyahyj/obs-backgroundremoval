@@ -106,8 +106,6 @@ private:
     std::unique_ptr<Ort::Env> env_;
     std::unique_ptr<Ort::Session> session_;
     std::unique_ptr<Ort::IoBinding> ioBinding_;
-    Ort::MemoryInfo cudaMemoryInfo_;
-    Ort::Allocator cudaAllocator_;
     std::vector<Ort::AllocatedStringPtr> inputNames_;
     std::vector<Ort::AllocatedStringPtr> outputNames_;
     std::vector<std::vector<int64_t>> inputDims_;

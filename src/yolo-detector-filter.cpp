@@ -2232,6 +2232,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		int cropY = 0;
 		int cropWidth = 0;
 		int cropHeight = 0;
+		int fullWidth = 0;
+		int fullHeight = 0;
 
 		{
 			std::unique_lock<std::mutex> lock(filter->inputBGRALock, std::try_to_lock);
@@ -2242,8 +2244,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				continue;
 			}
 			
-			int fullWidth = filter->inputBGRA.cols;
-			int fullHeight = filter->inputBGRA.rows;
+			fullWidth = filter->inputBGRA.cols;
+			fullHeight = filter->inputBGRA.rows;
 
 			if (filter->useRegion) {
 				cropX = std::max(0, filter->regionX);
