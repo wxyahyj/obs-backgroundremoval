@@ -1129,6 +1129,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "show_pid_debug_window", false);
 #endif
 
+#ifdef _WIN32
 	obs_data_set_default_int(settings, "mouse_config_select", 0);
 
 	for (int i = 0; i < 5; i++) {
