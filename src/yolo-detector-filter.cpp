@@ -1037,6 +1037,10 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "show_fov2"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "fov_radius2"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "fov_color2"), page == 1);
+	
+	// 动态FOV参数只在FOV设置页面显示
+	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_shrink_percent"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_transition_time"), page == 1);
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和卡尔曼滤波器页面(6)显示
@@ -1131,7 +1135,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "fov_color2", 0xFF00FF00);
     
     // 动态FOV参数
-    obs_data_set_default_double(settings, "dynamic_fov_shrink_percent", 0.5);
+    obs_data_set_default_int(settings, "dynamic_fov_shrink_percent", 50);
     obs_data_set_default_int(settings, "dynamic_fov_transition_time", 200);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
@@ -1436,7 +1440,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->fovColor2 = (uint32_t)obs_data_get_int(settings, "fov_color2");
 	
 	// 动态FOV参数
-	tf->dynamicFovShrinkPercent = (float)obs_data_get_double(settings, "dynamic_fov_shrink_percent");
+	tf->dynamicFovShrinkPercent = (float)obs_data_get_int(settings, "dynamic_fov_shrink_percent") / 100.0f;
 	tf->dynamicFovTransitionTime = (float)obs_data_get_int(settings, "dynamic_fov_transition_time");
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
@@ -3037,6 +3041,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->pidDebugWindowDragging = false;
 
 		// 动态FOV参数初始化
+		instance->fovRadius = 0;  // 初始化为0，确保第一次update时触发更新
 		instance->dynamicFovShrinkPercent = 0.5f;
 		instance->dynamicFovTransitionTime = 200.0f;
 		instance->currentFovRadius = 100.0f;  // 将在update中设置正确值
@@ -3054,6 +3059,10 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->configName = "";
 		instance->configList = "";
 #endif
+
+		// 强制关闭悬浮窗（每次启动OBS时）
+		obs_data_set_bool(settings, "show_floating_window", false);
+		obs_data_set_bool(settings, "show_pid_debug_window", false);
 
 		// Create pointer to shared_ptr for the update call
 		auto ptr = new std::shared_ptr<yolo_detector_filter>(instance);
