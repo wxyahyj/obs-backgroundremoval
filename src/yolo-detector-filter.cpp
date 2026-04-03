@@ -194,14 +194,23 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	static const int MAX_CONFIGS = 5;
 
-	// 全局标准PID参数（独立于各配置）
-	int algorithmTypeGlobal;  // 0=高级PID, 1=标准PID
-	float stdKpGlobal;
-	float stdKiGlobal;
-	float stdKdGlobal;
-	float stdOutputLimitGlobal;
-	float stdDeadZoneGlobal;
-	float stdIntegralLimitGlobal;
+    // 全局标准PID参数（独立于各配置）
+    int algorithmTypeGlobal;  // 0=高级PID, 1=标准PID
+    float stdKpGlobal;
+    float stdKiGlobal;
+    float stdKdGlobal;
+    float stdOutputLimitGlobal;
+    float stdDeadZoneGlobal;
+    float stdIntegralLimitGlobal;
+    
+    // 动态FOV参数
+    float dynamicFovShrinkPercent;      // 缩放百分比 (0.1-1.0)
+    float dynamicFovTransitionTime;     // 过渡时间（毫秒）
+    float currentFovRadius;             // 当前实际FOV半径
+    std::chrono::steady_clock::time_point fovTransitionStartTime;
+    bool isFovTransitioning;
+    float fovTransitionStartRadius;
+    float fovTransitionEndRadius;
 	float stdIntegralDeadzoneGlobal;
 	float stdIntegralThresholdGlobal;
 	float stdIntegralRateGlobal;
@@ -527,7 +536,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *fovRadius2Prop = obs_properties_add_int_slider(props, "fov_radius2", "第二个FOV半径", 1, 200, 1);
 	obs_property_set_long_description(fovRadius2Prop, "第二个FOV半径（像素）");
 	obs_property_t *fovColor2Prop = obs_properties_add_color(props, "fov_color2", "第二个FOV颜色");
-	obs_property_set_long_description(fovColor2Prop, "第二个FOV颜色");
+    obs_property_set_long_description(fovColor2Prop, "第二个FOV颜色");
+
+    // 动态FOV参数
+    obs_property_t *dynamicFovShrinkPercentProp = obs_properties_add_int_slider(props, "dynamic_fov_shrink_percent", "动态FOV缩放百分比", 10, 100, 1);
+    obs_property_set_long_description(dynamicFovShrinkPercentProp, "动态FOV缩放到原FOV的百分比（例如：50表示缩小到50%)");
+    
+    obs_property_t *dynamicFovTransitionTimeProp = obs_properties_add_int_slider(props, "dynamic_fov_transition_time", "动态FOV过渡时间", 0, 1000, 10);
+    obs_property_set_long_description(dynamicFovTransitionTimeProp, "动态FOV过渡动画时间（毫秒）， 0表示立即切换，100表示线性过渡， 100-500表示缓动过渡");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1110,11 +1126,15 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 
 	// 第二个FOV默认值
 	obs_data_set_default_bool(settings, "use_dynamic_fov", false);
-	obs_data_set_default_bool(settings, "show_fov2", true);
-	obs_data_set_default_int(settings, "fov_radius2", 50);
-	obs_data_set_default_int(settings, "fov_color2", 0xFF00FF00);
-
-	obs_data_set_default_double(settings, "label_font_scale", 0.35);
+    obs_data_set_default_bool(settings, "show_fov2", true);
+    obs_data_set_default_int(settings, "fov_radius2", 50);
+    obs_data_set_default_int(settings, "fov_color2", 0xFF00FF00);
+    
+    // 动态FOV参数
+    obs_data_set_default_double(settings, "dynamic_fov_shrink_percent", 0.5);
+    obs_data_set_default_int(settings, "dynamic_fov_transition_time", 200);
+    
+    obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
 	obs_data_set_default_int(settings, "region_x", 0);
 	obs_data_set_default_int(settings, "region_y", 0);
@@ -1391,7 +1411,15 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->bboxColor = (uint32_t)obs_data_get_int(settings, "bbox_color");
 	
 	tf->showFOV = obs_data_get_bool(settings, "show_fov");
-	tf->fovRadius = (int)obs_data_get_int(settings, "fov_radius");
+	int newFovRadius = (int)obs_data_get_int(settings, "fov_radius");
+	bool fovRadiusChanged = (newFovRadius != tf->fovRadius);
+	tf->fovRadius = newFovRadius;
+	
+	// 如果FOV半径改变且不在过渡中，更新当前FOV半径
+	if (fovRadiusChanged && !tf->isFovTransitioning) {
+		tf->currentFovRadius = static_cast<float>(tf->fovRadius);
+	}
+	
 	tf->showFOVCircle = obs_data_get_bool(settings, "show_fov_circle");
 	tf->showFOVCross = obs_data_get_bool(settings, "show_fov_cross");
 	tf->fovCrossLineScale = (int)obs_data_get_int(settings, "fov_cross_line_scale");
@@ -1406,6 +1434,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	int requestedFOV2 = (int)obs_data_get_int(settings, "fov_radius2");
 	tf->fovRadius2 = std::min(requestedFOV2, tf->fovRadius);
 	tf->fovColor2 = (uint32_t)obs_data_get_int(settings, "fov_color2");
+	
+	// 动态FOV参数
+	tf->dynamicFovShrinkPercent = (float)obs_data_get_double(settings, "dynamic_fov_shrink_percent");
+	tf->dynamicFovTransitionTime = (float)obs_data_get_int(settings, "dynamic_fov_transition_time");
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -3004,6 +3036,14 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->pidDebugWindowY = 0;
 		instance->pidDebugWindowDragging = false;
 
+		// 动态FOV参数初始化
+		instance->dynamicFovShrinkPercent = 0.5f;
+		instance->dynamicFovTransitionTime = 200.0f;
+		instance->currentFovRadius = 100.0f;  // 将在update中设置正确值
+		instance->isFovTransitioning = false;
+		instance->fovTransitionStartRadius = 100.0f;
+		instance->fovTransitionEndRadius = 100.0f;
+
 		for (int i = 0; i < 5; i++) {
 			instance->mouseConfigs[i] = yolo_detector_filter::MouseControlConfig();
 		}
@@ -3191,7 +3231,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		MouseControllerConfig mcConfig;
 		mcConfig.enableMouseControl = true;
 		mcConfig.hotkeyVirtualKey = cfg.hotkey;
-		mcConfig.fovRadiusPixels = tf->useDynamicFOV && tf->isInFOV2Mode ? tf->fovRadius2 : tf->fovRadius;
+		mcConfig.fovRadiusPixels = tf->useDynamicFOV ? static_cast<int>(tf->currentFovRadius) : tf->fovRadius;
 		mcConfig.pidPMin = cfg.pMin;
 		mcConfig.pidPMax = cfg.pMax;
 		mcConfig.pidPSlope = cfg.pSlope;
@@ -3271,6 +3311,56 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
+	// 缓动函数 - ease-out cubic
+	auto easeOutCubic = [](float t) -> float {
+		return 1.0f - powf(1.0f - t, 3.0f);
+	};
+
+	// 更新FOV过渡
+	auto updateFovTransition = [&tf, &easeOutCubic]() {
+		if (!tf->isFovTransitioning) {
+			return;
+		}
+		
+		auto now = std::chrono::steady_clock::now();
+		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - tf->fovTransitionStartTime).count();
+		float transitionTime = tf->dynamicFovTransitionTime;
+		
+		if (transitionTime <= 0.0f) {
+			// 立即切换
+			tf->currentFovRadius = tf->fovTransitionEndRadius;
+			tf->isFovTransitioning = false;
+			return;
+		}
+		
+		float progress = static_cast<float>(elapsed) / transitionTime;
+		if (progress >= 1.0f) {
+			// 过渡完成
+			tf->currentFovRadius = tf->fovTransitionEndRadius;
+			tf->isFovTransitioning = false;
+		} else {
+			// 使用缓动函数计算当前半径
+			float easedProgress = easeOutCubic(progress);
+			tf->currentFovRadius = tf->fovTransitionStartRadius + 
+				(tf->fovTransitionEndRadius - tf->fovTransitionStartRadius) * easedProgress;
+		}
+	};
+
+	// 开始FOV过渡
+	auto startFovTransition = [&tf](float targetRadius) {
+		if (tf->currentFovRadius == targetRadius && !tf->isFovTransitioning) {
+			return;  // 已经是目标半径，无需过渡
+		}
+		
+		tf->fovTransitionStartRadius = tf->currentFovRadius;
+		tf->fovTransitionEndRadius = targetRadius;
+		tf->fovTransitionStartTime = std::chrono::steady_clock::now();
+		tf->isFovTransitioning = true;
+	};
+
+	// 更新FOV过渡
+	updateFovTransition();
+
 	// 动态FOV切换逻辑
 	if (tf->useDynamicFOV) {
 		std::vector<Detection> detectionsCopy;
@@ -3301,17 +3391,20 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		}
 
 		// FOV切换逻辑
+		float shrinkedRadius = static_cast<float>(tf->fovRadius) * tf->dynamicFovShrinkPercent;
 		if (!tf->isInFOV2Mode) {
 			// 模式1：使用第一个FOV检测
 			if (hasTargetInCurrentFOV) {
-				// 检测到目标，切换到第二个FOV模式
+				// 检测到目标，切换到缩小的FOV模式
 				tf->isInFOV2Mode = true;
+				startFovTransition(shrinkedRadius);
 			}
 		} else {
-			// 模式2：使用第二个FOV锁敌
+			// 模式2：使用缩小的FOV锁敌
 			if (!hasTargetInCurrentFOV) {
-				// 第二个FOV内没有目标，切换回第一个FOV模式
+				// 缩小的FOV内没有目标，切换回原始FOV模式
 				tf->isInFOV2Mode = false;
+				startFovTransition(static_cast<float>(tf->fovRadius));
 			}
 		}
 
@@ -3548,7 +3641,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			if (tf->showFOV) {
 				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
 				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
-				float fovRadius = static_cast<float>(tf->fovRadius);
+				// 使用动态FOV半径（如果启用）
+				float fovRadius = tf->useDynamicFOV ? tf->currentFovRadius : static_cast<float>(tf->fovRadius);
 				float crossLineLength = static_cast<float>(tf->fovCrossLineScale);
 				
 				float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
@@ -3573,22 +3667,6 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 						static_cast<int>(fovRadius),
 						fovColor, tf->fovCircleThickness);
 				}
-			}
-
-			if (tf->showFOV2 && tf->useDynamicFOV) {
-				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
-				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
-				float fovRadius2 = static_cast<float>(tf->fovRadius2);
-
-				float r2 = ((tf->fovColor2 >> 16) & 0xFF) / 255.0f;
-				float g2 = ((tf->fovColor2 >> 8) & 0xFF) / 255.0f;
-				float b2 = (tf->fovColor2 & 0xFF) / 255.0f;
-				cv::Scalar fovColor2(b2 * 255, g2 * 255, r2 * 255, 255);
-
-				cv::circle(croppedFrame, 
-					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
-					static_cast<int>(fovRadius2),
-					fovColor2, 2);
 			}
 
 			// 绘制从中心点到目标的连接线
