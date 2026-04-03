@@ -2268,9 +2268,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			}
 		}
 
-		int fullWidth = filter->inputBGRA.cols;
-		int fullHeight = filter->inputBGRA.rows;
-
 		auto startTime = std::chrono::high_resolution_clock::now();
 
 		// 记录开始时间

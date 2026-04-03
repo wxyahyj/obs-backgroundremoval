@@ -45,6 +45,8 @@ ModelYOLO::ModelYOLO(Version version)
       inputWidth_(640),
       inputHeight_(640),
       numClasses_(80),
+      cudaMemoryInfo_(nullptr),
+      cudaAllocator_(nullptr),
       inputBufferSize_(0),
       useIOBinding_(false),
       inferenceThreadRunning_(false)
