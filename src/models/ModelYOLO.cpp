@@ -599,7 +599,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         if (targetClassId_ >= 0) {
             isTargetClass = (maxClassId == targetClassId_);
         } else if (!targetClasses_.empty()) {
-            isTargetClass = (targetClasses_.count(maxClassId) > 0);
+            isTargetClass = targetClasses_.count(maxClassId);
         } else {
             isTargetClass = true;
         }
@@ -691,7 +691,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
         if (targetClassId_ >= 0) {
             isTargetClass = (maxClassId == targetClassId_);
         } else if (!targetClasses_.empty()) {
-            isTargetClass = (targetClasses_.count(maxClassId) > 0);
+            isTargetClass = targetClasses_.count(maxClassId);
         } else {
             isTargetClass = true;
         }
