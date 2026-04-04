@@ -11,7 +11,7 @@ KalmanFilter::KalmanFilter()
     , stateTransition(Eigen::Matrix4f::Identity())
     , measurementMatrix(Eigen::Matrix<float, 2, 4>::Zero())
     , dt(0.016f)
-    , baseProcessNoise(1.0f)
+    , baseProcessNoise(0.01f)
     , baseMeasurementNoise(1.0f)
     , confidenceScale(1.0f)
 {
