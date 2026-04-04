@@ -79,6 +79,11 @@ void MouseController::updateConfig(const MouseControllerConfig& newConfig)
                           config.autoTriggerFireDuration != newConfig.autoTriggerFireDuration ||
                           config.autoTriggerInterval != newConfig.autoTriggerInterval);
     config = newConfig;
+    
+    // 参数范围验证
+    config.bezierCurvature = std::clamp(config.bezierCurvature, 0.0f, 1.0f);
+    config.bezierRandomness = std::clamp(config.bezierRandomness, 0.0f, 0.5f);
+    
     if (configChanged) {
         obs_log(LOG_INFO, "[MouseController] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
                 config.enableMouseControl, config.autoTriggerEnabled, config.autoTriggerFireDuration, config.autoTriggerInterval);
