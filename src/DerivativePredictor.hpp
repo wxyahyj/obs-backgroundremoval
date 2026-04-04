@@ -22,6 +22,8 @@ public:
     void update(float errorX, float errorY, float previousMoveX, float previousMoveY, float deltaTime);
     void predict(float predictionTime, float& predictedX, float& predictedY);
     void reset();
+    void setSmoothFactors(float velocitySmooth, float accelerationSmooth);
+    void setMaxPredictionTime(float maxTime);
 };
 
 #endif

@@ -81,6 +81,10 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     config.kalmanPredictionWeightX = std::clamp(config.kalmanPredictionWeightX, 0.0f, 1.0f);
     config.kalmanPredictionWeightY = std::clamp(config.kalmanPredictionWeightY, 0.0f, 1.0f);
     
+    // 更新DerivativePredictor参数
+    predictor.setSmoothFactors(config.velocitySmoothFactor, config.accelerationSmoothFactor);
+    predictor.setMaxPredictionTime(config.maxPredictionTime);
+    
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
                 getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 

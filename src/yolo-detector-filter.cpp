@@ -289,10 +289,13 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float integralRate;
 		float pGainRampInitialScale;
 		float pGainRampDuration;
+		// DerivativePredictor参数
+		bool useDerivativePredictor;
 		float predictionWeightX;
 		float predictionWeightY;
-		// DerivativePredictor开关
-		bool useDerivativePredictor;
+		float velocitySmoothFactor;
+		float accelerationSmoothFactor;
+		float maxPredictionTime;
 		// 持续自瞄和自动压枪参数
 		bool continuousAimEnabled;
 		bool autoRecoilControlEnabled;
@@ -370,6 +373,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			predictionWeightX = 0.5f;
 			predictionWeightY = 0.1f;
 			useDerivativePredictor = true;
+			velocitySmoothFactor = 0.15f;
+			accelerationSmoothFactor = 0.15f;
+			maxPredictionTime = 0.1f;
 			// 持续自瞄和自动压枪默认值
 			continuousAimEnabled = false;
 			autoRecoilControlEnabled = false;
@@ -452,6 +458,7 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
+static void setPredictorPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 
 obs_properties_t *yolo_detector_filter_properties(void *data)
 {
@@ -469,8 +476,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "追踪与高级", 5);
 	obs_property_list_add_int(pageList, "卡尔曼滤波器", 6);
 	obs_property_list_add_int(pageList, "贝塞尔曲线移动", 7);
-	obs_property_list_add_int(pageList, "标准PID配置", 8);
-	obs_property_list_add_int(pageList, "预测器配置", 9);
+	obs_property_list_add_int(pageList, "预测器配置", 8);
+	obs_property_list_add_int(pageList, "标准PID配置", 9);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -806,7 +813,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
 		obs_property_t *kalmanConfidenceScaleProp = obs_properties_add_float_slider(props, propName, "置信度缩放", 0.1f, 5.0f, 0.1f);
 		obs_property_set_long_description(kalmanConfidenceScaleProp, "置信度缩放因子，用于根据检测置信度动态调整测量噪声。值越大，高置信度检测对滤波器的影响越大。建议范围：0.5-2.0");
+	}
+
+	obs_properties_add_group(props, "predictor_group", "预测器配置", OBS_GROUP_NORMAL, nullptr);
+	
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
 		
+		// 卡尔曼预测权重
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", i);
 		obs_property_t *kalmanPredWeightXProp = obs_properties_add_float_slider(props, propName, "卡尔曼预测权重X", 0.0f, 1.0f, 0.05f);
 		obs_property_set_long_description(kalmanPredWeightXProp, "卡尔曼预测在X轴的融合权重。值越大预测偏移影响越大，建议0.1-0.3");
@@ -827,6 +841,18 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "导数预测权重Y", 0.0f, 1.0f, 0.1f);
 		obs_property_set_long_description(predictionWeightYProp, "导数预测器在Y轴的融合权重，值越大预测效果越强");
+		
+		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
+		obs_property_t *velSmoothProp = obs_properties_add_float_slider(props, propName, "速度平滑系数", 0.01f, 0.5f, 0.01f);
+		obs_property_set_long_description(velSmoothProp, "速度的指数平滑系数，值越大响应越快但噪声越大，建议0.1-0.3");
+		
+		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
+		obs_property_t *accSmoothProp = obs_properties_add_float_slider(props, propName, "加速度平滑系数", 0.01f, 0.5f, 0.01f);
+		obs_property_set_long_description(accSmoothProp, "加速度的指数平滑系数，值越大响应越快但噪声越大，建议0.1-0.3");
+		
+		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
+		obs_property_t *maxPredTimeProp = obs_properties_add_float_slider(props, propName, "最大预测时间(秒)", 0.01f, 0.3f, 0.01f);
+		obs_property_set_long_description(maxPredTimeProp, "预测的最大时间范围，值越大预测越远但误差越大，建议0.05-0.15");
 	}
 
 	obs_properties_add_group(props, "bezier_movement_group", "贝塞尔曲线移动", OBS_GROUP_NORMAL, nullptr);
@@ -1015,17 +1041,6 @@ static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int config
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	// DerivativePredictor参数
-	snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 // 设置贝塞尔曲线移动页面的控件可见性
@@ -1038,6 +1053,32 @@ static void setBezierMovementPropertiesVisible(obs_properties_t *props, int conf
 	snprintf(propName, sizeof(propName), "bezier_curvature_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "bezier_randomness_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
+
+// 设置预测器配置页面的控件可见性
+static void setPredictorPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+{
+	char propName[64];
+
+	// 卡尔曼预测权重
+	snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// DerivativePredictor参数
+	snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// 平滑系数和预测时间
+	snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "max_prediction_time_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1157,8 +1198,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_line_width"), page == 1);
 
 #ifdef _WIN32
-	// 配置选择器在鼠标控制页面(2,3,4)、卡尔曼滤波器页面(6)和贝塞尔曲线页面(8)显示
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
+	// 配置选择器在鼠标控制页面(2,3,4)、卡尔曼滤波器页面(6)、贝塞尔曲线页面(7)和预测器配置页面(8)显示
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7 || page == 8);
 
 	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
@@ -1169,6 +1210,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 7);
+		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 8);
 	}
 
 	// 测试连接按钮只在基础页面显示
@@ -1198,21 +1240,24 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 页面7: 贝塞尔曲线移动
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 7);
 
-	// 页面8: 标准PID配置
-	obs_property_set_visible(obs_properties_get(props, "std_pid_group"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_kp_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_ki_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_kd_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_output_limit_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_dead_zone_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_limit_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_smoothing_x_global"), page == 8);
-	obs_property_set_visible(obs_properties_get(props, "std_smoothing_y_global"), page == 8);
+	// 页面8: 预测器配置
+	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 8);
+
+	// 页面9: 标准PID配置
+	obs_property_set_visible(obs_properties_get(props, "std_pid_group"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_kp_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_ki_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_kd_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_output_limit_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_dead_zone_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_limit_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_smoothing_x_global"), page == 9);
+	obs_property_set_visible(obs_properties_get(props, "std_smoothing_y_global"), page == 9);
 #else
 	(void)page;
 #endif
@@ -1412,6 +1457,12 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
 		obs_data_set_default_double(settings, propName, 0.5);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
+		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
+		obs_data_set_default_double(settings, propName, 0.15);
+		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
+		obs_data_set_default_double(settings, propName, 0.15);
+		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 		// 贝塞尔曲线移动参数默认值
 		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
@@ -1770,6 +1821,12 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
+		tf->mouseConfigs[i].velocitySmoothFactor = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
+		tf->mouseConfigs[i].accelerationSmoothFactor = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
+		tf->mouseConfigs[i].maxPredictionTime = (float)obs_data_get_double(settings, propName);
 		// 贝塞尔曲线移动参数
 		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
 		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);

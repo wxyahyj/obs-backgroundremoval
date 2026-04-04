@@ -96,6 +96,9 @@ struct MouseControllerConfig {
     bool useDerivativePredictor = true;    // 是否启用导数预测器
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
+    float velocitySmoothFactor = 0.15f;    // 速度平滑系数
+    float accelerationSmoothFactor = 0.15f; // 加速度平滑系数
+    float maxPredictionTime = 0.1f;        // 最大预测时间(秒)
 
     // 卡尔曼滤波器配置
     bool useKalmanFilter = true;           // 是否启用卡尔曼滤波

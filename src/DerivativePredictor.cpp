@@ -87,4 +87,15 @@ void DerivativePredictor::reset()
     previousMoveY = 0.0f;
 }
 
+void DerivativePredictor::setSmoothFactors(float velocitySmooth, float accelerationSmooth)
+{
+    velocitySmoothFactor = velocitySmooth;
+    accelerationSmoothFactor = accelerationSmooth;
+}
+
+void DerivativePredictor::setMaxPredictionTime(float maxTime)
+{
+    maxPredictionTime = maxTime;
+}
+
 #endif
