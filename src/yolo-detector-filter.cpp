@@ -28,6 +28,7 @@
 #include <sstream>
 #include <functional>
 #include <deque>
+#include <map>
 
 #include <plugin-support.h>
 #include "models/ModelYOLO.h"
