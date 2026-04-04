@@ -3159,16 +3159,15 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				if (filter->detectionSmoothingEnabled) {
 					std::lock_guard<std::mutex> smoothLock(filter->smoothedDetectionsMutex);
 					for (auto& det : filter->detections) {
-						if (filter->smoothedDetections.find(det.trackId) == filter->smoothedDetections.end()) {
-							filter->smoothedDetections[det.trackId] = yolo_detector_filter::SmoothedDetection();
-						}
-						filter->smoothedDetections[det.trackId].update(
+						// 使用 try_emplace 优化：1 次查找替代原来的 7 次查找
+						auto [it, inserted] = filter->smoothedDetections.try_emplace(det.trackId);
+						it->second.update(
 							det.x, det.y, det.width, det.height, filter->detectionSmoothingAlpha);
 						
-						det.x = filter->smoothedDetections[det.trackId].x;
-						det.y = filter->smoothedDetections[det.trackId].y;
-						det.width = filter->smoothedDetections[det.trackId].width;
-						det.height = filter->smoothedDetections[det.trackId].height;
+						det.x = it->second.x;
+						det.y = it->second.y;
+						det.width = it->second.width;
+						det.height = it->second.height;
 					}
 				}
 			}
