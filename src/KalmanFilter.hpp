@@ -1,25 +1,27 @@
 #ifndef KALMAN_FILTER_HPP
 #define KALMAN_FILTER_HPP
 
+#include <Eigen/Dense>
+
 class KalmanFilter {
 private:
     // 状态向量 [x, y, vx, vy]
-    float state[4];
+    Eigen::Vector4f state;
 
     // 误差协方差矩阵 (4x4)
-    float covariance[4][4];
+    Eigen::Matrix4f covariance;
 
     // 过程噪声协方差
-    float processNoise[4][4];
+    Eigen::Matrix4f processNoise;
 
     // 测量噪声协方差
-    float measurementNoise[2][2];
+    Eigen::Matrix2f measurementNoise;
 
     // 状态转移矩阵
-    float stateTransition[4][4];
+    Eigen::Matrix4f stateTransition;
 
     // 观测矩阵
-    float measurementMatrix[2][4];
+    Eigen::Matrix<float, 2, 4> measurementMatrix;
 
     // 时间步长
     float dt;
@@ -28,16 +30,6 @@ private:
     float baseProcessNoise;
     float baseMeasurementNoise;
     float confidenceScale;
-
-    // 矩阵运算辅助函数
-    void matMul4x4(const float a[4][4], const float b[4][4], float result[4][4]);
-    void matMul4x4_4x2(const float a[4][4], const float b[4][2], float result[4][2]);
-    void matMul2x4_4x4(const float a[2][4], const float b[4][4], float result[2][4]);
-    void matMul2x4_4x2(const float a[2][4], const float b[4][2], float result[2][2]);
-    void matTranspose4x4(const float mat[4][4], float result[4][4]);
-    void matTranspose4x2(const float mat[4][2], float result[2][4]);
-    void matTranspose2x4(const float mat[2][4], float result[4][2]);
-    bool matInverse2x2(const float mat[2][2], float result[2][2]);
 
     // 初始化矩阵
     void initializeMatrices();
