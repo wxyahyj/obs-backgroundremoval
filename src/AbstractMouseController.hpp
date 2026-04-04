@@ -116,7 +116,7 @@ protected:
     int getRandomDuration();
     float getCurrentPGain();
     
-    const char* getLogPrefix() const;
+    virtual const char* getLogPrefix() const;
 
 public:
     AbstractMouseController();
