@@ -316,6 +316,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float kalmanProcessNoise;
 		float kalmanMeasurementNoise;
 		float kalmanConfidenceScale;
+		// 贝塞尔曲线移动参数
+		bool enableBezierMovement;
+		float bezierCurvature;
+		float bezierRandomness;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -385,6 +389,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			kalmanProcessNoise = 0.01f;
 			kalmanMeasurementNoise = 1.0f;
 			kalmanConfidenceScale = 1.0f;
+			// 贝塞尔曲线移动参数默认值
+			enableBezierMovement = false;
+			bezierCurvature = 0.3f;
+			bezierRandomness = 0.2f;
 		}
 	};
 
@@ -3661,6 +3669,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.kalmanProcessNoise = cfg.kalmanProcessNoise;
 		mcConfig.kalmanMeasurementNoise = cfg.kalmanMeasurementNoise;
 		mcConfig.kalmanConfidenceScale = cfg.kalmanConfidenceScale;
+		// 贝塞尔曲线移动参数
+		mcConfig.enableBezierMovement = cfg.enableBezierMovement;
+		mcConfig.bezierCurvature = cfg.bezierCurvature;
+		mcConfig.bezierRandomness = cfg.bezierRandomness;
 		// 算法选择（使用全局设置）
 		mcConfig.algorithmType = static_cast<AlgorithmType>(tf->algorithmTypeGlobal);
 		// 标准PID参数（使用全局设置）
