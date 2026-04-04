@@ -164,6 +164,30 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	cv::Mat floatingWindowFrame;
 	bool showTrackIdInFloatingWindow;
 
+	// 检测框平滑
+	struct SmoothedDetection {
+		float x, y, width, height;
+		bool initialized;
+
+		SmoothedDetection() : x(0), y(0), width(0), height(0), initialized(false) {}
+
+		void update(float newX, float newY, float newW, float newH, float alpha) {
+			if (!initialized) {
+				x = newX; y = newY; width = newW; height = newH;
+				initialized = true;
+			} else {
+				x = x + alpha * (newX - x);
+				y = y + alpha * (newY - y);
+				width = width + alpha * (newW - width);
+				height = height + alpha * (newH - height);
+			}
+		}
+	};
+	bool detectionSmoothingEnabled;
+	float detectionSmoothingAlpha;
+	std::map<int, SmoothedDetection> smoothedDetections;
+	std::mutex smoothedDetectionsMutex;
+
 	// PID调试数据
 	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
 	struct PidDataPoint {
@@ -543,6 +567,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
     
     obs_property_t *dynamicFovTransitionTimeProp = obs_properties_add_int_slider(props, "dynamic_fov_transition_time", "动态FOV过渡时间", 0, 1000, 10);
     obs_property_set_long_description(dynamicFovTransitionTimeProp, "动态FOV过渡动画时间（毫秒）， 0表示立即切换，100表示线性过渡， 100-500表示缓动过渡");
+
+	obs_property_t *detectionSmoothingEnabledProp = obs_properties_add_bool(props, "detection_smoothing_enabled", "启用检测框平滑");
+	obs_property_set_long_description(detectionSmoothingEnabledProp, "启用检测框平滑，减少检测框抖动");
+	obs_property_t *detectionSmoothingAlphaProp = obs_properties_add_float_slider(props, "detection_smoothing_alpha", "平滑系数", 0.01, 1.0, 0.01);
+	obs_property_set_long_description(detectionSmoothingAlphaProp, "平滑系数，值越小越平滑但延迟越高，值越大响应越快但平滑效果减弱");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1037,6 +1066,10 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 动态FOV参数只在FOV设置页面显示
 	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_shrink_percent"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_transition_time"), page == 1);
+	
+	// 检测框平滑参数只在视觉与区域页面显示
+	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_enabled"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_alpha"), page == 1);
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和卡尔曼滤波器页面(6)显示
@@ -1133,6 +1166,10 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     // 动态FOV参数
     obs_data_set_default_int(settings, "dynamic_fov_shrink_percent", 50);
     obs_data_set_default_int(settings, "dynamic_fov_transition_time", 200);
+    
+    // 检测框平滑参数
+    obs_data_set_default_bool(settings, "detection_smoothing_enabled", true);
+    obs_data_set_default_double(settings, "detection_smoothing_alpha", 0.3);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -1437,6 +1474,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	// 动态FOV参数
 	tf->dynamicFovShrinkPercent = (float)obs_data_get_int(settings, "dynamic_fov_shrink_percent") / 100.0f;
 	tf->dynamicFovTransitionTime = (float)obs_data_get_int(settings, "dynamic_fov_transition_time");
+
+	// 检测框平滑参数
+	tf->detectionSmoothingEnabled = obs_data_get_bool(settings, "detection_smoothing_enabled");
+	tf->detectionSmoothingAlpha = (float)obs_data_get_double(settings, "detection_smoothing_alpha");
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -2966,6 +3007,23 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			{
 				std::lock_guard<std::mutex> lock(filter->detectionsMutex);
 				filter->detections = filter->trackedTargets;
+				
+				// 应用检测框平滑
+				if (filter->detectionSmoothingEnabled) {
+					std::lock_guard<std::mutex> smoothLock(filter->smoothedDetectionsMutex);
+					for (auto& det : filter->detections) {
+						if (filter->smoothedDetections.find(det.trackId) == filter->smoothedDetections.end()) {
+							filter->smoothedDetections[det.trackId] = SmoothedDetection();
+						}
+						filter->smoothedDetections[det.trackId].update(
+							det.x, det.y, det.width, det.height, filter->detectionSmoothingAlpha);
+						
+						det.x = filter->smoothedDetections[det.trackId].x;
+						det.y = filter->smoothedDetections[det.trackId].y;
+						det.width = filter->smoothedDetections[det.trackId].width;
+						det.height = filter->smoothedDetections[det.trackId].height;
+					}
+				}
 			}
 
 			// 更新推理帧大小信息
