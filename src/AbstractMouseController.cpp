@@ -311,7 +311,7 @@ void AbstractMouseController::tick()
         
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
         if (config.useDerivativePredictor) {
-            predictor.update(errorX, errorY, deltaTime);
+            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
         }
 

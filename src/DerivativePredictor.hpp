@@ -14,10 +14,12 @@ private:
     float previousErrorY;
     float previousVelocityX;
     float previousVelocityY;
+    float previousMoveX;
+    float previousMoveY;
 
 public:
     DerivativePredictor();
-    void update(float errorX, float errorY, float deltaTime);
+    void update(float errorX, float errorY, float previousMoveX, float previousMoveY, float deltaTime);
     void predict(float predictionTime, float& predictedX, float& predictedY);
     void reset();
 };
