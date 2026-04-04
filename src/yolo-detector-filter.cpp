@@ -226,7 +226,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float pSlope;
 		float d;
 		float i;
-		float baselineCompensation;
 		float aimSmoothingX;
 		float aimSmoothingY;
 		float maxPixelMove;
@@ -296,7 +295,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pSlope = 1.0f;
 			d = 0.007f;
 			i = 0.01f;
-			baselineCompensation = 0.85f;
 			aimSmoothingX = 0.7f;
 			aimSmoothingY = 0.5f;
 			maxPixelMove = 128.0f;
@@ -611,9 +609,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "p_slope_%d", i);
 		obs_property_t *pSlopeProp = obs_properties_add_float_slider(props, propName, "P增长斜率", 0.00, 10, 0.01);
 		obs_property_set_long_description(pSlopeProp, "距离-增益曲线斜率，控制P值随距离变化的敏感度");
-		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-		obs_property_t *baselineCompProp = obs_properties_add_float_slider(props, propName, "基线补偿", 0.00, 1.00, 0.01);
-		obs_property_set_long_description(baselineCompProp, "近距离补偿系数，用于修正近距离时的瞄准偏差");
 		snprintf(propName, sizeof(propName), "d_%d", i);
 		obs_property_t *dProp = obs_properties_add_float_slider(props, propName, "微分系数", 0.000, 1.00, 0.001);
 		obs_property_set_long_description(dProp, "微分增益，控制对误差变化率的响应");
@@ -896,8 +891,6 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "i_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "baseline_compensation_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
@@ -1186,8 +1179,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.01);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
-		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-		obs_data_set_default_double(settings, propName, 0.85);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		obs_data_set_default_double(settings, propName, 0.7);
@@ -1515,8 +1506,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].i = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		tf->mouseConfigs[i].derivativeFilterAlpha = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-		tf->mouseConfigs[i].baselineCompensation = (float)obs_data_get_double(settings, propName);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		tf->mouseConfigs[i].aimSmoothingX = (float)obs_data_get_double(settings, propName);
@@ -1827,9 +1816,6 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         snprintf(propName, sizeof(propName), "d_%d", i);
         fprintf(f, "      \"d\": %.4f,\n", obs_data_get_double(settings, propName));
         
-        snprintf(propName, sizeof(propName), "baseline_compensation_%d", i);
-        fprintf(f, "      \"baselineCompensation\": %.4f,\n", obs_data_get_double(settings, propName));
-        
         snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
         fprintf(f, "      \"derivativeFilterAlpha\": %.4f,\n", obs_data_get_double(settings, propName));
         
@@ -1960,25 +1946,222 @@ static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property
         return true;
     }
     
+    auto findValueInConfig = [&content](int configIndex, const char* key, std::string& outValue) -> bool {
+        char configStartKey[32];
+        snprintf(configStartKey, sizeof(configStartKey), "\"configs\": [");
+        size_t configsPos = content.find(configStartKey);
+        if (configsPos == std::string::npos) return false;
+        
+        size_t searchStart = configsPos + strlen(configStartKey);
+        for (int c = 0; c <= configIndex; c++) {
+            char braceKey[8];
+            snprintf(braceKey, sizeof(braceKey), "{");
+            size_t bracePos = content.find(braceKey, searchStart);
+            if (bracePos == std::string::npos) return false;
+            
+            if (c == configIndex) {
+                size_t braceEnd = content.find("}", bracePos);
+                if (braceEnd == std::string::npos) return false;
+                
+                std::string configBlock = content.substr(bracePos, braceEnd - bracePos);
+                char searchKey[64];
+                snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
+                size_t keyPos = configBlock.find(searchKey);
+                if (keyPos == std::string::npos) return false;
+                
+                size_t valueStart = keyPos + strlen(searchKey);
+                while (valueStart < configBlock.size() && (configBlock[valueStart] == ' ' || configBlock[valueStart] == '\n' || configBlock[valueStart] == '\r')) {
+                    valueStart++;
+                }
+                
+                if (valueStart >= configBlock.size()) return false;
+                
+                if (configBlock[valueStart] == '"') {
+                    valueStart++;
+                    size_t valueEnd = configBlock.find('"', valueStart);
+                    if (valueEnd == std::string::npos) return false;
+                    outValue = configBlock.substr(valueStart, valueEnd - valueStart);
+                } else {
+                    size_t valueEnd = valueStart;
+                    while (valueEnd < configBlock.size() && configBlock[valueEnd] != ',' && configBlock[valueEnd] != '\n' && configBlock[valueEnd] != '\r' && configBlock[valueEnd] != '}') {
+                        valueEnd++;
+                    }
+                    outValue = configBlock.substr(valueStart, valueEnd - valueStart);
+                    while (!outValue.empty() && (outValue.back() == ' ' || outValue.back() == '\n' || outValue.back() == '\r')) {
+                        outValue.pop_back();
+                    }
+                }
+                return true;
+            }
+            searchStart = content.find("}", bracePos);
+            if (searchStart == std::string::npos) return false;
+            searchStart++;
+        }
+        return false;
+    };
+
     for (int i = 0; i < 5; i++) {
         char propName[64];
-        char searchKey[64];
-        size_t pos;
+        std::string val;
         
-        snprintf(searchKey, sizeof(searchKey), "\"enabled\":");
-        pos = content.find(searchKey);
-        if (pos != std::string::npos) {
-            snprintf(propName, sizeof(propName), "enable_config_%d", i);
-            bool val = content.substr(pos + strlen(searchKey), 10).find("true") != std::string::npos;
-            obs_data_set_bool(settings, propName, val);
+        snprintf(propName, sizeof(propName), "enable_config_%d", i);
+        if (findValueInConfig(i, "enabled", val)) {
+            obs_data_set_bool(settings, propName, val.find("true") != std::string::npos);
         }
         
-        snprintf(searchKey, sizeof(searchKey), "\"hotkey\":");
-        pos = content.find(searchKey);
-        if (pos != std::string::npos) {
-            snprintf(propName, sizeof(propName), "hotkey_%d", i);
-            int val = atoi(content.c_str() + pos + strlen(searchKey));
-            obs_data_set_int(settings, propName, val);
+        snprintf(propName, sizeof(propName), "hotkey_%d", i);
+        if (findValueInConfig(i, "hotkey", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "controller_type_%d", i);
+        if (findValueInConfig(i, "controllerType", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+        if (findValueInConfig(i, "makcuPort", val)) {
+            obs_data_set_string(settings, propName, val.c_str());
+        }
+        
+        snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+        if (findValueInConfig(i, "makcuBaudRate", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "p_min_%d", i);
+        if (findValueInConfig(i, "pMin", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "p_max_%d", i);
+        if (findValueInConfig(i, "pMax", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "p_slope_%d", i);
+        if (findValueInConfig(i, "pSlope", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "d_%d", i);
+        if (findValueInConfig(i, "d", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
+        if (findValueInConfig(i, "derivativeFilterAlpha", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
+        if (findValueInConfig(i, "aimSmoothingX", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", i);
+        if (findValueInConfig(i, "aimSmoothingY", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "max_pixel_move_%d", i);
+        if (findValueInConfig(i, "maxPixelMove", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", i);
+        if (findValueInConfig(i, "deadZonePixels", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
+        if (findValueInConfig(i, "targetYOffset", val)) {
+            obs_data_set_double(settings, propName, atof(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "screen_offset_x_%d", i);
+        if (findValueInConfig(i, "screenOffsetX", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "screen_offset_y_%d", i);
+        if (findValueInConfig(i, "screenOffsetY", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "screen_width_%d", i);
+        if (findValueInConfig(i, "screenWidth", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "screen_height_%d", i);
+        if (findValueInConfig(i, "screenHeight", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", i);
+        if (findValueInConfig(i, "enableYAxisUnlock", val)) {
+            obs_data_set_bool(settings, propName, val.find("true") != std::string::npos);
+        }
+        
+        snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
+        if (findValueInConfig(i, "yAxisUnlockDelay", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+        if (findValueInConfig(i, "enableAutoTrigger", val)) {
+            obs_data_set_bool(settings, propName, val.find("true") != std::string::npos);
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
+        if (findValueInConfig(i, "triggerRadius", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
+        if (findValueInConfig(i, "triggerCooldown", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", i);
+        if (findValueInConfig(i, "triggerFireDelay", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", i);
+        if (findValueInConfig(i, "triggerFireDuration", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_interval_%d", i);
+        if (findValueInConfig(i, "triggerInterval", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", i);
+        if (findValueInConfig(i, "triggerDelayRandomMin", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", i);
+        if (findValueInConfig(i, "triggerDelayRandomMax", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", i);
+        if (findValueInConfig(i, "triggerDurationRandomMin", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", i);
+        if (findValueInConfig(i, "triggerDurationRandomMax", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+        
+        snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
+        if (findValueInConfig(i, "triggerMoveCompensation", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
         }
     }
     
@@ -3276,7 +3459,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.pidPSlope = cfg.pSlope;
 		mcConfig.pidD = cfg.d;
 		mcConfig.pidI = cfg.i;
-		mcConfig.baselineCompensation = cfg.baselineCompensation;
 		mcConfig.aimSmoothingX = cfg.aimSmoothingX;
 		mcConfig.aimSmoothingY = cfg.aimSmoothingY;
 		mcConfig.maxPixelMove = cfg.maxPixelMove;
@@ -3408,14 +3590,13 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			detectionsCopy = tf->detections;
 		}
 
-		// 画面中心
+		int activeConfig = getActiveConfig();
+		float shrinkedRadius = static_cast<float>(tf->fovRadius) * tf->dynamicFovShrinkPercent;
+		
 		float centerX = 0.5f;
 		float centerY = 0.5f;
-
-		// 当前使用的FOV半径（归一化）
 		float currentFOVRadius = tf->currentFovRadius / static_cast<float>(obs_source_get_base_width(tf->source));
-
-		// 检查FOV内是否有目标
+		
 		bool hasTargetInCurrentFOV = false;
 		for (const auto& det : detectionsCopy) {
 			float dx = det.centerX - centerX;
@@ -3426,20 +3607,16 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				break;
 			}
 		}
-
-		// FOV切换逻辑
-		float shrinkedRadius = static_cast<float>(tf->fovRadius) * tf->dynamicFovShrinkPercent;
+		
+		bool shouldShrinkFOV = (activeConfig >= 0) && hasTargetInCurrentFOV;
+		
 		if (!tf->isInFOV2Mode) {
-			// 模式1：使用第一个FOV检测
-			if (hasTargetInCurrentFOV) {
-				// 检测到目标，切换到缩小的FOV模式
+			if (shouldShrinkFOV) {
 				tf->isInFOV2Mode = true;
 				startFovTransition(shrinkedRadius);
 			}
 		} else {
-			// 模式2：使用缩小的FOV锁敌
-			if (!hasTargetInCurrentFOV) {
-				// 缩小的FOV内没有目标，切换回原始FOV模式
+			if (!shouldShrinkFOV) {
 				tf->isInFOV2Mode = false;
 				startFovTransition(static_cast<float>(tf->fovRadius));
 			}

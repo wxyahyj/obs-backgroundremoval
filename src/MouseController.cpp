@@ -363,11 +363,8 @@ void MouseController::tick()
         float pidOutputX = dynamicP * fusedErrorX + config.pidD * filteredDeltaErrorX + integralTermX;
         float pidOutputY = dynamicP * fusedErrorY + config.pidD * filteredDeltaErrorY + integralTermY;
 
-        float baselineX = fusedErrorX * config.baselineCompensation;
-        float baselineY = fusedErrorY * config.baselineCompensation;
-
-        moveX = pidOutputX + baselineX;
-        moveY = pidOutputY + baselineY;
+        moveX = pidOutputX;
+        moveY = pidOutputY;
 
         // 详细日志输出
         static int logCounter = 0;
