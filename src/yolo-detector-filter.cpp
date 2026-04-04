@@ -3044,7 +3044,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					std::lock_guard<std::mutex> smoothLock(filter->smoothedDetectionsMutex);
 					for (auto& det : filter->detections) {
 						if (filter->smoothedDetections.find(det.trackId) == filter->smoothedDetections.end()) {
-							filter->smoothedDetections[det.trackId] = SmoothedDetection();
+							filter->smoothedDetections[det.trackId] = yolo_detector_filter::SmoothedDetection();
 						}
 						filter->smoothedDetections[det.trackId].update(
 							det.x, det.y, det.width, det.height, filter->detectionSmoothingAlpha);
