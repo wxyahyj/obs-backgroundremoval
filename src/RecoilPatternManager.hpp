@@ -7,6 +7,7 @@
 #include <vector>
 #include <mutex>
 #include <map>
+#include <nlohmann/json.hpp>
 
 struct RecoilMove {
     int dx;
@@ -32,23 +33,14 @@ public:
     static RecoilPatternManager& getInstance();
     
     bool importFromLogitechMacro(const std::string& filePath, const std::string& weaponName);
-    
     bool importFromString(const std::string& xmlContent, const std::string& weaponName);
-    
     bool hasPattern(const std::string& weaponName) const;
-    
     const RecoilPattern* getPattern(const std::string& weaponName) const;
-    
     std::vector<std::string> getWeaponNames() const;
-    
     void removePattern(const std::string& weaponName);
-    
     void clearAllPatterns();
-    
     int getPatternCount() const;
-    
     bool saveToFile(const std::string& filePath);
-    
     bool loadFromFile(const std::string& filePath);
 
 private:
@@ -61,6 +53,9 @@ private:
     std::map<std::string, RecoilPattern> patterns_;
     
     std::string getConfigFilePath();
+    
+    nlohmann::json patternToJson(const RecoilPattern& pattern);
+    RecoilPattern jsonToPattern(const nlohmann::json& j);
 };
 
 #endif

@@ -7,8 +7,6 @@
 #include <util/platform.h>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
-#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -19,6 +17,7 @@ ExtendedMouseControllerConfig::ExtendedMouseControllerConfig() {
 ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     ExtendedMouseControllerConfig config;
     
+    config.configName = "default";
     config.enableMouseControl = false;
     config.hotkeyVirtualKey = 0;
     config.fovRadiusPixels = 100;
@@ -36,26 +35,73 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.screenOffsetY = 0;
     config.screenWidth = 1920;
     config.screenHeight = 1080;
-    config.pidPMin = 0.1f;
-    config.pidPMax = 0.5f;
-    config.pidPSlope = 0.001f;
-    config.pidD = 0.05f;
-    config.aimSmoothingX = 0.0f;
-    config.aimSmoothingY = 0.0f;
-    config.maxPixelMove = 10.0f;
+    config.algorithmType = AlgorithmType::AdvancedPID;
+    config.pidPMin = 0.15f;
+    config.pidPMax = 0.6f;
+    config.pidPSlope = 1.0f;
+    config.pidD = 0.007f;
+    config.pidI = 0.01f;
+    config.aimSmoothingX = 0.7f;
+    config.aimSmoothingY = 0.5f;
+    config.maxPixelMove = 128.0f;
     config.deadZonePixels = 5.0f;
     config.targetYOffset = 0.0f;
-    config.derivativeFilterAlpha = 0.5f;
+    config.derivativeFilterAlpha = 0.2f;
     config.controllerType = ControllerType::WindowsAPI;
     config.makcuPort = "";
     config.makcuBaudRate = 115200;
-    
     config.yUnlockDelayMs = 100;
     config.yUnlockEnabled = false;
     config.autoTriggerEnabled = false;
     config.autoTriggerRadius = 30.0f;
     config.autoTriggerCooldownMs = 200;
-    config.configName = "default";
+    config.autoTriggerFireDelay = 0;
+    config.autoTriggerFireDuration = 50;
+    config.autoTriggerInterval = 50;
+    config.autoTriggerDelayRandomEnabled = false;
+    config.autoTriggerDelayRandomMin = 0;
+    config.autoTriggerDelayRandomMax = 0;
+    config.autoTriggerDurationRandomEnabled = false;
+    config.autoTriggerDurationRandomMin = 0;
+    config.autoTriggerDurationRandomMax = 0;
+    config.autoTriggerMoveCompensation = 0;
+    config.targetSwitchDelayMs = 500;
+    config.targetSwitchTolerance = 0.15f;
+    config.integralLimit = 100.0f;
+    config.integralSeparationThreshold = 50.0f;
+    config.integralDeadZone = 5.0f;
+    config.integralRate = 0.015f;
+    config.pGainRampInitialScale = 0.6f;
+    config.pGainRampDuration = 0.5f;
+    config.useDerivativePredictor = true;
+    config.predictionWeightX = 0.5f;
+    config.predictionWeightY = 0.1f;
+    config.useKalmanFilter = true;
+    config.kalmanProcessNoise = 0.01f;
+    config.kalmanMeasurementNoise = 1.0f;
+    config.kalmanConfidenceScale = 1.0f;
+    config.kalmanPredictionWeightX = 0.2f;
+    config.kalmanPredictionWeightY = 0.1f;
+    config.stdKp = 0.3f;
+    config.stdKi = 0.01f;
+    config.stdKd = 0.005f;
+    config.stdOutputLimit = 50.0f;
+    config.stdDeadZone = 0.3f;
+    config.stdIntegralLimit = 100.0f;
+    config.stdIntegralDeadzone = 1.0f;
+    config.stdIntegralThreshold = 50.0f;
+    config.stdIntegralRate = 0.015f;
+    config.stdDerivativeFilterAlpha = 0.2f;
+    config.stdSmoothingX = 0.7f;
+    config.stdSmoothingY = 0.5f;
+    config.continuousAimEnabled = false;
+    config.autoRecoilControlEnabled = false;
+    config.recoilStrength = 5.0f;
+    config.recoilSpeed = 16;
+    config.recoilPidGainScale = 0.3f;
+    config.enableBezierMovement = false;
+    config.bezierCurvature = 0.3f;
+    config.bezierRandomness = 0.2f;
     
     return config;
 }
@@ -111,352 +157,193 @@ std::string ConfigManager::getConfigFilePath(const std::string& configName) {
     return configsDir + "/" + safeName + ".json";
 }
 
-std::string ConfigManager::escapeJsonString(const std::string& str) {
-    std::string result;
-    result.reserve(str.size() * 2);
+nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& config) {
+    nlohmann::json j;
     
-    for (char c : str) {
-        switch (c) {
-            case '"': result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\b': result += "\\b"; break;
-            case '\f': result += "\\f"; break;
-            case '\n': result += "\\n"; break;
-            case '\r': result += "\\r"; break;
-            case '\t': result += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    result += buf;
-                } else {
-                    result += c;
-                }
-        }
-    }
-    return result;
-}
-
-std::string ConfigManager::unescapeJsonString(const std::string& str) {
-    std::string result;
-    result.reserve(str.size());
+    j["configName"] = config.configName;
+    j["enableMouseControl"] = config.enableMouseControl;
+    j["hotkeyVirtualKey"] = config.hotkeyVirtualKey;
+    j["fovRadiusPixels"] = config.fovRadiusPixels;
+    j["sourceCanvasPosX"] = config.sourceCanvasPosX;
+    j["sourceCanvasPosY"] = config.sourceCanvasPosY;
+    j["sourceCanvasScaleX"] = config.sourceCanvasScaleX;
+    j["sourceCanvasScaleY"] = config.sourceCanvasScaleY;
+    j["sourceWidth"] = config.sourceWidth;
+    j["sourceHeight"] = config.sourceHeight;
+    j["inferenceFrameWidth"] = config.inferenceFrameWidth;
+    j["inferenceFrameHeight"] = config.inferenceFrameHeight;
+    j["cropOffsetX"] = config.cropOffsetX;
+    j["cropOffsetY"] = config.cropOffsetY;
+    j["screenOffsetX"] = config.screenOffsetX;
+    j["screenOffsetY"] = config.screenOffsetY;
+    j["screenWidth"] = config.screenWidth;
+    j["screenHeight"] = config.screenHeight;
+    j["algorithmType"] = static_cast<int>(config.algorithmType);
+    j["pidPMin"] = config.pidPMin;
+    j["pidPMax"] = config.pidPMax;
+    j["pidPSlope"] = config.pidPSlope;
+    j["pidD"] = config.pidD;
+    j["pidI"] = config.pidI;
+    j["aimSmoothingX"] = config.aimSmoothingX;
+    j["aimSmoothingY"] = config.aimSmoothingY;
+    j["maxPixelMove"] = config.maxPixelMove;
+    j["deadZonePixels"] = config.deadZonePixels;
+    j["targetYOffset"] = config.targetYOffset;
+    j["derivativeFilterAlpha"] = config.derivativeFilterAlpha;
+    j["controllerType"] = static_cast<int>(config.controllerType);
+    j["makcuPort"] = config.makcuPort;
+    j["makcuBaudRate"] = config.makcuBaudRate;
+    j["yUnlockDelayMs"] = config.yUnlockDelayMs;
+    j["yUnlockEnabled"] = config.yUnlockEnabled;
+    j["autoTriggerEnabled"] = config.autoTriggerEnabled;
+    j["autoTriggerRadius"] = config.autoTriggerRadius;
+    j["autoTriggerCooldownMs"] = config.autoTriggerCooldownMs;
+    j["autoTriggerFireDelay"] = config.autoTriggerFireDelay;
+    j["autoTriggerFireDuration"] = config.autoTriggerFireDuration;
+    j["autoTriggerInterval"] = config.autoTriggerInterval;
+    j["autoTriggerDelayRandomEnabled"] = config.autoTriggerDelayRandomEnabled;
+    j["autoTriggerDelayRandomMin"] = config.autoTriggerDelayRandomMin;
+    j["autoTriggerDelayRandomMax"] = config.autoTriggerDelayRandomMax;
+    j["autoTriggerDurationRandomEnabled"] = config.autoTriggerDurationRandomEnabled;
+    j["autoTriggerDurationRandomMin"] = config.autoTriggerDurationRandomMin;
+    j["autoTriggerDurationRandomMax"] = config.autoTriggerDurationRandomMax;
+    j["autoTriggerMoveCompensation"] = config.autoTriggerMoveCompensation;
+    j["targetSwitchDelayMs"] = config.targetSwitchDelayMs;
+    j["targetSwitchTolerance"] = config.targetSwitchTolerance;
+    j["integralLimit"] = config.integralLimit;
+    j["integralSeparationThreshold"] = config.integralSeparationThreshold;
+    j["integralDeadZone"] = config.integralDeadZone;
+    j["integralRate"] = config.integralRate;
+    j["pGainRampInitialScale"] = config.pGainRampInitialScale;
+    j["pGainRampDuration"] = config.pGainRampDuration;
+    j["useDerivativePredictor"] = config.useDerivativePredictor;
+    j["predictionWeightX"] = config.predictionWeightX;
+    j["predictionWeightY"] = config.predictionWeightY;
+    j["useKalmanFilter"] = config.useKalmanFilter;
+    j["kalmanProcessNoise"] = config.kalmanProcessNoise;
+    j["kalmanMeasurementNoise"] = config.kalmanMeasurementNoise;
+    j["kalmanConfidenceScale"] = config.kalmanConfidenceScale;
+    j["kalmanPredictionWeightX"] = config.kalmanPredictionWeightX;
+    j["kalmanPredictionWeightY"] = config.kalmanPredictionWeightY;
+    j["stdKp"] = config.stdKp;
+    j["stdKi"] = config.stdKi;
+    j["stdKd"] = config.stdKd;
+    j["stdOutputLimit"] = config.stdOutputLimit;
+    j["stdDeadZone"] = config.stdDeadZone;
+    j["stdIntegralLimit"] = config.stdIntegralLimit;
+    j["stdIntegralDeadzone"] = config.stdIntegralDeadzone;
+    j["stdIntegralThreshold"] = config.stdIntegralThreshold;
+    j["stdIntegralRate"] = config.stdIntegralRate;
+    j["stdDerivativeFilterAlpha"] = config.stdDerivativeFilterAlpha;
+    j["stdSmoothingX"] = config.stdSmoothingX;
+    j["stdSmoothingY"] = config.stdSmoothingY;
+    j["continuousAimEnabled"] = config.continuousAimEnabled;
+    j["autoRecoilControlEnabled"] = config.autoRecoilControlEnabled;
+    j["recoilStrength"] = config.recoilStrength;
+    j["recoilSpeed"] = config.recoilSpeed;
+    j["recoilPidGainScale"] = config.recoilPidGainScale;
+    j["enableBezierMovement"] = config.enableBezierMovement;
+    j["bezierCurvature"] = config.bezierCurvature;
+    j["bezierRandomness"] = config.bezierRandomness;
     
-    for (size_t i = 0; i < str.size(); ++i) {
-        if (str[i] == '\\' && i + 1 < str.size()) {
-            switch (str[i + 1]) {
-                case '"': result += '"'; ++i; break;
-                case '\\': result += '\\'; ++i; break;
-                case 'b': result += '\b'; ++i; break;
-                case 'f': result += '\f'; ++i; break;
-                case 'n': result += '\n'; ++i; break;
-                case 'r': result += '\r'; ++i; break;
-                case 't': result += '\t'; ++i; break;
-                case 'u': {
-                    if (i + 5 < str.size()) {
-                        char buf[5] = {str[i+2], str[i+3], str[i+4], str[i+5], 0};
-                        unsigned int codepoint = strtoul(buf, nullptr, 16);
-                        if (codepoint < 0x80) {
-                            result += static_cast<char>(codepoint);
-                        } else if (codepoint < 0x800) {
-                            result += static_cast<char>(0xC0 | (codepoint >> 6));
-                            result += static_cast<char>(0x80 | (codepoint & 0x3F));
-                        } else {
-                            result += static_cast<char>(0xE0 | (codepoint >> 12));
-                            result += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                            result += static_cast<char>(0x80 | (codepoint & 0x3F));
-                        }
-                        i += 5;
-                    }
-                    break;
-                }
-                default: result += str[i]; break;
-            }
-        } else {
-            result += str[i];
-        }
-    }
-    return result;
+    return j;
 }
 
-std::string ConfigManager::configToJson(const ExtendedMouseControllerConfig& config) {
-    std::ostringstream oss;
-    oss << "{\n";
-    oss << "  \"configName\": \"" << escapeJsonString(config.configName) << "\",\n";
-    oss << "  \"enableMouseControl\": " << (config.enableMouseControl ? "true" : "false") << ",\n";
-    oss << "  \"hotkeyVirtualKey\": " << config.hotkeyVirtualKey << ",\n";
-    oss << "  \"fovRadiusPixels\": " << config.fovRadiusPixels << ",\n";
-    oss << "  \"sourceCanvasPosX\": " << config.sourceCanvasPosX << ",\n";
-    oss << "  \"sourceCanvasPosY\": " << config.sourceCanvasPosY << ",\n";
-    oss << "  \"sourceCanvasScaleX\": " << config.sourceCanvasScaleX << ",\n";
-    oss << "  \"sourceCanvasScaleY\": " << config.sourceCanvasScaleY << ",\n";
-    oss << "  \"sourceWidth\": " << config.sourceWidth << ",\n";
-    oss << "  \"sourceHeight\": " << config.sourceHeight << ",\n";
-    oss << "  \"inferenceFrameWidth\": " << config.inferenceFrameWidth << ",\n";
-    oss << "  \"inferenceFrameHeight\": " << config.inferenceFrameHeight << ",\n";
-    oss << "  \"cropOffsetX\": " << config.cropOffsetX << ",\n";
-    oss << "  \"cropOffsetY\": " << config.cropOffsetY << ",\n";
-    oss << "  \"screenOffsetX\": " << config.screenOffsetX << ",\n";
-    oss << "  \"screenOffsetY\": " << config.screenOffsetY << ",\n";
-    oss << "  \"screenWidth\": " << config.screenWidth << ",\n";
-    oss << "  \"screenHeight\": " << config.screenHeight << ",\n";
-    oss << "  \"pidPMin\": " << config.pidPMin << ",\n";
-    oss << "  \"pidPMax\": " << config.pidPMax << ",\n";
-    oss << "  \"pidPSlope\": " << config.pidPSlope << ",\n";
-    oss << "  \"pidD\": " << config.pidD << ",\n";
-    oss << "  \"aimSmoothingX\": " << config.aimSmoothingX << ",\n";
-    oss << "  \"aimSmoothingY\": " << config.aimSmoothingY << ",\n";
-    oss << "  \"maxPixelMove\": " << config.maxPixelMove << ",\n";
-    oss << "  \"deadZonePixels\": " << config.deadZonePixels << ",\n";
-    oss << "  \"targetYOffset\": " << config.targetYOffset << ",\n";
-    oss << "  \"derivativeFilterAlpha\": " << config.derivativeFilterAlpha << ",\n";
-    oss << "  \"controllerType\": " << static_cast<int>(config.controllerType) << ",\n";
-    oss << "  \"makcuPort\": \"" << escapeJsonString(config.makcuPort) << "\",\n";
-    oss << "  \"makcuBaudRate\": " << config.makcuBaudRate << ",\n";
-    oss << "  \"yUnlockDelayMs\": " << config.yUnlockDelayMs << ",\n";
-    oss << "  \"yUnlockEnabled\": " << (config.yUnlockEnabled ? "true" : "false") << ",\n";
-    oss << "  \"autoTriggerEnabled\": " << (config.autoTriggerEnabled ? "true" : "false") << ",\n";
-    oss << "  \"autoTriggerRadius\": " << config.autoTriggerRadius << ",\n";
-    oss << "  \"autoTriggerCooldownMs\": " << config.autoTriggerCooldownMs << ",\n";
-    oss << "  \"integralLimit\": " << config.integralLimit << ",\n";
-    oss << "  \"integralSeparationThreshold\": " << config.integralSeparationThreshold << ",\n";
-    oss << "  \"integralDeadZone\": " << config.integralDeadZone << ",\n";
-    oss << "  \"pGainRampInitialScale\": " << config.pGainRampInitialScale << ",\n";
-    oss << "  \"pGainRampDuration\": " << config.pGainRampDuration << ",\n";
-    oss << "  \"predictionWeightX\": " << config.predictionWeightX << ",\n";
-    oss << "  \"predictionWeightY\": " << config.predictionWeightY << ",\n";
-    oss << "  \"useKalmanFilter\": " << (config.useKalmanFilter ? "true" : "false") << ",\n";
-    oss << "  \"kalmanProcessNoise\": " << config.kalmanProcessNoise << ",\n";
-    oss << "  \"kalmanMeasurementNoise\": " << config.kalmanMeasurementNoise << ",\n";
-    oss << "  \"kalmanConfidenceScale\": " << config.kalmanConfidenceScale << "\n";
-    oss << "}\n";
-    return oss.str();
-}
-
-bool ConfigManager::jsonToConfig(const std::string& json, ExtendedMouseControllerConfig& config) {
+bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControllerConfig& config) {
     config = ExtendedMouseControllerConfig::getDefault();
     
-    auto extractString = [this, &json](const std::string& key) -> std::string {
-        std::string searchKey = "\"" + key + "\"";
-        size_t pos = json.find(searchKey);
-        if (pos == std::string::npos) return "";
+    try {
+        if (j.contains("configName")) config.configName = j["configName"].get<std::string>();
+        if (j.contains("enableMouseControl")) config.enableMouseControl = j["enableMouseControl"].get<bool>();
+        if (j.contains("hotkeyVirtualKey")) config.hotkeyVirtualKey = j["hotkeyVirtualKey"].get<int>();
+        if (j.contains("fovRadiusPixels")) config.fovRadiusPixels = j["fovRadiusPixels"].get<int>();
+        if (j.contains("sourceCanvasPosX")) config.sourceCanvasPosX = j["sourceCanvasPosX"].get<float>();
+        if (j.contains("sourceCanvasPosY")) config.sourceCanvasPosY = j["sourceCanvasPosY"].get<float>();
+        if (j.contains("sourceCanvasScaleX")) config.sourceCanvasScaleX = j["sourceCanvasScaleX"].get<float>();
+        if (j.contains("sourceCanvasScaleY")) config.sourceCanvasScaleY = j["sourceCanvasScaleY"].get<float>();
+        if (j.contains("sourceWidth")) config.sourceWidth = j["sourceWidth"].get<int>();
+        if (j.contains("sourceHeight")) config.sourceHeight = j["sourceHeight"].get<int>();
+        if (j.contains("inferenceFrameWidth")) config.inferenceFrameWidth = j["inferenceFrameWidth"].get<int>();
+        if (j.contains("inferenceFrameHeight")) config.inferenceFrameHeight = j["inferenceFrameHeight"].get<int>();
+        if (j.contains("cropOffsetX")) config.cropOffsetX = j["cropOffsetX"].get<int>();
+        if (j.contains("cropOffsetY")) config.cropOffsetY = j["cropOffsetY"].get<int>();
+        if (j.contains("screenOffsetX")) config.screenOffsetX = j["screenOffsetX"].get<int>();
+        if (j.contains("screenOffsetY")) config.screenOffsetY = j["screenOffsetY"].get<int>();
+        if (j.contains("screenWidth")) config.screenWidth = j["screenWidth"].get<int>();
+        if (j.contains("screenHeight")) config.screenHeight = j["screenHeight"].get<int>();
+        if (j.contains("algorithmType")) config.algorithmType = static_cast<AlgorithmType>(j["algorithmType"].get<int>());
+        if (j.contains("pidPMin")) config.pidPMin = j["pidPMin"].get<float>();
+        if (j.contains("pidPMax")) config.pidPMax = j["pidPMax"].get<float>();
+        if (j.contains("pidPSlope")) config.pidPSlope = j["pidPSlope"].get<float>();
+        if (j.contains("pidD")) config.pidD = j["pidD"].get<float>();
+        if (j.contains("pidI")) config.pidI = j["pidI"].get<float>();
+        if (j.contains("aimSmoothingX")) config.aimSmoothingX = j["aimSmoothingX"].get<float>();
+        if (j.contains("aimSmoothingY")) config.aimSmoothingY = j["aimSmoothingY"].get<float>();
+        if (j.contains("maxPixelMove")) config.maxPixelMove = j["maxPixelMove"].get<float>();
+        if (j.contains("deadZonePixels")) config.deadZonePixels = j["deadZonePixels"].get<float>();
+        if (j.contains("targetYOffset")) config.targetYOffset = j["targetYOffset"].get<float>();
+        if (j.contains("derivativeFilterAlpha")) config.derivativeFilterAlpha = j["derivativeFilterAlpha"].get<float>();
+        if (j.contains("controllerType")) config.controllerType = static_cast<ControllerType>(j["controllerType"].get<int>());
+        if (j.contains("makcuPort")) config.makcuPort = j["makcuPort"].get<std::string>();
+        if (j.contains("makcuBaudRate")) config.makcuBaudRate = j["makcuBaudRate"].get<int>();
+        if (j.contains("yUnlockDelayMs")) config.yUnlockDelayMs = j["yUnlockDelayMs"].get<int>();
+        if (j.contains("yUnlockEnabled")) config.yUnlockEnabled = j["yUnlockEnabled"].get<bool>();
+        if (j.contains("autoTriggerEnabled")) config.autoTriggerEnabled = j["autoTriggerEnabled"].get<bool>();
+        if (j.contains("autoTriggerRadius")) config.autoTriggerRadius = j["autoTriggerRadius"].get<float>();
+        if (j.contains("autoTriggerCooldownMs")) config.autoTriggerCooldownMs = j["autoTriggerCooldownMs"].get<int>();
+        if (j.contains("autoTriggerFireDelay")) config.autoTriggerFireDelay = j["autoTriggerFireDelay"].get<int>();
+        if (j.contains("autoTriggerFireDuration")) config.autoTriggerFireDuration = j["autoTriggerFireDuration"].get<int>();
+        if (j.contains("autoTriggerInterval")) config.autoTriggerInterval = j["autoTriggerInterval"].get<int>();
+        if (j.contains("autoTriggerDelayRandomEnabled")) config.autoTriggerDelayRandomEnabled = j["autoTriggerDelayRandomEnabled"].get<bool>();
+        if (j.contains("autoTriggerDelayRandomMin")) config.autoTriggerDelayRandomMin = j["autoTriggerDelayRandomMin"].get<int>();
+        if (j.contains("autoTriggerDelayRandomMax")) config.autoTriggerDelayRandomMax = j["autoTriggerDelayRandomMax"].get<int>();
+        if (j.contains("autoTriggerDurationRandomEnabled")) config.autoTriggerDurationRandomEnabled = j["autoTriggerDurationRandomEnabled"].get<bool>();
+        if (j.contains("autoTriggerDurationRandomMin")) config.autoTriggerDurationRandomMin = j["autoTriggerDurationRandomMin"].get<int>();
+        if (j.contains("autoTriggerDurationRandomMax")) config.autoTriggerDurationRandomMax = j["autoTriggerDurationRandomMax"].get<int>();
+        if (j.contains("autoTriggerMoveCompensation")) config.autoTriggerMoveCompensation = j["autoTriggerMoveCompensation"].get<int>();
+        if (j.contains("targetSwitchDelayMs")) config.targetSwitchDelayMs = j["targetSwitchDelayMs"].get<int>();
+        if (j.contains("targetSwitchTolerance")) config.targetSwitchTolerance = j["targetSwitchTolerance"].get<float>();
+        if (j.contains("integralLimit")) config.integralLimit = j["integralLimit"].get<float>();
+        if (j.contains("integralSeparationThreshold")) config.integralSeparationThreshold = j["integralSeparationThreshold"].get<float>();
+        if (j.contains("integralDeadZone")) config.integralDeadZone = j["integralDeadZone"].get<float>();
+        if (j.contains("integralRate")) config.integralRate = j["integralRate"].get<float>();
+        if (j.contains("pGainRampInitialScale")) config.pGainRampInitialScale = j["pGainRampInitialScale"].get<float>();
+        if (j.contains("pGainRampDuration")) config.pGainRampDuration = j["pGainRampDuration"].get<float>();
+        if (j.contains("useDerivativePredictor")) config.useDerivativePredictor = j["useDerivativePredictor"].get<bool>();
+        if (j.contains("predictionWeightX")) config.predictionWeightX = j["predictionWeightX"].get<float>();
+        if (j.contains("predictionWeightY")) config.predictionWeightY = j["predictionWeightY"].get<float>();
+        if (j.contains("useKalmanFilter")) config.useKalmanFilter = j["useKalmanFilter"].get<bool>();
+        if (j.contains("kalmanProcessNoise")) config.kalmanProcessNoise = j["kalmanProcessNoise"].get<float>();
+        if (j.contains("kalmanMeasurementNoise")) config.kalmanMeasurementNoise = j["kalmanMeasurementNoise"].get<float>();
+        if (j.contains("kalmanConfidenceScale")) config.kalmanConfidenceScale = j["kalmanConfidenceScale"].get<float>();
+        if (j.contains("kalmanPredictionWeightX")) config.kalmanPredictionWeightX = j["kalmanPredictionWeightX"].get<float>();
+        if (j.contains("kalmanPredictionWeightY")) config.kalmanPredictionWeightY = j["kalmanPredictionWeightY"].get<float>();
+        if (j.contains("stdKp")) config.stdKp = j["stdKp"].get<float>();
+        if (j.contains("stdKi")) config.stdKi = j["stdKi"].get<float>();
+        if (j.contains("stdKd")) config.stdKd = j["stdKd"].get<float>();
+        if (j.contains("stdOutputLimit")) config.stdOutputLimit = j["stdOutputLimit"].get<float>();
+        if (j.contains("stdDeadZone")) config.stdDeadZone = j["stdDeadZone"].get<float>();
+        if (j.contains("stdIntegralLimit")) config.stdIntegralLimit = j["stdIntegralLimit"].get<float>();
+        if (j.contains("stdIntegralDeadzone")) config.stdIntegralDeadzone = j["stdIntegralDeadzone"].get<float>();
+        if (j.contains("stdIntegralThreshold")) config.stdIntegralThreshold = j["stdIntegralThreshold"].get<float>();
+        if (j.contains("stdIntegralRate")) config.stdIntegralRate = j["stdIntegralRate"].get<float>();
+        if (j.contains("stdDerivativeFilterAlpha")) config.stdDerivativeFilterAlpha = j["stdDerivativeFilterAlpha"].get<float>();
+        if (j.contains("stdSmoothingX")) config.stdSmoothingX = j["stdSmoothingX"].get<float>();
+        if (j.contains("stdSmoothingY")) config.stdSmoothingY = j["stdSmoothingY"].get<float>();
+        if (j.contains("continuousAimEnabled")) config.continuousAimEnabled = j["continuousAimEnabled"].get<bool>();
+        if (j.contains("autoRecoilControlEnabled")) config.autoRecoilControlEnabled = j["autoRecoilControlEnabled"].get<bool>();
+        if (j.contains("recoilStrength")) config.recoilStrength = j["recoilStrength"].get<float>();
+        if (j.contains("recoilSpeed")) config.recoilSpeed = j["recoilSpeed"].get<int>();
+        if (j.contains("recoilPidGainScale")) config.recoilPidGainScale = j["recoilPidGainScale"].get<float>();
+        if (j.contains("enableBezierMovement")) config.enableBezierMovement = j["enableBezierMovement"].get<bool>();
+        if (j.contains("bezierCurvature")) config.bezierCurvature = j["bezierCurvature"].get<float>();
+        if (j.contains("bezierRandomness")) config.bezierRandomness = j["bezierRandomness"].get<float>();
         
-        pos = json.find(':', pos);
-        if (pos == std::string::npos) return "";
-        
-        pos = json.find('"', pos);
-        if (pos == std::string::npos) return "";
-        
-        size_t endPos = json.find('"', pos + 1);
-        if (endPos == std::string::npos) return "";
-        
-        return unescapeJsonString(json.substr(pos + 1, endPos - pos - 1));
-    };
-    
-    auto extractNumber = [&json](const std::string& key) -> std::pair<bool, double> {
-        std::string searchKey = "\"" + key + "\"";
-        size_t pos = json.find(searchKey);
-        if (pos == std::string::npos) return {false, 0.0};
-        
-        pos = json.find(':', pos);
-        if (pos == std::string::npos) return {false, 0.0};
-        
-        while (pos < json.size() && (json[pos] == ':' || json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n')) {
-            ++pos;
-        }
-        
-        if (pos >= json.size()) return {false, 0.0};
-        
-        std::string numStr;
-        bool hasDecimal = false;
-        bool hasSign = false;
-        
-        while (pos < json.size()) {
-            char c = json[pos];
-            if (c == '-' && !hasSign && numStr.empty()) {
-                numStr += c;
-                hasSign = true;
-            } else if (c >= '0' && c <= '9') {
-                numStr += c;
-            } else if (c == '.' && !hasDecimal) {
-                numStr += c;
-                hasDecimal = true;
-            } else {
-                break;
-            }
-            ++pos;
-        }
-        
-        if (numStr.empty() || numStr == "-") return {false, 0.0};
-        
-        try {
-            return {true, std::stod(numStr)};
-        } catch (...) {
-            return {false, 0.0};
-        }
-    };
-    
-    auto extractBool = [&json](const std::string& key) -> std::pair<bool, bool> {
-        std::string searchKey = "\"" + key + "\"";
-        size_t pos = json.find(searchKey);
-        if (pos == std::string::npos) return {false, false};
-        
-        pos = json.find(':', pos);
-        if (pos == std::string::npos) return {false, false};
-        
-        size_t truePos = json.find("true", pos);
-        size_t falsePos = json.find("false", pos);
-        
-        if (truePos != std::string::npos && (falsePos == std::string::npos || truePos < falsePos)) {
-            return {true, true};
-        } else if (falsePos != std::string::npos) {
-            return {true, false};
-        }
-        return {false, false};
-    };
-    
-    config.configName = extractString("configName");
-    if (config.configName.empty()) {
-        config.configName = "unnamed";
+        return true;
+    } catch (const nlohmann::json::exception& e) {
+        obs_log(LOG_ERROR, "JSON parsing error: %s", e.what());
+        return false;
     }
-    
-    auto boolVal = extractBool("enableMouseControl");
-    if (boolVal.first) config.enableMouseControl = boolVal.second;
-    
-    auto numVal = extractNumber("hotkeyVirtualKey");
-    if (numVal.first) config.hotkeyVirtualKey = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("fovRadiusPixels");
-    if (numVal.first) config.fovRadiusPixels = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("sourceCanvasPosX");
-    if (numVal.first) config.sourceCanvasPosX = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("sourceCanvasPosY");
-    if (numVal.first) config.sourceCanvasPosY = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("sourceCanvasScaleX");
-    if (numVal.first) config.sourceCanvasScaleX = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("sourceCanvasScaleY");
-    if (numVal.first) config.sourceCanvasScaleY = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("sourceWidth");
-    if (numVal.first) config.sourceWidth = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("sourceHeight");
-    if (numVal.first) config.sourceHeight = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("inferenceFrameWidth");
-    if (numVal.first) config.inferenceFrameWidth = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("inferenceFrameHeight");
-    if (numVal.first) config.inferenceFrameHeight = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("cropOffsetX");
-    if (numVal.first) config.cropOffsetX = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("cropOffsetY");
-    if (numVal.first) config.cropOffsetY = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("screenOffsetX");
-    if (numVal.first) config.screenOffsetX = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("screenOffsetY");
-    if (numVal.first) config.screenOffsetY = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("screenWidth");
-    if (numVal.first) config.screenWidth = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("screenHeight");
-    if (numVal.first) config.screenHeight = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("pidPMin");
-    if (numVal.first) config.pidPMin = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("pidPMax");
-    if (numVal.first) config.pidPMax = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("pidPSlope");
-    if (numVal.first) config.pidPSlope = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("pidD");
-    if (numVal.first) config.pidD = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("aimSmoothingX");
-    if (numVal.first) config.aimSmoothingX = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("aimSmoothingY");
-    if (numVal.first) config.aimSmoothingY = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("maxPixelMove");
-    if (numVal.first) config.maxPixelMove = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("deadZonePixels");
-    if (numVal.first) config.deadZonePixels = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("targetYOffset");
-    if (numVal.first) config.targetYOffset = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("derivativeFilterAlpha");
-    if (numVal.first) config.derivativeFilterAlpha = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("controllerType");
-    if (numVal.first) config.controllerType = static_cast<ControllerType>(static_cast<int>(numVal.second));
-    
-    config.makcuPort = extractString("makcuPort");
-    
-    numVal = extractNumber("makcuBaudRate");
-    if (numVal.first) config.makcuBaudRate = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("yUnlockDelayMs");
-    if (numVal.first) config.yUnlockDelayMs = static_cast<int>(numVal.second);
-    
-    boolVal = extractBool("yUnlockEnabled");
-    if (boolVal.first) config.yUnlockEnabled = boolVal.second;
-    
-    boolVal = extractBool("autoTriggerEnabled");
-    if (boolVal.first) config.autoTriggerEnabled = boolVal.second;
-    
-    numVal = extractNumber("autoTriggerRadius");
-    if (numVal.first) config.autoTriggerRadius = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("autoTriggerCooldownMs");
-    if (numVal.first) config.autoTriggerCooldownMs = static_cast<int>(numVal.second);
-    
-    numVal = extractNumber("integralLimit");
-    if (numVal.first) config.integralLimit = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("integralSeparationThreshold");
-    if (numVal.first) config.integralSeparationThreshold = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("integralDeadZone");
-    if (numVal.first) config.integralDeadZone = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("pGainRampInitialScale");
-    if (numVal.first) config.pGainRampInitialScale = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("pGainRampDuration");
-    if (numVal.first) config.pGainRampDuration = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("predictionWeightX");
-    if (numVal.first) config.predictionWeightX = static_cast<float>(numVal.second);
-
-    numVal = extractNumber("predictionWeightY");
-    if (numVal.first) config.predictionWeightY = static_cast<float>(numVal.second);
-
-    boolVal = extractBool("useKalmanFilter");
-    if (boolVal.first) config.useKalmanFilter = boolVal.second;
-
-    numVal = extractNumber("kalmanProcessNoise");
-    if (numVal.first) config.kalmanProcessNoise = static_cast<float>(numVal.second);
-
-    numVal = extractNumber("kalmanMeasurementNoise");
-    if (numVal.first) config.kalmanMeasurementNoise = static_cast<float>(numVal.second);
-
-    numVal = extractNumber("kalmanConfidenceScale");
-    if (numVal.first) config.kalmanConfidenceScale = static_cast<float>(numVal.second);
-
-    return true;
 }
 
 bool ConfigManager::saveConfig(const ExtendedMouseControllerConfig& config) {
@@ -467,24 +354,24 @@ bool ConfigManager::saveConfig(const ExtendedMouseControllerConfig& config) {
     }
     
     std::string filePath = getConfigFilePath(config.configName);
-    std::string json = configToJson(config);
     
-    std::ofstream file(filePath, std::ios::binary);
-    if (!file.is_open()) {
-        obs_log(LOG_ERROR, "Failed to open config file for writing: %s", filePath.c_str());
+    try {
+        nlohmann::json j = configToJson(config);
+        std::ofstream file(filePath);
+        if (!file.is_open()) {
+            obs_log(LOG_ERROR, "Failed to open config file for writing: %s", filePath.c_str());
+            return false;
+        }
+        
+        file << j.dump(2);
+        file.close();
+        
+        obs_log(LOG_INFO, "Config saved: %s", config.configName.c_str());
+        return true;
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "Failed to save config: %s", e.what());
         return false;
     }
-    
-    file << json;
-    file.close();
-    
-    if (!file) {
-        obs_log(LOG_ERROR, "Failed to write config file: %s", filePath.c_str());
-        return false;
-    }
-    
-    obs_log(LOG_INFO, "Config saved: %s", config.configName.c_str());
-    return true;
 }
 
 bool ConfigManager::loadConfig(const std::string& configName, ExtendedMouseControllerConfig& config) {
@@ -492,25 +379,27 @@ bool ConfigManager::loadConfig(const std::string& configName, ExtendedMouseContr
     
     std::string filePath = getConfigFilePath(configName);
     
-    std::ifstream file(filePath, std::ios::binary);
-    if (!file.is_open()) {
-        obs_log(LOG_ERROR, "Failed to open config file for reading: %s", filePath.c_str());
+    try {
+        std::ifstream file(filePath);
+        if (!file.is_open()) {
+            obs_log(LOG_ERROR, "Failed to open config file for reading: %s", filePath.c_str());
+            return false;
+        }
+        
+        nlohmann::json j = nlohmann::json::parse(file);
+        file.close();
+        
+        if (!jsonToConfig(j, config)) {
+            obs_log(LOG_ERROR, "Failed to parse config file: %s", filePath.c_str());
+            return false;
+        }
+        
+        obs_log(LOG_INFO, "Config loaded: %s", configName.c_str());
+        return true;
+    } catch (const nlohmann::json::exception& e) {
+        obs_log(LOG_ERROR, "JSON parsing error: %s", e.what());
         return false;
     }
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    file.close();
-    
-    std::string json = buffer.str();
-    
-    if (!jsonToConfig(json, config)) {
-        obs_log(LOG_ERROR, "Failed to parse config file: %s", filePath.c_str());
-        return false;
-    }
-    
-    obs_log(LOG_INFO, "Config loaded: %s", configName.c_str());
-    return true;
 }
 
 bool ConfigManager::deleteConfig(const std::string& configName) {

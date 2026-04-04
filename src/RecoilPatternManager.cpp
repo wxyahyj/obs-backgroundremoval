@@ -5,8 +5,6 @@
 #include <obs-module.h>
 #include <plugin-support.h>
 #include <fstream>
-#include <sstream>
-#include <algorithm>
 
 RecoilPatternManager::RecoilPatternManager()
 {
@@ -168,144 +166,114 @@ std::string RecoilPatternManager::getConfigFilePath()
     return result;
 }
 
+nlohmann::json RecoilPatternManager::patternToJson(const RecoilPattern& pattern)
+{
+    nlohmann::json j;
+    j["weaponName"] = pattern.weaponName;
+    j["totalDurationMs"] = pattern.totalDurationMs;
+    j["totalMoveX"] = pattern.totalMoveX;
+    j["totalMoveY"] = pattern.totalMoveY;
+    
+    nlohmann::json movesArray = nlohmann::json::array();
+    for (const auto& move : pattern.moves) {
+        nlohmann::json moveObj;
+        moveObj["dx"] = move.dx;
+        moveObj["dy"] = move.dy;
+        moveObj["delayMs"] = move.delayMs;
+        movesArray.push_back(moveObj);
+    }
+    j["moves"] = movesArray;
+    
+    return j;
+}
+
+RecoilPattern RecoilPatternManager::jsonToPattern(const nlohmann::json& j)
+{
+    RecoilPattern pattern;
+    
+    if (j.contains("weaponName")) {
+        pattern.weaponName = j["weaponName"].get<std::string>();
+    }
+    if (j.contains("totalDurationMs")) {
+        pattern.totalDurationMs = j["totalDurationMs"].get<int>();
+    }
+    if (j.contains("totalMoveX")) {
+        pattern.totalMoveX = j["totalMoveX"].get<int>();
+    }
+    if (j.contains("totalMoveY")) {
+        pattern.totalMoveY = j["totalMoveY"].get<int>();
+    }
+    
+    if (j.contains("moves") && j["moves"].is_array()) {
+        for (const auto& moveObj : j["moves"]) {
+            RecoilMove move;
+            if (moveObj.contains("dx")) move.dx = moveObj["dx"].get<int>();
+            if (moveObj.contains("dy")) move.dy = moveObj["dy"].get<int>();
+            if (moveObj.contains("delayMs")) move.delayMs = moveObj["delayMs"].get<int>();
+            pattern.moves.push_back(move);
+        }
+    }
+    
+    return pattern;
+}
+
 bool RecoilPatternManager::saveToFile(const std::string& filePath)
 {
-    std::ofstream file(filePath);
-    if (!file.is_open()) {
-        obs_log(LOG_ERROR, "[RecoilPatternManager] Failed to open file for writing: %s", filePath.c_str());
+    try {
+        nlohmann::json root;
+        nlohmann::json patternsJson = nlohmann::json::object();
+        
+        for (const auto& pair : patterns_) {
+            patternsJson[pair.first] = patternToJson(pair.second);
+        }
+        
+        root["patterns"] = patternsJson;
+        
+        std::ofstream file(filePath);
+        if (!file.is_open()) {
+            obs_log(LOG_ERROR, "[RecoilPatternManager] Failed to open file for writing: %s", filePath.c_str());
+            return false;
+        }
+        
+        file << root.dump(2);
+        file.close();
+        
+        return true;
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[RecoilPatternManager] Failed to save file: %s", e.what());
         return false;
     }
-    
-    file << "{\n";
-    file << "  \"patterns\": {\n";
-    
-    bool first = true;
-    for (const auto& pair : patterns_) {
-        if (!first) {
-            file << ",\n";
-        }
-        first = false;
-        
-        const RecoilPattern& pattern = pair.second;
-        file << "    \"" << pattern.weaponName << "\": {\n";
-        file << "      \"weaponName\": \"" << pattern.weaponName << "\",\n";
-        file << "      \"totalDurationMs\": " << pattern.totalDurationMs << ",\n";
-        file << "      \"totalMoveX\": " << pattern.totalMoveX << ",\n";
-        file << "      \"totalMoveY\": " << pattern.totalMoveY << ",\n";
-        file << "      \"moves\": [\n";
-        
-        for (size_t i = 0; i < pattern.moves.size(); ++i) {
-            const RecoilMove& move = pattern.moves[i];
-            file << "        {\"dx\": " << move.dx << ", \"dy\": " << move.dy << ", \"delayMs\": " << move.delayMs << "}";
-            if (i < pattern.moves.size() - 1) {
-                file << ",";
-            }
-            file << "\n";
-        }
-        
-        file << "      ]\n";
-        file << "    }";
-    }
-    
-    file << "\n  }\n";
-    file << "}\n";
-    
-    return true;
 }
 
 bool RecoilPatternManager::loadFromFile(const std::string& filePath)
 {
-    std::ifstream file(filePath);
-    if (!file.is_open()) {
-        obs_log(LOG_INFO, "[RecoilPatternManager] Config file not found, starting fresh: %s", filePath.c_str());
+    try {
+        std::ifstream file(filePath);
+        if (!file.is_open()) {
+            obs_log(LOG_INFO, "[RecoilPatternManager] Config file not found, starting fresh: %s", filePath.c_str());
+            return false;
+        }
+        
+        nlohmann::json root = nlohmann::json::parse(file);
+        file.close();
+        
+        patterns_.clear();
+        
+        if (root.contains("patterns") && root["patterns"].is_object()) {
+            for (auto& [weaponName, patternJson] : root["patterns"].items()) {
+                RecoilPattern pattern = jsonToPattern(patternJson);
+                if (!pattern.moves.empty()) {
+                    patterns_[weaponName] = pattern;
+                }
+            }
+        }
+        
+        obs_log(LOG_INFO, "[RecoilPatternManager] Loaded %zu patterns from file", patterns_.size());
+        return true;
+    } catch (const nlohmann::json::exception& e) {
+        obs_log(LOG_ERROR, "[RecoilPatternManager] JSON parsing error: %s", e.what());
         return false;
     }
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    file.close();
-    
-    patterns_.clear();
-    
-    size_t pos = content.find("\"patterns\"");
-    if (pos == std::string::npos) {
-        return false;
-    }
-    
-    while (true) {
-        size_t weaponStart = content.find("\"", pos + 11);
-        if (weaponStart == std::string::npos) break;
-        
-        size_t weaponEnd = content.find("\"", weaponStart + 1);
-        if (weaponEnd == std::string::npos) break;
-        
-        std::string weaponName = content.substr(weaponStart + 1, weaponEnd - weaponStart - 1);
-        
-        RecoilPattern pattern;
-        pattern.weaponName = weaponName;
-        
-        size_t movesStart = content.find("\"moves\"", weaponEnd);
-        if (movesStart == std::string::npos) {
-            pos = weaponEnd;
-            continue;
-        }
-        
-        size_t arrayStart = content.find("[", movesStart);
-        size_t arrayEnd = content.find("]", arrayStart);
-        
-        std::string movesContent = content.substr(arrayStart, arrayEnd - arrayStart);
-        
-        size_t movePos = 0;
-        while (true) {
-            size_t dxPos = movesContent.find("\"dx\"", movePos);
-            if (dxPos == std::string::npos) break;
-            
-            size_t colonPos = movesContent.find(":", dxPos);
-            size_t commaPos = movesContent.find(",", colonPos);
-            if (commaPos == std::string::npos) {
-                commaPos = movesContent.find("}", colonPos);
-            }
-            
-            std::string dxStr = movesContent.substr(colonPos + 1, commaPos - colonPos - 1);
-            
-            size_t dyPos = movesContent.find("\"dy\"", commaPos);
-            colonPos = movesContent.find(":", dyPos);
-            commaPos = movesContent.find(",", colonPos);
-            if (commaPos == std::string::npos) {
-                commaPos = movesContent.find("}", colonPos);
-            }
-            
-            std::string dyStr = movesContent.substr(colonPos + 1, commaPos - colonPos - 1);
-            
-            size_t delayPos = movesContent.find("\"delayMs\"", commaPos);
-            colonPos = movesContent.find(":", delayPos);
-            size_t endBrace = movesContent.find("}", colonPos);
-            
-            std::string delayStr = movesContent.substr(colonPos + 1, endBrace - colonPos - 1);
-            
-            RecoilMove move;
-            move.dx = std::stoi(dxStr);
-            move.dy = std::stoi(dyStr);
-            move.delayMs = std::stoi(delayStr);
-            
-            pattern.moves.push_back(move);
-            pattern.totalMoveX += move.dx;
-            pattern.totalMoveY += move.dy;
-            pattern.totalDurationMs += move.delayMs;
-            
-            movePos = endBrace;
-        }
-        
-        if (!pattern.moves.empty()) {
-            patterns_[weaponName] = pattern;
-        }
-        
-        pos = arrayEnd;
-    }
-    
-    obs_log(LOG_INFO, "[RecoilPatternManager] Loaded %zu patterns from file", patterns_.size());
-    return true;
 }
 
 #endif

@@ -6,14 +6,10 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include "MouseControllerInterface.hpp"
 
 struct ExtendedMouseControllerConfig : public MouseControllerConfig {
-    int yUnlockDelayMs;
-    bool yUnlockEnabled;
-    bool autoTriggerEnabled;
-    float autoTriggerRadius;
-    int autoTriggerCooldownMs;
     std::string configName;
     
     ExtendedMouseControllerConfig();
@@ -43,10 +39,9 @@ private:
     
     bool ensureConfigsDirectory();
     std::string getConfigFilePath(const std::string& configName);
-    std::string configToJson(const ExtendedMouseControllerConfig& config);
-    bool jsonToConfig(const std::string& json, ExtendedMouseControllerConfig& config);
-    std::string escapeJsonString(const std::string& str);
-    std::string unescapeJsonString(const std::string& str);
+    
+    nlohmann::json configToJson(const ExtendedMouseControllerConfig& config);
+    bool jsonToConfig(const nlohmann::json& j, ExtendedMouseControllerConfig& config);
 };
 
 #endif

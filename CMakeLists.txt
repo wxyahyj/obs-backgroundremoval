@@ -47,6 +47,7 @@ if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
 
   find_package(CURL CONFIG REQUIRED)
   find_package(OpenCV CONFIG REQUIRED)
+  find_package(nlohmann_json CONFIG REQUIRED)
 
   add_library(OpenCV::opencv_core ALIAS opencv_core)
   add_library(OpenCV::opencv_imgproc ALIAS opencv_imgproc)
@@ -75,6 +76,9 @@ elseif(USE_PKGCONFIG)
   add_library(OpenCV::opencv_imgproc INTERFACE IMPORTED)
   target_link_libraries(OpenCV::opencv_imgproc INTERFACE opencv_imgproc)
   target_link_directories(OpenCV::opencv_imgproc INTERFACE ${PC_OPENCV_LIBRARY_DIRS})
+  
+  # nlohmann_json (header-only, try find_package first)
+  find_package(nlohmann_json CONFIG QUIET)
 else()
   # Let system find dependencies (Fallback)
 
@@ -82,6 +86,7 @@ else()
 
   find_package(CURL REQUIRED)
   find_package(OpenCV CONFIG REQUIRED)
+  find_package(nlohmann_json CONFIG REQUIRED)
 endif()
 
 if(APPLE)
@@ -150,7 +155,7 @@ else()
 endif()
 
 add_subdirectory(src/update-checker/CurlClient)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CurlClient OpenCV::opencv_core OpenCV::opencv_imgproc)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CurlClient OpenCV::opencv_core OpenCV::opencv_imgproc nlohmann_json::nlohmann_json)
 
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)
