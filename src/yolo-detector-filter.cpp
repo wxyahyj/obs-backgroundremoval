@@ -190,6 +190,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::mutex smoothedDetectionsMutex;
 
 	bool showKalmanPredictionInFloatingWindow;
+	int kalmanPredictionSize;
+	int kalmanPredictionLineWidth;
 
 		// PID调试数据
 	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
@@ -504,13 +506,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_properties_add_group(props, "render_group", obs_module_text("RenderConfiguration"), OBS_GROUP_NORMAL, nullptr);
 	obs_property_t *showDetectionResultsProp = obs_properties_add_bool(props, "show_detection_results", obs_module_text("ShowDetectionResults"));
-	obs_property_set_long_description(showDetectionResultsProp, "是否在视频上显示检测结果");
-	obs_property_t *showBBoxProp = obs_properties_add_bool(props, "show_bbox", obs_module_text("ShowBoundingBox"));
-	obs_property_set_long_description(showBBoxProp, "是否显示目标边界框");
-	obs_property_t *showLabelProp = obs_properties_add_bool(props, "show_label", obs_module_text("ShowLabel"));
-	obs_property_set_long_description(showLabelProp, "是否显示目标类别标签");
-	obs_property_t *showConfidenceProp = obs_properties_add_bool(props, "show_confidence", obs_module_text("ShowConfidence"));
-	obs_property_set_long_description(showConfidenceProp, "是否显示检测置信度");
+	obs_property_set_long_description(showDetectionResultsProp, "显示检测结果（边界框、类别标签、置信度）");
 	obs_property_t *bboxLineWidthProp = obs_properties_add_int_slider(props, "bbox_line_width", obs_module_text("LineWidth"), 1, 5, 1);
 	obs_property_set_long_description(bboxLineWidthProp, "边界框线宽");
 	obs_property_t *bboxColorProp = obs_properties_add_color(props, "bbox_color", obs_module_text("BoxColor"));
@@ -578,6 +574,12 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
     obs_property_t *showKalmanPredictionProp = obs_properties_add_bool(props, "show_kalman_prediction_in_floating_window", "显示卡尔曼预测位置");
     obs_property_set_long_description(showKalmanPredictionProp, "在悬浮窗中显示卡尔曼滤波器预测的目标位置");
+    
+    obs_property_t *kalmanPredictionSizeProp = obs_properties_add_int_slider(props, "kalman_prediction_size", "预测标记大小", 3, 30, 1);
+    obs_property_set_long_description(kalmanPredictionSizeProp, "预测位置标记的大小（像素）");
+    
+    obs_property_t *kalmanPredictionLineWidthProp = obs_properties_add_int_slider(props, "kalman_prediction_line_width", "预测标记线宽", 1, 5, 1);
+    obs_property_set_long_description(kalmanPredictionLineWidthProp, "预测位置标记的线宽");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1045,9 +1047,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 
 	// 页面1: 视觉与区域参数
 	obs_property_set_visible(obs_properties_get(props, "show_detection_results"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "show_bbox"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "show_label"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "show_confidence"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "bbox_line_width"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "bbox_color"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "label_font_scale"), page == 1);
@@ -1079,6 +1078,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	
 	// 卡尔曼预测显示参数只在视觉与区域页面显示
 	obs_property_set_visible(obs_properties_get(props, "show_kalman_prediction_in_floating_window"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_size"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_line_width"), page == 1);
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和卡尔曼滤波器页面(6)显示
@@ -1152,9 +1153,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "target_class", -1);
 	obs_data_set_default_int(settings, "inference_interval_frames", 1);
 	obs_data_set_default_bool(settings, "show_detection_results", true);
-	obs_data_set_default_bool(settings, "show_bbox", true);
-	obs_data_set_default_bool(settings, "show_label", true);
-	obs_data_set_default_bool(settings, "show_confidence", true);
 	obs_data_set_default_int(settings, "bbox_line_width", 2);
 	obs_data_set_default_int(settings, "bbox_color", 0xFF00FF00);
 	obs_data_set_default_bool(settings, "show_fov", false);
@@ -1182,6 +1180,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     
     // 卡尔曼预测显示参数
     obs_data_set_default_bool(settings, "show_kalman_prediction_in_floating_window", false);
+    obs_data_set_default_int(settings, "kalman_prediction_size", 10);
+    obs_data_set_default_int(settings, "kalman_prediction_line_width", 2);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -1493,6 +1493,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 
 	// 卡尔曼预测显示参数
 	tf->showKalmanPredictionInFloatingWindow = obs_data_get_bool(settings, "show_kalman_prediction_in_floating_window");
+	tf->kalmanPredictionSize = (int)obs_data_get_int(settings, "kalman_prediction_size");
+	tf->kalmanPredictionLineWidth = (int)obs_data_get_int(settings, "kalman_prediction_line_width");
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -2443,23 +2445,19 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 				
 				// 确保坐标在有效范围内
 				if (windowX >= 0 && windowX < frameWidth && windowY >= 0 && windowY < frameHeight) {
-					cv::Point center(static_cast<int>(windowX), static_cast<int>(windowY));
+					int size = filter->kalmanPredictionSize;
+					int lineWidth = filter->kalmanPredictionLineWidth;
+					cv::Scalar color(0, 255, 0);
 
-					// 绘制绿色空心圆
-					cv::circle(filter->floatingWindowFrame, center, 10, cv::Scalar(0, 255, 0), 2);
-					// 绘制绿色实心圆心
-					cv::circle(filter->floatingWindowFrame, center, 3, cv::Scalar(0, 255, 0), -1);
-
-					// 绘制十字标记
-					int crossSize = 15;
+					// 绘制X形标记
 					cv::line(filter->floatingWindowFrame,
-						cv::Point(static_cast<int>(windowX) - crossSize, static_cast<int>(windowY)),
-						cv::Point(static_cast<int>(windowX) + crossSize, static_cast<int>(windowY)),
-						cv::Scalar(0, 255, 0), 2);
+						cv::Point(static_cast<int>(windowX) - size, static_cast<int>(windowY) - size),
+						cv::Point(static_cast<int>(windowX) + size, static_cast<int>(windowY) + size),
+						color, lineWidth);
 					cv::line(filter->floatingWindowFrame,
-						cv::Point(static_cast<int>(windowX), static_cast<int>(windowY) - crossSize),
-						cv::Point(static_cast<int>(windowX), static_cast<int>(windowY) + crossSize),
-						cv::Scalar(0, 255, 0), 2);
+						cv::Point(static_cast<int>(windowX) + size, static_cast<int>(windowY) - size),
+						cv::Point(static_cast<int>(windowX) - size, static_cast<int>(windowY) + size),
+						color, lineWidth);
 				}
 			}
 		}
