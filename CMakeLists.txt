@@ -230,6 +230,7 @@ if(WIN32)
   target_sources(
     ${CMAKE_PROJECT_NAME}
     PRIVATE
+      src/AbstractMouseController.cpp
       src/MouseController.cpp
       src/MAKCUMouseController.cpp
       src/DerivativePredictor.cpp
