@@ -12,7 +12,6 @@
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
 #include "KalmanFilter.hpp"
-#include "TargetTracker.hpp"
 
 class MAKCUMouseController : public MouseControllerInterface {
 public:
@@ -102,9 +101,6 @@ private:
     // 卡尔曼滤波器
     KalmanFilter kalmanFilter;
     bool kalmanFilterInitialized;
-
-    // 增强的目标跟踪器
-    TargetTracker targetTracker;
 
     // 时间步长自适应
     std::chrono::steady_clock::time_point lastTickTime;
