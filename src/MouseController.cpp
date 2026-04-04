@@ -38,6 +38,7 @@ MouseController::MouseController()
     , stdFilteredDeltaErrorY(0.0f)
     , stdPreviousMoveX(0.0f)
     , stdPreviousMoveY(0.0f)
+    , lockedTrackId(-1)
     , previousTargetX(0.0f)
     , previousTargetY(0.0f)
     , targetVelocityX(0.0f)
@@ -162,14 +163,6 @@ void MouseController::tick()
     deltaTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime).count() / 1000.0f;
     deltaTime = std::max(0.001f, std::min(deltaTime, 0.05f));
     lastTickTime = now;
-
-    // 更新目标跟踪器
-    int frameWidth = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth :
-                     ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
-    int frameHeight = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight :
-                      ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
-
-    targetTracker.update(currentDetections, deltaTime, frameWidth, frameHeight);
 
     // 使用增强的目标选择
     Detection* target = selectTarget();
@@ -475,9 +468,7 @@ void MouseController::tick()
 Detection* MouseController::selectTarget()
 {
     if (currentDetections.empty()) {
-        currentTargetTrackId = -1;
-        currentTargetDistance = 0.0f;
-        targetTracker.unlock();
+        lockedTrackId = -1;
         return nullptr;
     }
 
@@ -490,53 +481,61 @@ Detection* MouseController::selectTarget()
     int fovCenterY = frameHeight / 2;
     float fovRadius = static_cast<float>(config.fovRadiusPixels);
 
-    // 使用增强的目标跟踪器获取最佳目标
-    TrackedTarget* trackedTarget = targetTracker.getBestTarget(frameWidth, frameHeight, fovCenterX, fovCenterY, fovRadius);
-
-    if (!trackedTarget) {
-        currentTargetTrackId = -1;
-        currentTargetDistance = 0.0f;
-        return nullptr;
-    }
-
-    // 更新当前跟踪ID（使用persistentId）
-    currentTargetTrackId = trackedTarget->persistentId;
-
-    // 在原始检测中查找对应的Detection
-    for (auto& det : currentDetections) {
-        // 使用IOU匹配找到对应的检测
-        if (trackedTarget->getIOU(det) > 0.5f) {
-            // 计算距离
-            float pixelX = det.centerX * frameWidth;
-            float pixelY = det.centerY * frameHeight;
-            float dx = pixelX - fovCenterX;
-            float dy = pixelY - fovCenterY;
-            currentTargetDistance = std::sqrt(dx * dx + dy * dy);
-            return &det;
+    // 1. 首先检查锁定目标是否仍在检测列表中且在FOV内
+    if (lockedTrackId >= 0) {
+        for (auto& det : currentDetections) {
+            if (det.trackId == lockedTrackId) {
+                float pixelX = det.centerX * frameWidth;
+                float pixelY = det.centerY * frameHeight;
+                float dx = pixelX - fovCenterX;
+                float dy = pixelY - fovCenterY;
+                float distSq = dx * dx + dy * dy;
+                
+                if (distSq <= fovRadius * fovRadius) {
+                    currentTargetDistance = std::sqrt(distSq);
+                    return &det;  // 继续追踪锁定目标
+                }
+            }
         }
     }
 
-    // 如果找不到精确匹配，返回最接近的检测
-    float minDistance = std::numeric_limits<float>::max();
-    Detection* closestDet = nullptr;
+    // 2. 锁定目标丢失或未锁定，选择新的最佳目标
+    Detection* bestTarget = nullptr;
+    float bestScore = -1.0f;
 
     for (auto& det : currentDetections) {
-        float dist = trackedTarget->getDistanceToDetection(det, frameWidth, frameHeight);
-        if (dist < minDistance) {
-            minDistance = dist;
-            closestDet = &det;
+        float pixelX = det.centerX * frameWidth;
+        float pixelY = det.centerY * frameHeight;
+        float dx = pixelX - fovCenterX;
+        float dy = pixelY - fovCenterY;
+        float distSq = dx * dx + dy * dy;
+
+        if (distSq > fovRadius * fovRadius) continue;
+
+        float distance = std::sqrt(distSq);
+        float distanceScore = 1.0f / (1.0f + distance * 0.01f);
+        float confidenceScore = det.confidence;
+        float score = 0.6f * distanceScore + 0.4f * confidenceScore;
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestTarget = &det;
         }
     }
 
-    if (closestDet) {
-        float pixelX = closestDet->centerX * frameWidth;
-        float pixelY = closestDet->centerY * frameHeight;
+    if (bestTarget) {
+        lockedTrackId = bestTarget->trackId;
+        float pixelX = bestTarget->centerX * frameWidth;
+        float pixelY = bestTarget->centerY * frameHeight;
         float dx = pixelX - fovCenterX;
         float dy = pixelY - fovCenterY;
         currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+    } else {
+        lockedTrackId = -1;
+        currentTargetDistance = 0.0f;
     }
 
-    return closestDet;
+    return bestTarget;
 }
 
 POINT MouseController::convertToScreenCoordinates(const Detection& det)
@@ -666,6 +665,8 @@ void MouseController::resetPidState()
     stdFilteredDeltaErrorY = 0.0f;
     stdPreviousMoveX = 0.0f;
     stdPreviousMoveY = 0.0f;
+    // 重置目标锁定
+    lockedTrackId = -1;
 }
 
 float MouseController::calculateDynamicP(float distance)

@@ -85,6 +85,9 @@ private:
     float stdPreviousMoveX;  // 标准PID平滑状态
     float stdPreviousMoveY;
     
+    // 目标锁定相关
+    int lockedTrackId;  // 当前锁定的目标trackId，-1表示未锁定
+    
     // 自动压枪相关
     std::chrono::steady_clock::time_point lastRecoilTime;
     bool isFiring;

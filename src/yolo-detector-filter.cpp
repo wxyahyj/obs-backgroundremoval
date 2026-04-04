@@ -2142,13 +2142,43 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 	frame.copyTo(filter->floatingWindowFrame);
 
 #ifdef _WIN32
+	int frameWidth = filter->floatingWindowFrame.cols;
+	int frameHeight = filter->floatingWindowFrame.rows;
+
+	// 绘制检测框和trackId
+	{
+		std::lock_guard<std::mutex> detLock(filter->detectionsMutex);
+		for (const auto& det : filter->detections) {
+			float x = det.x * frameWidth;
+			float y = det.y * frameHeight;
+			float w = det.width * frameWidth;
+			float h = det.height * frameHeight;
+
+			// 绘制边界框
+			cv::rectangle(filter->floatingWindowFrame,
+				cv::Rect(static_cast<int>(x), static_cast<int>(y),
+					static_cast<int>(w), static_cast<int>(h)),
+				cv::Scalar(0, 255, 0), 2);
+
+			// 绘制trackId
+			std::string idText = "ID:" + std::to_string(det.trackId);
+			int baseline = 0;
+			double fontScale = 0.5;
+			int thickness = 1;
+			cv::Size textSize = cv::getTextSize(idText, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+			cv::Point textOrg(static_cast<int>(x), static_cast<int>(y) - 5);
+			if (textOrg.y < textSize.height) {
+				textOrg.y = static_cast<int>(y) + textSize.height + 5;
+			}
+			cv::putText(filter->floatingWindowFrame, idText, textOrg,
+				cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
+		}
+	}
+
 	// 绘制卡尔曼预测位置
 	if (filter->mouseController) {
 		float predX, predY;
 		if (filter->mouseController->getKalmanPrediction(predX, predY)) {
-			int frameWidth = filter->floatingWindowFrame.cols;
-			int frameHeight = filter->floatingWindowFrame.rows;
-
 			// 确保坐标在有效范围内
 			if (predX >= 0 && predX < frameWidth && predY >= 0 && predY < frameHeight) {
 				cv::Point center(static_cast<int>(predX), static_cast<int>(predY));
