@@ -188,7 +188,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::map<int, SmoothedDetection> smoothedDetections;
 	std::mutex smoothedDetectionsMutex;
 
-	// PID调试数据
+	bool showKalmanPredictionInFloatingWindow;
+
+		// PID调试数据
 	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
 	struct PidDataPoint {
 		float errorX;
@@ -571,7 +573,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *detectionSmoothingEnabledProp = obs_properties_add_bool(props, "detection_smoothing_enabled", "启用检测框平滑");
 	obs_property_set_long_description(detectionSmoothingEnabledProp, "启用检测框平滑，减少检测框抖动");
 	obs_property_t *detectionSmoothingAlphaProp = obs_properties_add_float_slider(props, "detection_smoothing_alpha", "平滑系数", 0.01, 1.0, 0.01);
-	obs_property_set_long_description(detectionSmoothingAlphaProp, "平滑系数，值越小越平滑但延迟越高，值越大响应越快但平滑效果减弱");
+	 obs_property_set_long_description(detectionSmoothingAlphaProp, "平滑系数，值越小越平滑但延迟越高，值越大响应越快但平滑效果减弱");
+
+    obs_property_t *showKalmanPredictionProp = obs_properties_add_bool(props, "show_kalman_prediction_in_floating_window", "显示卡尔曼预测位置");
+    obs_property_set_long_description(showKalmanPredictionProp, "在悬浮窗中显示卡尔曼滤波器预测的目标位置");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1070,6 +1075,9 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 检测框平滑参数只在视觉与区域页面显示
 	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_enabled"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_alpha"), page == 1);
+	
+	// 卡尔曼预测显示参数只在视觉与区域页面显示
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_prediction_in_floating_window"), page == 1);
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和卡尔曼滤波器页面(6)显示
@@ -1170,6 +1178,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     // 检测框平滑参数
     obs_data_set_default_bool(settings, "detection_smoothing_enabled", true);
     obs_data_set_default_double(settings, "detection_smoothing_alpha", 0.3);
+    
+    // 卡尔曼预测显示参数
+    obs_data_set_default_bool(settings, "show_kalman_prediction_in_floating_window", false);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -1478,6 +1489,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	// 检测框平滑参数
 	tf->detectionSmoothingEnabled = obs_data_get_bool(settings, "detection_smoothing_enabled");
 	tf->detectionSmoothingAlpha = (float)obs_data_get_double(settings, "detection_smoothing_alpha");
+
+	// 卡尔曼预测显示参数
+	tf->showKalmanPredictionInFloatingWindow = obs_data_get_bool(settings, "show_kalman_prediction_in_floating_window");
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -2408,28 +2422,44 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 	}
 
 	// 绘制卡尔曼预测位置
-	if (filter->mouseController) {
+	if (filter->showKalmanPredictionInFloatingWindow && filter->mouseController) {
 		float predX, predY;
 		if (filter->mouseController->getKalmanPrediction(predX, predY)) {
-			// 确保坐标在有效范围内
-			if (predX >= 0 && predX < frameWidth && predY >= 0 && predY < frameHeight) {
-				cv::Point center(static_cast<int>(predX), static_cast<int>(predY));
+			// 获取推理帧尺寸
+			int infWidth, infHeight;
+			{
+				std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
+				infWidth = filter->inferenceFrameWidth;
+				infHeight = filter->inferenceFrameHeight;
+			}
+			
+			if (infWidth > 0 && infHeight > 0) {
+				// 坐标转换：推理帧像素坐标 -> 归一化坐标 -> 悬浮窗像素坐标
+				float normX = predX / infWidth;
+				float normY = predY / infHeight;
+				float windowX = normX * frameWidth;
+				float windowY = normY * frameHeight;
+				
+				// 确保坐标在有效范围内
+				if (windowX >= 0 && windowX < frameWidth && windowY >= 0 && windowY < frameHeight) {
+					cv::Point center(static_cast<int>(windowX), static_cast<int>(windowY));
 
-				// 绘制绿色空心圆
-				cv::circle(filter->floatingWindowFrame, center, 10, cv::Scalar(0, 255, 0), 2);
-				// 绘制绿色实心圆心
-				cv::circle(filter->floatingWindowFrame, center, 3, cv::Scalar(0, 255, 0), -1);
+					// 绘制绿色空心圆
+					cv::circle(filter->floatingWindowFrame, center, 10, cv::Scalar(0, 255, 0), 2);
+					// 绘制绿色实心圆心
+					cv::circle(filter->floatingWindowFrame, center, 3, cv::Scalar(0, 255, 0), -1);
 
-				// 绘制十字标记
-				int crossSize = 15;
-				cv::line(filter->floatingWindowFrame,
-					cv::Point(static_cast<int>(predX) - crossSize, static_cast<int>(predY)),
-					cv::Point(static_cast<int>(predX) + crossSize, static_cast<int>(predY)),
-					cv::Scalar(0, 255, 0), 2);
-				cv::line(filter->floatingWindowFrame,
-					cv::Point(static_cast<int>(predX), static_cast<int>(predY) - crossSize),
-					cv::Point(static_cast<int>(predX), static_cast<int>(predY) + crossSize),
-					cv::Scalar(0, 255, 0), 2);
+					// 绘制十字标记
+					int crossSize = 15;
+					cv::line(filter->floatingWindowFrame,
+						cv::Point(static_cast<int>(windowX) - crossSize, static_cast<int>(windowY)),
+						cv::Point(static_cast<int>(windowX) + crossSize, static_cast<int>(windowY)),
+						cv::Scalar(0, 255, 0), 2);
+					cv::line(filter->floatingWindowFrame,
+						cv::Point(static_cast<int>(windowX), static_cast<int>(windowY) - crossSize),
+						cv::Point(static_cast<int>(windowX), static_cast<int>(windowY) + crossSize),
+						cv::Scalar(0, 255, 0), 2);
+				}
 			}
 		}
 	}
