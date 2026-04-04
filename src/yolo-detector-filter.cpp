@@ -162,6 +162,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	HWND floatingWindowHandle;
 	std::mutex floatingWindowMutex;
 	cv::Mat floatingWindowFrame;
+	bool showTrackIdInFloatingWindow;
 
 	// PID调试数据
 	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
@@ -780,6 +781,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(floatingWindowHeightProp, "浮动窗口的高度");
 	obs_property_t *showPidDebugWindowProp = obs_properties_add_bool(props, "show_pid_debug_window", "显示PID调试曲线");
 	obs_property_set_long_description(showPidDebugWindowProp, "在浮动窗口中显示PID调试曲线，方便调整参数");
+	obs_property_t *showTrackIdProp = obs_properties_add_bool(props, "show_track_id_in_floating_window", "显示目标ID");
+	obs_property_set_long_description(showTrackIdProp, "在浮动窗口中显示目标追踪ID");
 
 	obs_properties_add_group(props, "config_management_group", "配置管理", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_button(props, "save_config", "保存配置", saveConfigCallback);
@@ -1144,6 +1147,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "floating_window_width", 640);
 	obs_data_set_default_int(settings, "floating_window_height", 480);
 	obs_data_set_default_bool(settings, "show_pid_debug_window", false);
+	obs_data_set_default_bool(settings, "show_track_id_in_floating_window", false);
 #endif
 
 #ifdef _WIN32
@@ -1473,6 +1477,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			destroyPidDebugWindow(tf.get());
 		}
 	}
+
+	tf->showTrackIdInFloatingWindow = obs_data_get_bool(settings, "show_track_id_in_floating_window");
 
 	tf->currentConfigIndex = (int)obs_data_get_int(settings, "mouse_config_select");
 
@@ -2344,17 +2350,19 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 				cv::Scalar(0, 255, 0), 2);
 
 			// 绘制trackId
-			std::string idText = "ID:" + std::to_string(det.trackId);
-			int baseline = 0;
-			double fontScale = 0.5;
-			int thickness = 1;
-			cv::Size textSize = cv::getTextSize(idText, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-			cv::Point textOrg(static_cast<int>(x), static_cast<int>(y) - 5);
-			if (textOrg.y < textSize.height) {
-				textOrg.y = static_cast<int>(y) + textSize.height + 5;
+			if (filter->showTrackIdInFloatingWindow) {
+				std::string idText = "ID:" + std::to_string(det.trackId);
+				int baseline = 0;
+				double fontScale = 0.5;
+				int thickness = 1;
+				cv::Size textSize = cv::getTextSize(idText, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+				cv::Point textOrg(static_cast<int>(x), static_cast<int>(y) - 5);
+				if (textOrg.y < textSize.height) {
+					textOrg.y = static_cast<int>(y) + textSize.height + 5;
+				}
+				cv::putText(filter->floatingWindowFrame, idText, textOrg,
+					cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
 			}
-			cv::putText(filter->floatingWindowFrame, idText, textOrg,
-				cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
 		}
 	}
 
