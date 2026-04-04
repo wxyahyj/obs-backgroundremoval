@@ -100,6 +100,8 @@ struct MouseControllerConfig {
     float kalmanProcessNoise = 0.01f;      // 过程噪声
     float kalmanMeasurementNoise = 1.0f;   // 测量噪声
     float kalmanConfidenceScale = 1.0f;    // 置信度缩放因子
+    float kalmanPredictionWeightX = 0.2f;  // 卡尔曼预测X轴权重
+    float kalmanPredictionWeightY = 0.1f;  // 卡尔曼预测Y轴权重
 
     // 标准PID参数（经典PID算法）
     float stdKp = 0.3f;           // 比例系数
