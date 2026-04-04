@@ -40,7 +40,6 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.pidPMax = 0.5f;
     config.pidPSlope = 0.001f;
     config.pidD = 0.05f;
-    config.baselineCompensation = 0.0f;
     config.aimSmoothingX = 0.0f;
     config.aimSmoothingY = 0.0f;
     config.maxPixelMove = 10.0f;
@@ -204,7 +203,6 @@ std::string ConfigManager::configToJson(const ExtendedMouseControllerConfig& con
     oss << "  \"pidPMax\": " << config.pidPMax << ",\n";
     oss << "  \"pidPSlope\": " << config.pidPSlope << ",\n";
     oss << "  \"pidD\": " << config.pidD << ",\n";
-    oss << "  \"baselineCompensation\": " << config.baselineCompensation << ",\n";
     oss << "  \"aimSmoothingX\": " << config.aimSmoothingX << ",\n";
     oss << "  \"aimSmoothingY\": " << config.aimSmoothingY << ",\n";
     oss << "  \"maxPixelMove\": " << config.maxPixelMove << ",\n";
@@ -383,9 +381,6 @@ bool ConfigManager::jsonToConfig(const std::string& json, ExtendedMouseControlle
     
     numVal = extractNumber("pidD");
     if (numVal.first) config.pidD = static_cast<float>(numVal.second);
-    
-    numVal = extractNumber("baselineCompensation");
-    if (numVal.first) config.baselineCompensation = static_cast<float>(numVal.second);
     
     numVal = extractNumber("aimSmoothingX");
     if (numVal.first) config.aimSmoothingX = static_cast<float>(numVal.second);

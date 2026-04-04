@@ -386,13 +386,12 @@ void MAKCUMouseController::tick()
         return;
     }
 
-    float fovCenterX = frameWidth / 2.0f;
-    float fovCenterY = frameHeight / 2.0f;
+    float fovCenterX = config.inferenceFrameWidth / 2.0f;
+    float fovCenterY = config.inferenceFrameHeight / 2.0f;
 
-    float targetPixelX = target->centerX * frameWidth;
-    // Y轴偏移：相对于目标框高度的百分比（-50到50表示-50%到+50%）
-    float yOffsetPixels = config.targetYOffset * 0.01f * target->height * frameHeight;
-    float targetPixelY = target->centerY * frameHeight - yOffsetPixels;
+    float targetPixelX = target->centerX * config.inferenceFrameWidth;
+    float yOffsetPixels = config.targetYOffset * 0.01f * target->height * config.inferenceFrameHeight;
+    float targetPixelY = target->centerY * config.inferenceFrameHeight - yOffsetPixels;
 
     // 计算目标速度（像素/帧）
     if (deltaTime > 0.001f) {
