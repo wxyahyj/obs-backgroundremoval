@@ -159,8 +159,7 @@ else()
   endif()
 endif()
 
-add_subdirectory(src/update-checker/CurlClient)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CurlClient OpenCV::opencv_core OpenCV::opencv_imgproc nlohmann_json::nlohmann_json Eigen3::Eigen)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc nlohmann_json::nlohmann_json Eigen3::Eigen)
 
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)
@@ -226,11 +225,8 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/plugin-main.c
-    src/ort-utils/ort-session-utils.cpp
     src/obs-utils/obs-utils.cpp
     src/obs-utils/obs-config-utils.cpp
-    src/update-checker/github-utils.cpp
-    src/update-checker/update-checker.cpp
     src/yolo-detector-filter-info.c
     src/yolo-detector-filter.cpp
     src/models/ModelYOLO.cpp

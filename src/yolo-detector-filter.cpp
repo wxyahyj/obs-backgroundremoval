@@ -35,10 +35,8 @@
 #include "models/Detection.h"
 #include "HungarianAlgorithm.hpp"
 #include "FilterData.h"
-#include "ort-utils/ort-session-utils.h"
 #include "obs-utils/obs-utils.h"
 #include "consts.h"
-#include "update-checker/update-checker.h"
 
 struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
 	std::unique_ptr<ModelYOLO> yoloModel;
