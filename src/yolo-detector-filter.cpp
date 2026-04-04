@@ -3476,10 +3476,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->texrender = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
 		instance->stagesurface = nullptr;
 
-		// Initialize ORT environment
-		std::string instanceName{"yolo-detector-inference"};
-		instance->env.reset(new Ort::Env(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, instanceName.c_str()));
-
 		instance->inferenceRunning = false;
 		instance->shouldInference = false;
 		instance->frameCounter = 0;
