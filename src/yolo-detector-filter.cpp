@@ -293,6 +293,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float pGainRampDuration;
 		float predictionWeightX;
 		float predictionWeightY;
+		// DerivativePredictor开关
+		bool useDerivativePredictor;
 		// 持续自瞄和自动压枪参数
 		bool continuousAimEnabled;
 		bool autoRecoilControlEnabled;
@@ -369,6 +371,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pGainRampDuration = 0.5f;
 			predictionWeightX = 0.5f;
 			predictionWeightY = 0.1f;
+			useDerivativePredictor = true;
 			// 持续自瞄和自动压枪默认值
 			continuousAimEnabled = false;
 			autoRecoilControlEnabled = false;
@@ -469,6 +472,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "卡尔曼滤波器", 6);
 	obs_property_list_add_int(pageList, "贝塞尔曲线移动", 7);
 	obs_property_list_add_int(pageList, "标准PID配置", 8);
+	obs_property_list_add_int(pageList, "预测器配置", 9);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -767,12 +771,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
 		obs_property_t *pGainRampDurationProp = obs_properties_add_float_slider(props, propName, "P-Gain Ramp持续时间(秒)", 0.0, 2.0, 0.1);
 		obs_property_set_long_description(pGainRampDurationProp, "P-Gain Ramp持续时间，从初始比例过渡到100%的时间");
-		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
-		obs_property_t *predictionWeightXProp = obs_properties_add_float_slider(props, propName, "X轴预测权重", 0.0, 1.0, 0.1);
-		obs_property_set_long_description(predictionWeightXProp, "X轴方向的目标预测权重，值越大预测效果越强");
-		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
-		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "Y轴预测权重", 0.0, 1.0, 0.1);
-		obs_property_set_long_description(predictionWeightYProp, "Y轴方向的目标预测权重，值越大预测效果越强");
 
 		// 自动压枪参数
 		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
@@ -818,6 +816,19 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
 		obs_property_t *kalmanPredWeightYProp = obs_properties_add_float_slider(props, propName, "卡尔曼预测权重Y", 0.0f, 1.0f, 0.05f);
 		obs_property_set_long_description(kalmanPredWeightYProp, "卡尔曼预测在Y轴的融合权重。值越大预测偏移影响越大，建议0.05-0.2");
+		
+		// DerivativePredictor参数
+		snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", i);
+		obs_property_t *useDerivativePredProp = obs_properties_add_bool(props, propName, "启用导数预测器");
+		obs_property_set_long_description(useDerivativePredProp, "启用基于速度/加速度的导数预测器，适合稳定目标");
+		
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+		obs_property_t *predictionWeightXProp = obs_properties_add_float_slider(props, propName, "导数预测权重X", 0.0f, 1.0f, 0.1f);
+		obs_property_set_long_description(predictionWeightXProp, "导数预测器在X轴的融合权重，值越大预测效果越强");
+		
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "导数预测权重Y", 0.0f, 1.0f, 0.1f);
+		obs_property_set_long_description(predictionWeightYProp, "导数预测器在Y轴的融合权重，值越大预测效果越强");
 	}
 
 	obs_properties_add_group(props, "bezier_movement_group", "贝塞尔曲线移动", OBS_GROUP_NORMAL, nullptr);
@@ -1009,6 +1020,13 @@ static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int config
 	snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// DerivativePredictor参数
+	snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1390,6 +1408,13 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.2);
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
+		// DerivativePredictor参数默认值
+		snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", i);
+		obs_data_set_default_bool(settings, propName, true);
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
 		// 贝塞尔曲线移动参数默认值
 		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
@@ -1740,6 +1765,13 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].kalmanPredictionWeightX = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].kalmanPredictionWeightY = (float)obs_data_get_double(settings, propName);
+		// DerivativePredictor参数
+		snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", i);
+		tf->mouseConfigs[i].useDerivativePredictor = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
+		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
+		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
 		// 贝塞尔曲线移动参数
 		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
 		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);
@@ -3697,6 +3729,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.kalmanConfidenceScale = cfg.kalmanConfidenceScale;
 		mcConfig.kalmanPredictionWeightX = cfg.kalmanPredictionWeightX;
 		mcConfig.kalmanPredictionWeightY = cfg.kalmanPredictionWeightY;
+		// DerivativePredictor参数
+		mcConfig.useDerivativePredictor = cfg.useDerivativePredictor;
+		mcConfig.predictionWeightX = cfg.predictionWeightX;
+		mcConfig.predictionWeightY = cfg.predictionWeightY;
 		// 贝塞尔曲线移动参数
 		mcConfig.enableBezierMovement = cfg.enableBezierMovement;
 		mcConfig.bezierCurvature = cfg.bezierCurvature;

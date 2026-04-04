@@ -339,23 +339,30 @@ void MouseController::tick()
 
             // 获取预测偏移量（直接返回相对偏移，可用于PID误差融合）
             kalmanFilter.getPredictionOffset(deltaTime, targetPixelX, targetPixelY, predictedX, predictedY);
-        } else {
-            // 使用原有的DerivativePredictor
+        } 
+        
+        // DerivativePredictor独立运行
+        float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+        if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, deltaTime);
-            predictor.predict(deltaTime, predictedX, predictedY);
+            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
         }
 
-        // 误差融合：根据使用的预测器选择不同的权重
-        float weightX, weightY;
+        // 误差融合：根据各预测器开关和权重计算
+        float fusedErrorX = errorX;
+        float fusedErrorY = errorY;
+        
+        // 卡尔曼预测融合
         if (config.useKalmanFilter) {
-            weightX = config.kalmanPredictionWeightX;
-            weightY = config.kalmanPredictionWeightY;
-        } else {
-            weightX = config.predictionWeightX;
-            weightY = config.predictionWeightY;
+            fusedErrorX += config.kalmanPredictionWeightX * predictedX;
+            fusedErrorY += config.kalmanPredictionWeightY * predictedY;
         }
-        float fusedErrorX = errorX + weightX * predictedX;
-        float fusedErrorY = errorY + weightY * predictedY;
+        
+        // DerivativePredictor融合
+        if (config.useDerivativePredictor) {
+            fusedErrorX += config.predictionWeightX * derivPredictedX;
+            fusedErrorY += config.predictionWeightY * derivPredictedY;
+        }
 
         // 计算动态P增益，应用P-Gain Ramp
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();

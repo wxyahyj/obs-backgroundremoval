@@ -92,6 +92,8 @@ struct MouseControllerConfig {
     float integralRate = 0.015f;  // 积分增益变化率（和标准PID一致）
     float pGainRampInitialScale = 0.6f;
     float pGainRampDuration = 0.5f;
+    // DerivativePredictor配置
+    bool useDerivativePredictor = true;    // 是否启用导数预测器
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
 
