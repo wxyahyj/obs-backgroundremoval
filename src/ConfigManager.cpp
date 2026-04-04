@@ -53,7 +53,7 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.yUnlockDelayMs = 100;
     config.yUnlockEnabled = false;
     config.autoTriggerEnabled = false;
-    config.autoTriggerRadius = 30.0f;
+    config.autoTriggerRadius = 30;
     config.autoTriggerCooldownMs = 200;
     config.autoTriggerFireDelay = 0;
     config.autoTriggerFireDuration = 50;
@@ -289,7 +289,7 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("yUnlockDelayMs")) config.yUnlockDelayMs = j["yUnlockDelayMs"].get<int>();
         if (j.contains("yUnlockEnabled")) config.yUnlockEnabled = j["yUnlockEnabled"].get<bool>();
         if (j.contains("autoTriggerEnabled")) config.autoTriggerEnabled = j["autoTriggerEnabled"].get<bool>();
-        if (j.contains("autoTriggerRadius")) config.autoTriggerRadius = j["autoTriggerRadius"].get<float>();
+        if (j.contains("autoTriggerRadius")) config.autoTriggerRadius = j["autoTriggerRadius"].get<int>();
         if (j.contains("autoTriggerCooldownMs")) config.autoTriggerCooldownMs = j["autoTriggerCooldownMs"].get<int>();
         if (j.contains("autoTriggerFireDelay")) config.autoTriggerFireDelay = j["autoTriggerFireDelay"].get<int>();
         if (j.contains("autoTriggerFireDuration")) config.autoTriggerFireDuration = j["autoTriggerFireDuration"].get<int>();
