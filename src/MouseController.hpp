@@ -98,6 +98,18 @@ private:
     KalmanFilter kalmanFilter;
     bool kalmanFilterInitialized;
 
+    // 贝塞尔曲线移动状态
+    struct BezierState {
+        bool active = false;
+        float startX, startY;
+        float endX, endY;
+        float controlX, controlY;
+        float progress = 0.0f;
+        std::chrono::steady_clock::time_point startTime;
+        float duration = 0.0f;
+    };
+    BezierState bezierState;
+
     // 时间步长自适应
     std::chrono::steady_clock::time_point lastTickTime;
     float deltaTime;
@@ -120,6 +132,11 @@ private:
     int getRandomDelay();
     int getRandomDuration();
     float getCurrentPGain();
+    
+    // 贝塞尔曲线相关函数
+    void initBezierMovement(float startX, float startY, float endX, float endY);
+    void getQuadraticBezierPoint(float t, float& x, float& y);
+    float calculateBezierDuration(float distance);
     
     void setPidDataCallback(PidDataCallback callback) override {
         pidDataCallback_ = callback;

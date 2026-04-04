@@ -432,6 +432,37 @@ void MouseController::tick()
         moveY = 0.0f;
     }
     
+    // 贝塞尔曲线移动：使用二次贝塞尔曲线创建弯曲轨迹
+    if (config.enableBezierMovement) {
+        float moveDistance = std::sqrt(moveX * moveX + moveY * moveY);
+        if (moveDistance > 1.0f) {
+            if (!bezierState.active) {
+                initBezierMovement(0.0f, 0.0f, moveX, moveY);
+            }
+            
+            auto now = std::chrono::steady_clock::now();
+            float elapsed = std::chrono::duration<float>(now - bezierState.startTime).count();
+            float t = std::min(elapsed / bezierState.duration, 1.0f);
+            
+            float bezierX, bezierY;
+            getQuadraticBezierPoint(t, bezierX, bezierY);
+            
+            float prevX, prevY;
+            getQuadraticBezierPoint(std::max(0.0f, t - 0.01f), prevX, prevY);
+            
+            moveX = bezierX - prevX;
+            moveY = bezierY - prevY;
+            
+            if (t >= 1.0f) {
+                bezierState.active = false;
+            }
+        } else {
+            bezierState.active = false;
+        }
+    } else {
+        bezierState.active = false;
+    }
+    
     // 自动压枪逻辑：独立功能，只要开启压枪且按下左键就压枪，不需要目标识别
     if (config.autoRecoilControlEnabled && isFiring) {
         // 计算每帧应该压枪的量（基于压枪速度和强度）
@@ -681,6 +712,63 @@ float MouseController::calculateAdaptiveD(float distance, float deltaError, floa
     UNUSED_PARAMETER(error);
     adaptiveFactor = 1.0f;
     return config.pidD;
+}
+
+// 贝塞尔曲线相关函数
+void MouseController::initBezierMovement(float startX, float startY, float endX, float endY)
+{
+    bezierState.active = true;
+    bezierState.startX = startX;
+    bezierState.startY = startY;
+    bezierState.endX = endX;
+    bezierState.endY = endY;
+    
+    float dx = endX - startX;
+    float dy = endY - startY;
+    float distance = sqrtf(dx * dx + dy * dy);
+    
+    if (distance < 1.0f) {
+        distance = 1.0f;
+    }
+    
+    float perpX = -dy / distance;
+    float perpY = dx / distance;
+    
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    float randomOffset = dist(randomGenerator) * config.bezierRandomness;
+    
+    float curvatureOffset = distance * config.bezierCurvature * (1.0f + randomOffset);
+    
+    float midX = (startX + endX) / 2.0f;
+    float midY = (startY + endY) / 2.0f;
+    bezierState.controlX = midX + perpX * curvatureOffset;
+    bezierState.controlY = midY + perpY * curvatureOffset;
+    
+    bezierState.progress = 0.0f;
+    bezierState.startTime = std::chrono::steady_clock::now();
+    bezierState.duration = calculateBezierDuration(distance);
+}
+
+void MouseController::getQuadraticBezierPoint(float t, float& x, float& y)
+{
+    t = std::clamp(t, 0.0f, 1.0f);
+    
+    float u = 1.0f - t;
+    
+    x = u * u * bezierState.startX + 
+        2.0f * u * t * bezierState.controlX + 
+        t * t * bezierState.endX;
+    
+    y = u * u * bezierState.startY + 
+        2.0f * u * t * bezierState.controlY + 
+        t * t * bezierState.endY;
+}
+
+float MouseController::calculateBezierDuration(float distance)
+{
+    float baseDuration = distance / 500.0f;
+    baseDuration = std::clamp(baseDuration, 0.05f, 0.3f);
+    return baseDuration;
 }
 
 // 标准PID计算函数

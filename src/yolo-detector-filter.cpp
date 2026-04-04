@@ -437,6 +437,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
+static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 
 obs_properties_t *yolo_detector_filter_properties(void *data)
 {
@@ -454,6 +455,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "追踪与高级", 5);
 	obs_property_list_add_int(pageList, "卡尔曼滤波器", 6);
 	obs_property_list_add_int(pageList, "标准PID配置", 7);
+	obs_property_list_add_int(pageList, "贝塞尔曲线移动", 8);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -797,6 +799,24 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_set_long_description(kalmanConfidenceScaleProp, "置信度缩放因子，用于根据检测置信度动态调整测量噪声。值越大，高置信度检测对滤波器的影响越大。建议范围：0.5-2.0");
 	}
 
+	obs_properties_add_group(props, "bezier_movement_group", "贝塞尔曲线移动", OBS_GROUP_NORMAL, nullptr);
+	
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+		
+		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
+		obs_property_t *enableBezierProp = obs_properties_add_bool(props, propName, "启用贝塞尔曲线移动");
+		obs_property_set_long_description(enableBezierProp, "启用贝塞尔曲线移动，让鼠标移动轨迹更自然，呈曲线而非直线");
+		
+		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
+		obs_property_t *bezierCurvatureProp = obs_properties_add_float_slider(props, propName, "曲线弯曲程度", 0.0f, 1.0f, 0.05f);
+		obs_property_set_long_description(bezierCurvatureProp, "贝塞尔曲线的弯曲程度，值越大曲线越弯曲");
+		
+		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
+		obs_property_t *bezierRandomnessProp = obs_properties_add_float_slider(props, propName, "随机程度", 0.0f, 0.5f, 0.05f);
+		obs_property_set_long_description(bezierRandomnessProp, "曲线的随机程度，值越大每次移动的轨迹越不固定");
+	}
+
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
 
 	obs_properties_add_group(props, "tracking_group", "目标追踪设置", OBS_GROUP_NORMAL, nullptr);
@@ -967,6 +987,19 @@ static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int config
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
+// 设置贝塞尔曲线移动页面的控件可见性
+static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
+{
+	char propName[64];
+
+	snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "bezier_curvature_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "bezier_randomness_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
+
 // 设置鼠标控制-扳机页面的控件可见性
 static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
@@ -1011,9 +1044,10 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
+		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 8);
 	}
 
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6);
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 8);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
 
 	return true;
@@ -1082,8 +1116,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_line_width"), page == 1);
 
 #ifdef _WIN32
-	// 配置选择器在鼠标控制页面(2,3,4)和卡尔曼滤波器页面(6)显示
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6);
+	// 配置选择器在鼠标控制页面(2,3,4)、卡尔曼滤波器页面(6)和贝塞尔曲线页面(8)显示
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 8);
 
 	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
@@ -1093,6 +1127,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
+		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 8);
 	}
 
 	// 测试连接按钮只在基础页面显示
@@ -1134,6 +1169,9 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "std_smoothing_x_global"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "std_smoothing_y_global"), page == 7);
+
+	// 页面8: 贝塞尔曲线移动
+	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 8);
 #else
 	(void)page;
 #endif
@@ -1323,6 +1361,13 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 1.0);
 		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 1.0);
+		// 贝塞尔曲线移动参数默认值
+		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
+		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
+		obs_data_set_default_double(settings, propName, 0.2);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1661,6 +1706,13 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].kalmanMeasurementNoise = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
 		tf->mouseConfigs[i].kalmanConfidenceScale = (float)obs_data_get_double(settings, propName);
+		// 贝塞尔曲线移动参数
+		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
+		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
+		tf->mouseConfigs[i].bezierCurvature = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
+		tf->mouseConfigs[i].bezierRandomness = (float)obs_data_get_double(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");

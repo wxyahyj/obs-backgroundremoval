@@ -121,6 +121,11 @@ struct MouseControllerConfig {
     float recoilStrength = 5.0f;
     int recoilSpeed = 16;
     float recoilPidGainScale = 0.3f;
+    
+    // 贝塞尔曲线移动参数
+    bool enableBezierMovement = false;
+    float bezierCurvature = 0.3f;
+    float bezierRandomness = 0.2f;
 };
 
 class MouseControllerInterface {
