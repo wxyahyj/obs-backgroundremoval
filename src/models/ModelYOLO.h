@@ -10,6 +10,7 @@
 #include <future>
 #include <mutex>
 #include <queue>
+#include <unordered_set>
 
 class ModelYOLO : public ModelBCHW {
 public:
@@ -95,7 +96,7 @@ private:
     float confidenceThreshold_;
     float nmsThreshold_;
     int targetClassId_;
-    std::vector<int> targetClasses_;
+    std::unordered_set<int> targetClasses_;
 
     int inputWidth_;
     int inputHeight_;

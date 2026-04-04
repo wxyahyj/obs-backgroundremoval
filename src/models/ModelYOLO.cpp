@@ -599,7 +599,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         if (targetClassId_ >= 0) {
             isTargetClass = (maxClassId == targetClassId_);
         } else if (!targetClasses_.empty()) {
-            isTargetClass = (std::find(targetClasses_.begin(), targetClasses_.end(), maxClassId) != targetClasses_.end());
+            isTargetClass = (targetClasses_.count(maxClassId) > 0);
         } else {
             isTargetClass = true;
         }
@@ -691,7 +691,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
         if (targetClassId_ >= 0) {
             isTargetClass = (maxClassId == targetClassId_);
         } else if (!targetClasses_.empty()) {
-            isTargetClass = (std::find(targetClasses_.begin(), targetClasses_.end(), maxClassId) != targetClasses_.end());
+            isTargetClass = (targetClasses_.count(maxClassId) > 0);
         } else {
             isTargetClass = true;
         }
@@ -850,22 +850,20 @@ void ModelYOLO::setNMSThreshold(float threshold) {
 
 void ModelYOLO::setTargetClass(int classId) {
     targetClassId_ = classId;
-    // 同时更新目标类别向量
     targetClasses_.clear();
     if (classId >= 0) {
-        targetClasses_.push_back(classId);
+        targetClasses_.insert(classId);
     }
 }
 
 void ModelYOLO::setTargetClasses(const std::vector<int>& classIds) {
-    targetClasses_ = classIds;
-    // 如果只有一个类别，也更新单个目标类别ID
+    targetClasses_.clear();
+    targetClasses_.insert(classIds.begin(), classIds.end());
     if (classIds.size() == 1) {
         targetClassId_ = classIds[0];
     } else if (classIds.empty()) {
         targetClassId_ = -1;
     } else {
-        // 多个类别时，单个目标类别ID设为-1
         targetClassId_ = -1;
     }
 }
