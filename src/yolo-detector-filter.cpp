@@ -1361,6 +1361,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "chris_init_scale"), page == 3 && algorithm == 3);
 	obs_property_set_visible(obs_properties_get(props, "chris_ramp_time"), page == 3 && algorithm == 3);
 	obs_property_set_visible(obs_properties_get(props, "chris_output_max"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 3);
 
 	// 页面6: 预测与滤波（整合卡尔曼、预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "kalman_filter_group"), page == 6);
