@@ -31,6 +31,14 @@ private:
     float baseMeasurementNoise;
     float confidenceScale;
 
+    // 目标ID管理
+    static int nextId;
+    int id;
+
+    // 目标丢失追踪
+    int lostFrameCount;
+    int maxLostFrames;
+
     // 初始化矩阵
     void initializeMatrices();
 
@@ -45,6 +53,24 @@ public:
 
     // 更新步骤
     void update(float measuredX, float measuredY, float confidence = 1.0f);
+
+    // 标记目标丢失（无测量时调用）
+    void markLost();
+
+    // 标记目标检测到
+    void markDetected();
+
+    // 检查目标是否仍然存活
+    bool isAlive() const;
+
+    // 获取丢失帧数
+    int getLostFrameCount() const;
+
+    // 设置最大丢失帧数
+    void setMaxLostFrames(int maxFrames);
+
+    // 获取目标ID
+    int getId() const;
 
     // 获取预测位置
     void getPrediction(float predictionTime, float& predX, float& predY) const;

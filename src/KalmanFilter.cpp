@@ -3,6 +3,9 @@
 #include <obs-module.h>
 #include <plugin-support.h>
 
+// 静态ID计数器初始化
+int KalmanFilter::nextId = 0;
+
 KalmanFilter::KalmanFilter()
     : state(Eigen::Vector4f::Zero())
     , covariance(Eigen::Matrix4f::Identity() * 100.0f)
@@ -14,6 +17,9 @@ KalmanFilter::KalmanFilter()
     , baseProcessNoise(0.01f)
     , baseMeasurementNoise(1.0f)
     , confidenceScale(1.0f)
+    , id(nextId++)
+    , lostFrameCount(0)
+    , maxLostFrames(3)
 {
     initializeMatrices();
 }
@@ -57,6 +63,9 @@ void KalmanFilter::init(float x, float y)
 
     // 重新初始化矩阵
     initializeMatrices();
+
+    // 重置丢失计数
+    lostFrameCount = 0;
 }
 
 void KalmanFilter::predict(float deltaTime)
@@ -76,6 +85,9 @@ void KalmanFilter::predict(float deltaTime)
 
 void KalmanFilter::update(float measuredX, float measuredY, float confidence)
 {
+    // 标记目标检测到
+    markDetected();
+
     // 根据置信度调整测量噪声
     float adjustedR = baseMeasurementNoise / (confidenceScale * confidence + 0.1f);
     Eigen::Matrix2f currentMeasurementNoise = Eigen::Matrix2f::Identity() * adjustedR;
@@ -105,6 +117,36 @@ void KalmanFilter::update(float measuredX, float measuredY, float confidence)
     covariance = (identity - gain * measurementMatrix) * covariance;
 }
 
+void KalmanFilter::markLost()
+{
+    lostFrameCount++;
+}
+
+void KalmanFilter::markDetected()
+{
+    lostFrameCount = 0;
+}
+
+bool KalmanFilter::isAlive() const
+{
+    return lostFrameCount < maxLostFrames;
+}
+
+int KalmanFilter::getLostFrameCount() const
+{
+    return lostFrameCount;
+}
+
+void KalmanFilter::setMaxLostFrames(int maxFrames)
+{
+    maxLostFrames = std::max(1, maxFrames);
+}
+
+int KalmanFilter::getId() const
+{
+    return id;
+}
+
 void KalmanFilter::getPrediction(float predictionTime, float& predX, float& predY) const
 {
     // 基于当前状态进行预测
@@ -114,7 +156,7 @@ void KalmanFilter::getPrediction(float predictionTime, float& predX, float& pred
     predY = state(1) + state(3) * predictionTime;
 }
 
-void KalmanFilter::getPredictionOffset(float predictionTime, float currentX, float currentY, float& offsetX, float& offsetY)
+void KalmanFilter::getPredictionOffset(float predictionTime, float currentX, float currentY, float& offsetX, float& offsetY) const
 {
     float predX, predY;
     getPrediction(predictionTime, predX, predY);
@@ -149,6 +191,8 @@ void KalmanFilter::reset()
     state = Eigen::Vector4f::Zero();
     covariance = Eigen::Matrix4f::Identity() * 100.0f;
     initializeMatrices();
+    lostFrameCount = 0;
+    // 注意：reset不重置ID，ID是永久分配的
 }
 
 void KalmanFilter::setProcessNoise(float q)
