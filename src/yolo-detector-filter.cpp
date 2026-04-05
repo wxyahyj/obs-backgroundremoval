@@ -3423,10 +3423,7 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 		gs_render_start(true);
 		gs_vertex2f(x, y);
 		gs_vertex2f(x + w, y);
-		gs_vertex2f(x + w, y);
 		gs_vertex2f(x + w, y + h);
-		gs_vertex2f(x + w, y + h);
-		gs_vertex2f(x, y + h);
 		gs_vertex2f(x, y + h);
 		gs_vertex2f(x, y);
 		gs_render_stop(GS_LINES);
