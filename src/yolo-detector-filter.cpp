@@ -4397,21 +4397,20 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				// 坐标转换：从原始帧坐标到裁切区域坐标
 				int x = static_cast<int>(det.x * originalWidth) - cropOffsetX;
 				int y = static_cast<int>(det.y * originalHeight) - cropOffsetY;
+				
+				// 确保在裁剪区域内
+				if (x >= 0 && y >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
+					// 构建标签文本
+					char labelText[64];
+					snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
 					
-					// 确保在裁剪区域内
-					if (x >= 0 && y >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
-						// 构建标签文本
-						char labelText[64];
-						snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
-						
-						// 只绘制文本，不绘制黑色背景
-						cv::Point textOrg(x, y - 5);
-						cv::putText(croppedFrame, labelText, 
-							textOrg,
-							fontFace, fontScale, 
-							cv::Scalar(0, 255, 0, 255), 
-							thickness);
-					}
+					// 只绘制文本，不绘制黑色背景
+					cv::Point textOrg(x, y - 5);
+					cv::putText(croppedFrame, labelText, 
+						textOrg,
+						fontFace, fontScale, 
+						cv::Scalar(0, 255, 0, 255), 
+						thickness);
 				}
 			}
 		}
