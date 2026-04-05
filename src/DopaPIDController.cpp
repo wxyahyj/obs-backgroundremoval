@@ -78,6 +78,7 @@ DopaDualAxisPID::DopaDualAxisPID()
     p_term_.fill(0.0f);
     i_term_.fill(0.0f);
     d_term_.fill(0.0f);
+    filtered_d_term_.fill(0.0f);
     last_integral_increment_.fill(0.0f);
 }
 
@@ -171,8 +172,12 @@ float DopaDualAxisPID::calculateOutput(int axis, float error, float dt)
     } else {
         d_term_[axis] = 0.0f;
     }
+
+    // D项低通滤波
+    float alpha = config_.dFilterAlpha;
+    filtered_d_term_[axis] = alpha * d_term_[axis] + (1.0f - alpha) * filtered_d_term_[axis];
     
-    return p_term_[axis] + i_term_[axis] + d_term_[axis];
+    return p_term_[axis] + i_term_[axis] + filtered_d_term_[axis];
 }
 
 float DopaDualAxisPID::applyLimitsAndAntiWindup(int axis, float unsat_value)
@@ -296,6 +301,7 @@ void DopaDualAxisPID::reset()
     p_term_.fill(0.0f);
     i_term_.fill(0.0f);
     d_term_.fill(0.0f);
+    filtered_d_term_.fill(0.0f);
     last_integral_increment_.fill(0.0f);
     error_history_.clear();
     time_history_.clear();

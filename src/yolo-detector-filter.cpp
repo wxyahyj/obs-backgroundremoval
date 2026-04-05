@@ -480,6 +480,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisRampTime;
 	float chrisOutputMax;
 	float chrisIMax;
+	float chrisDFilterAlpha;
+	float dopaDFilterAlpha;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -1009,9 +1011,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(dopaKpXProp, "DopaPID X轴比例系数");
 	obs_property_t *dopaKpYProp = obs_properties_add_float_slider(props, "dopa_kp_y", "DopaPID-KpY", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(dopaKpYProp, "DopaPID Y轴比例系数");
-	obs_property_t *dopaKiXProp = obs_properties_add_float_slider(props, "dopa_ki_x", "DopaPID-KiX", 0.0, 0.1, 0.001);
+	obs_property_t *dopaKiXProp = obs_properties_add_float_slider(props, "dopa_ki_x", "DopaPID-KiX", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(dopaKiXProp, "DopaPID X轴积分系数");
-	obs_property_t *dopaKiYProp = obs_properties_add_float_slider(props, "dopa_ki_y", "DopaPID-KiY", 0.0, 0.1, 0.001);
+	obs_property_t *dopaKiYProp = obs_properties_add_float_slider(props, "dopa_ki_y", "DopaPID-KiY", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(dopaKiYProp, "DopaPID Y轴积分系数");
 	obs_property_t *dopaKdXProp = obs_properties_add_float_slider(props, "dopa_kd_x", "DopaPID-KdX", 0.0, 0.1, 0.001);
 	obs_property_set_long_description(dopaKdXProp, "DopaPID X轴微分系数");
@@ -1033,12 +1035,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(dopaPredWeightProp, "DopaPID预测权重，越大预测影响越大");
 	obs_property_t *dopaGameFpsProp = obs_properties_add_int_slider(props, "dopa_game_fps", "游戏帧率", 30, 240, 1);
 	obs_property_set_long_description(dopaGameFpsProp, "游戏帧率，用于计算预测时间步长");
+	obs_property_t *dopaDFilterAlphaProp = obs_properties_add_float_slider(props, "dopa_d_filter_alpha", "D项滤波系数", 0.1, 1.0, 0.05);
+	obs_property_set_long_description(dopaDFilterAlphaProp, "DopaPID D项滤波系数，1.0=无滤波，0.1=强滤波");
 
 	// ChrisPID参数
 	obs_properties_add_group(props, "chris_pid_group", "ChrisPID配置", OBS_GROUP_NORMAL, nullptr);
 	obs_property_t *chrisKpProp = obs_properties_add_float_slider(props, "chris_kp", "ChrisPID-Kp", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(chrisKpProp, "ChrisPID比例系数");
-	obs_property_t *chrisKiProp = obs_properties_add_float_slider(props, "chris_ki", "ChrisPID-Ki", 0.0, 0.1, 0.001);
+	obs_property_t *chrisKiProp = obs_properties_add_float_slider(props, "chris_ki", "ChrisPID-Ki", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(chrisKiProp, "ChrisPID积分系数");
 	obs_property_t *chrisKdProp = obs_properties_add_float_slider(props, "chris_kd", "ChrisPID-Kd", 0.0, 0.1, 0.001);
 	obs_property_set_long_description(chrisKdProp, "ChrisPID微分系数");
@@ -1054,6 +1058,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(chrisOutputMaxProp, "ChrisPID输出最大值限制");
 	obs_property_t *chrisIMaxProp = obs_properties_add_float_slider(props, "chris_i_max", "积分限幅", 0.0, 500.0, 1.0);
 	obs_property_set_long_description(chrisIMaxProp, "ChrisPID积分项限幅，防止积分饱和");
+	obs_property_t *chrisDFilterAlphaProp = obs_properties_add_float_slider(props, "chris_d_filter_alpha", "D项滤波系数", 0.1, 1.0, 0.05);
+	obs_property_set_long_description(chrisDFilterAlphaProp, "ChrisPID D项滤波系数，1.0=无滤波，0.1=强滤波");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -1386,6 +1392,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "dopa_output_limit_max_y"), page == 3 && algorithm == 2);
 	obs_property_set_visible(obs_properties_get(props, "dopa_pred_weight"), page == 3 && algorithm == 2);
 	obs_property_set_visible(obs_properties_get(props, "dopa_game_fps"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "dopa_d_filter_alpha"), page == 3 && algorithm == 2);
 
 	// ChrisPID参数组（选择3时显示）
 	obs_property_set_visible(obs_properties_get(props, "chris_pid_group"), page == 3 && algorithm == 3);
@@ -1398,6 +1405,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "chris_ramp_time"), page == 3 && algorithm == 3);
 	obs_property_set_visible(obs_properties_get(props, "chris_output_max"), page == 3 && algorithm == 3);
 	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 3);
 
 	// 页面6: 预测与滤波（整合卡尔曼、预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "kalman_filter_group"), page == 6);
@@ -2014,6 +2022,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->dopaOutputLimitMaxY = (float)obs_data_get_double(settings, "dopa_output_limit_max_y");
 	tf->dopaPredWeight = (float)obs_data_get_double(settings, "dopa_pred_weight");
 	tf->dopaGameFps = (int)obs_data_get_int(settings, "dopa_game_fps");
+	tf->dopaDFilterAlpha = (float)obs_data_get_double(settings, "dopa_d_filter_alpha");
 
 	// 读取ChrisPID参数
 	tf->chrisKp = (float)obs_data_get_double(settings, "chris_kp");
@@ -2025,6 +2034,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->chrisRampTime = (float)obs_data_get_double(settings, "chris_ramp_time");
 	tf->chrisOutputMax = (float)obs_data_get_double(settings, "chris_output_max");
 	tf->chrisIMax = (float)obs_data_get_double(settings, "chris_i_max");
+	tf->chrisDFilterAlpha = (float)obs_data_get_double(settings, "chris_d_filter_alpha");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -3752,6 +3762,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->dopaOutputLimitMaxY = 200.0f;
 		instance->dopaPredWeight = 0.8f;
 		instance->dopaGameFps = 60;
+		instance->dopaDFilterAlpha = 0.3f;
 
 		// ChrisPID参数初始化
 		instance->chrisKp = 0.45f;
@@ -3763,6 +3774,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisRampTime = 0.5f;
 		instance->chrisOutputMax = 150.0f;
 		instance->chrisIMax = 100.0f;
+		instance->chrisDFilterAlpha = 0.3f;
 #endif
 
 		// 强制关闭悬浮窗（每次启动OBS时）
@@ -4067,6 +4079,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.dopaOutputLimitMaxY = tf->dopaOutputLimitMaxY;
 		mcConfig.dopaPredWeight = tf->dopaPredWeight;
 		mcConfig.dopaGameFps = tf->dopaGameFps;
+		mcConfig.dopaDFilterAlpha = tf->dopaDFilterAlpha;
 		// ChrisPID参数（使用全局设置）
 		mcConfig.chrisKp = tf->chrisKp;
 		mcConfig.chrisKi = tf->chrisKi;
@@ -4077,6 +4090,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisRampTime = tf->chrisRampTime;
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
 		mcConfig.chrisIMax = tf->chrisIMax;
+		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

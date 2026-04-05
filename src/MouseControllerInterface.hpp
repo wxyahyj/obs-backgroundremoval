@@ -162,6 +162,10 @@ struct MouseControllerConfig {
     float chrisRampTime = 0.5f;
     float chrisOutputMax = 150.0f;
     float chrisIMax = 100.0f;
+    float chrisDFilterAlpha = 0.3f;  // D项滤波系数
+    
+    // DopaPID D项滤波
+    float dopaDFilterAlpha = 0.3f;  // D项滤波系数
 };
 
 class MouseControllerInterface {

@@ -18,6 +18,7 @@ struct ChrisPIDConfig {
     float rampTime = 0.5f;
     float outputMax = 150.0f;
     float iMax = 100.0f;
+    float dFilterAlpha = 0.3f;  // D项滤波系数，1.0=无滤波
 };
 
 class ChrisDerivativePredictor {
@@ -61,6 +62,7 @@ private:
     std::array<float, 2> last_error_;
     std::array<float, 2> last_raw_error_;
     std::array<float, 2> last_output_;
+    std::array<float, 2> filtered_d_term_;  // 滤波后的D项
     
     double last_time_;
     double lock_start_time_;

@@ -31,6 +31,7 @@ struct DopaPIDConfig {
     std::string antiWindupMode = "freeze";
     float backcalcGainX = 0.0f;
     float backcalcGainY = 0.0f;
+    float dFilterAlpha = 0.3f;  // D项滤波系数，1.0=无滤波
 };
 
 class DopaDerivativePredictor {
@@ -79,6 +80,7 @@ private:
     std::array<float, 2> p_term_;
     std::array<float, 2> i_term_;
     std::array<float, 2> d_term_;
+    std::array<float, 2> filtered_d_term_;  // 滤波后的D项
     std::array<float, 2> last_integral_increment_;
     
     std::deque<std::array<float, 2>> error_history_;

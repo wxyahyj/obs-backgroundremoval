@@ -92,6 +92,7 @@ ChrisAimController::ChrisAimController()
     last_error_.fill(0.0f);
     last_raw_error_.fill(0.0f);
     last_output_.fill(0.0f);
+    filtered_d_term_.fill(0.0f);
 }
 
 void ChrisAimController::setConfig(const ChrisPIDConfig& config)
@@ -167,9 +168,14 @@ void ChrisAimController::update(float raw_dx, float raw_dy, double current_time,
     }
     d_term_x = std::clamp(d_term_x, -50.0f, 50.0f);
     d_term_y = std::clamp(d_term_y, -50.0f, 50.0f);
-    
-    float output_x = p_term_x + i_term_[0] + d_term_x;
-    float output_y = p_term_y + i_term_[1] + d_term_y;
+
+    // D项低通滤波
+    float alpha = config_.dFilterAlpha;
+    filtered_d_term_[0] = alpha * d_term_x + (1.0f - alpha) * filtered_d_term_[0];
+    filtered_d_term_[1] = alpha * d_term_y + (1.0f - alpha) * filtered_d_term_[1];
+
+    float output_x = p_term_x + i_term_[0] + filtered_d_term_[0];
+    float output_y = p_term_y + i_term_[1] + filtered_d_term_[1];
     
     output_x = std::clamp(output_x, -config_.outputMax, config_.outputMax);
     output_y = std::clamp(output_y, -config_.outputMax, config_.outputMax);
@@ -203,6 +209,7 @@ void ChrisAimController::reset()
     last_error_.fill(0.0f);
     last_raw_error_.fill(0.0f);
     last_output_.fill(0.0f);
+    filtered_d_term_.fill(0.0f);
     last_time_ = 0.0;
     lock_start_time_ = 0.0;
 }

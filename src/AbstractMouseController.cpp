@@ -314,6 +314,7 @@ void AbstractMouseController::tick()
         dopaConfig.outputLimitMaxY = config.dopaOutputLimitMaxY;
         dopaConfig.predWeight = config.dopaPredWeight;
         dopaConfig.gameFps = config.dopaGameFps;
+        dopaConfig.dFilterAlpha = config.dopaDFilterAlpha;
         
         dopaController_.setConfig(dopaConfig);
         dopaController_.compute(targetPixelX, targetPixelY, fovCenterX, fovCenterY, moveX, moveY);
@@ -364,6 +365,7 @@ void AbstractMouseController::tick()
         chrisConfig.rampTime = config.chrisRampTime;
         chrisConfig.outputMax = config.chrisOutputMax;
         chrisConfig.iMax = config.chrisIMax;
+        chrisConfig.dFilterAlpha = config.chrisDFilterAlpha;
         
         chrisController_.setConfig(chrisConfig);
         double currentTime = std::chrono::duration<double>(
