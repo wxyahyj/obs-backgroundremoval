@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <obs-module.h>
 
 ChrisDerivativePredictor::ChrisDerivativePredictor()
     : smoothed_vel_({0.0f, 0.0f})
@@ -149,8 +150,11 @@ void ChrisAimController::update(float raw_dx, float raw_dy, double current_time,
     float p_term_x = fusion_error_x * real_kp;
     float p_term_y = fusion_error_y * real_kp;
     
-    i_term_[0] += fusion_error_x * dt * config_.ki;
-    i_term_[1] += fusion_error_y * dt * config_.ki;
+    float i_increment_x = fusion_error_x * dt * config_.ki;
+    float i_increment_y = fusion_error_y * dt * config_.ki;
+    
+    i_term_[0] += i_increment_x;
+    i_term_[1] += i_increment_y;
     
     i_term_[0] = std::clamp(i_term_[0], -config_.iMax, config_.iMax);
     i_term_[1] = std::clamp(i_term_[1], -config_.iMax, config_.iMax);
@@ -169,6 +173,19 @@ void ChrisAimController::update(float raw_dx, float raw_dy, double current_time,
     
     output_x = std::clamp(output_x, -config_.outputMax, config_.outputMax);
     output_y = std::clamp(output_y, -config_.outputMax, config_.outputMax);
+    
+    // 详细日志输出（每30帧输出一次）
+    static int logCounter = 0;
+    if (++logCounter >= 30) {
+        logCounter = 0;
+        blog(LOG_INFO, "[ChrisPID] dt=%.4f | error=(%.1f,%.1f) | fusion=(%.1f,%.1f) | "
+             "P=(%.2f,%.2f) | I=(%.4f,%.4f) inc=(%.4f,%.4f) | D=(%.2f,%.2f) | "
+             "output=(%.2f,%.2f) | kp=%.3f ki=%.4f kd=%.3f scale=%.2f",
+             dt, raw_dx, raw_dy, fusion_error_x, fusion_error_y,
+             p_term_x, p_term_y, i_term_[0], i_term_[1], i_increment_x, i_increment_y,
+             d_term_x, d_term_y, output_x, output_y,
+             config_.kp, config_.ki, config_.kd, scale);
+    }
     
     last_error_[0] = fusion_error_x;
     last_error_[1] = fusion_error_y;

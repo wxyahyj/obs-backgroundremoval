@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <vector>
+#include <obs-module.h>
 
 DopaDerivativePredictor::DopaDerivativePredictor()
     : smoothed_vel_({0.0f, 0.0f})
@@ -130,6 +131,19 @@ void DopaDualAxisPID::compute(float target_x, float target_y, float crosshair_x,
     last_error_[1] = fusion_error_y;
     last_raw_error_ = curr_raw_error;
     last_pid_output_ = {x_output, y_output};
+    
+    // 详细日志输出（每30帧输出一次）
+    static int logCounter = 0;
+    if (++logCounter >= 30) {
+        logCounter = 0;
+        blog(LOG_INFO, "[DopaPID] dt=%.4f | error=(%.1f,%.1f) | fusion=(%.1f,%.1f) | "
+             "P=(%.2f,%.2f) | I=(%.4f,%.4f) | D=(%.2f,%.2f) | "
+             "output=(%.2f,%.2f) | kpX=%.3f kpY=%.3f kiX=%.4f kiY=%.4f",
+             pred_dt_, raw_error_x, raw_error_y, fusion_error_x, fusion_error_y,
+             p_term_[0], p_term_[1], i_term_[0], i_term_[1],
+             d_term_[0], d_term_[1], x_output, y_output,
+             config_.kpX, config_.kpY, config_.kiX, config_.kiY);
+    }
     
     out_x = x_output;
     out_y = y_output;
