@@ -64,7 +64,7 @@ public:
                  float& out_x, float& out_y);
     void reset();
     
-    std::array<float, 2> getComponents(const std::string& axis) const;
+    std::array<float, 3> getComponents(const std::string& axis) const;
 
 private:
     DopaPIDConfig config_;

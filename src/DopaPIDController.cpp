@@ -287,7 +287,7 @@ void DopaDualAxisPID::reset()
     time_history_.clear();
 }
 
-std::array<float, 2> DopaDualAxisPID::getComponents(const std::string& axis) const
+std::array<float, 3> DopaDualAxisPID::getComponents(const std::string& axis) const
 {
     if (axis == "x") {
         return {p_term_[0], i_term_[0], d_term_[0]};
