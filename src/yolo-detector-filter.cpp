@@ -3242,7 +3242,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 	int inferenceFrameCounter = 0;
 	// 从UI配置读取推理间隔，0表示每帧都推理
-	int inferenceInterval = std::max(1, filter->inferenceIntervalFrames);
+	int inferenceInterval = filter->inferenceIntervalFrames <= 0 ? 1 : filter->inferenceIntervalFrames;
 
 	while (filter->inferenceRunning) {
 		if (!filter->isInferencing) {
