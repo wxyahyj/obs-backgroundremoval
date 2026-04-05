@@ -4190,6 +4190,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 	// 捕获原始帧（用于推理、悬浮窗和标签显示）
 	cv::Mat originalImage;
+	int originalWidth = width;
+	int originalHeight = height;
+	int cropOffsetX = 0;
+	int cropOffsetY = 0;
+	
 	if (needCapture) {
 		obs_enter_graphics();
 		gs_texrender_reset(tf->texrender);
@@ -4233,8 +4238,21 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							temp.copyTo(tf->inputBGRA);
 						}
 						
-						// 保存原始帧用于悬浮窗显示
-						originalImage = temp.clone();
+						// 只在悬浮窗开启时才克隆裁切后的区域
+						if (tf->showFloatingWindow) {
+							int cropWidth = tf->floatingWindowWidth;
+							int cropHeight = tf->floatingWindowHeight;
+							int centerX = temp.cols / 2;
+							int centerY = temp.rows / 2;
+							cropOffsetX = std::max(0, centerX - cropWidth / 2);
+							cropOffsetY = std::max(0, centerY - cropHeight / 2);
+							int actualCropWidth = std::min(cropWidth, temp.cols - cropOffsetX);
+							int actualCropHeight = std::min(cropHeight, temp.rows - cropOffsetY);
+							
+							if (actualCropWidth > 0 && actualCropHeight > 0) {
+								originalImage = temp(cv::Rect(cropOffsetX, cropOffsetY, actualCropWidth, actualCropHeight)).clone();
+							}
+						}
 						
 						gs_stagesurface_unmap(tf->stagesurface);
 					}
@@ -4263,116 +4281,105 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 #ifdef _WIN32
 	// 更新浮动窗口
 	if (tf->showFloatingWindow && !originalImage.empty()) {
-		int cropWidth = tf->floatingWindowWidth;
-		int cropHeight = tf->floatingWindowHeight;
+		// originalImage 已经是裁切后的区域，直接使用
+		cv::Mat& croppedFrame = originalImage;
 
-		int centerX = originalImage.cols / 2;
-		int centerY = originalImage.rows / 2;
+		size_t detectionCount = 0;
+		std::vector<Detection> detectionsCopy;
+		{
+			std::lock_guard<std::mutex> lock(tf->detectionsMutex);
+			detectionCount = tf->detections.size();
+			detectionsCopy = tf->detections;
+		}
 
-		int cropX = std::max(0, centerX - cropWidth / 2);
-		int cropY = std::max(0, centerY - cropHeight / 2);
+		if (tf->showBBox) {
+			int lineWidth = tf->bboxLineWidth;
+			float r = ((tf->bboxColor >> 16) & 0xFF) / 255.0f;
+			float g = ((tf->bboxColor >> 8) & 0xFF) / 255.0f;
+			float b = (tf->bboxColor & 0xFF) / 255.0f;
+			cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
 
-		int actualCropWidth = std::min(cropWidth, originalImage.cols - cropX);
-		int actualCropHeight = std::min(cropHeight, originalImage.rows - cropY);
-
-		if (actualCropWidth > 0 && actualCropHeight > 0) {
-			cv::Mat croppedFrame = originalImage(cv::Rect(cropX, cropY, actualCropWidth, actualCropHeight)).clone();
-
-			size_t detectionCount = 0;
-			std::vector<Detection> detectionsCopy;
-			{
-				std::lock_guard<std::mutex> lock(tf->detectionsMutex);
-				detectionCount = tf->detections.size();
-				detectionsCopy = tf->detections;
-			}
-
-			if (tf->showBBox) {
-				int lineWidth = tf->bboxLineWidth;
-				float r = ((tf->bboxColor >> 16) & 0xFF) / 255.0f;
-				float g = ((tf->bboxColor >> 8) & 0xFF) / 255.0f;
-				float b = (tf->bboxColor & 0xFF) / 255.0f;
-				cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
-
-				for (const auto& det : detectionsCopy) {
-					int x = static_cast<int>(det.x * originalImage.cols) - cropX;
-					int y = static_cast<int>(det.y * originalImage.rows) - cropY;
-					int w = static_cast<int>(det.width * originalImage.cols);
-					int h = static_cast<int>(det.height * originalImage.rows);
-					
-					if (x + w >= 0 && y + h >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
-						cv::rectangle(croppedFrame, 
-							cv::Point(x, y), 
-							cv::Point(x + w, y + h), 
-							bboxColor, 
-							lineWidth);
-					}
-				}
-			}
-
-			// 如果需要显示 FOV
-			if (tf->showFOV) {
-				float fovCenterX = (originalImage.cols / 2.0f) - cropX;
-				float fovCenterY = (originalImage.rows / 2.0f) - cropY;
-				// 使用动态FOV半径（如果启用）
-				float fovRadius = tf->useDynamicFOV ? tf->currentFovRadius : static_cast<float>(tf->fovRadius);
-				float crossLineLength = static_cast<float>(tf->fovCrossLineScale);
+			for (const auto& det : detectionsCopy) {
+				// 坐标转换：从原始帧坐标到裁切区域坐标
+				int x = static_cast<int>(det.x * originalWidth) - cropOffsetX;
+				int y = static_cast<int>(det.y * originalHeight) - cropOffsetY;
+				int w = static_cast<int>(det.width * originalWidth);
+				int h = static_cast<int>(det.height * originalHeight);
 				
-				float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
-				float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
-				float b = (tf->fovColor & 0xFF) / 255.0f;
-				cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
-
-				if (tf->showFOVCross) {
-					cv::line(croppedFrame, 
-						cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
-						cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
-						fovColor, tf->fovCrossLineThickness);
-					cv::line(croppedFrame, 
-						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
-						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
-						fovColor, tf->fovCrossLineThickness);
-				}
-
-				if (tf->showFOVCircle) {
-					cv::circle(croppedFrame, 
-						cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
-						static_cast<int>(fovRadius),
-						fovColor, tf->fovCircleThickness);
+				if (x + w >= 0 && y + h >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
+					cv::rectangle(croppedFrame, 
+						cv::Point(x, y), 
+						cv::Point(x + w, y + h), 
+						bboxColor, 
+						lineWidth);
 				}
 			}
+		}
 
-			// 绘制从中心点到目标的连接线
-			float centerX = (originalImage.cols / 2.0f) - cropX;
-			float centerY = (originalImage.rows / 2.0f) - cropY;
-			cv::Point centerPoint(static_cast<int>(centerX), static_cast<int>(centerY));
+		// 如果需要显示 FOV
+		if (tf->showFOV) {
+			// FOV中心在裁切区域的中心
+			float fovCenterX = croppedFrame.cols / 2.0f;
+			float fovCenterY = croppedFrame.rows / 2.0f;
+			// 使用动态FOV半径（如果启用）
+			float fovRadius = tf->useDynamicFOV ? tf->currentFovRadius : static_cast<float>(tf->fovRadius);
+			float crossLineLength = static_cast<float>(tf->fovCrossLineScale);
 			
-			// 使用绿色绘制连接线
-			cv::Scalar lineColor(0, 255, 0, 255);
-			int lineThickness = 1;
+			float r = ((tf->fovColor >> 16) & 0xFF) / 255.0f;
+			float g = ((tf->fovColor >> 8) & 0xFF) / 255.0f;
+			float b = (tf->fovColor & 0xFF) / 255.0f;
+			cv::Scalar fovColor(b * 255, g * 255, r * 255, 255);
+
+			if (tf->showFOVCross) {
+				cv::line(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX - crossLineLength), static_cast<int>(fovCenterY)),
+					cv::Point(static_cast<int>(fovCenterX + crossLineLength), static_cast<int>(fovCenterY)),
+					fovColor, tf->fovCrossLineThickness);
+				cv::line(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY - crossLineLength)),
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY + crossLineLength)),
+					fovColor, tf->fovCrossLineThickness);
+			}
+
+			if (tf->showFOVCircle) {
+				cv::circle(croppedFrame, 
+					cv::Point(static_cast<int>(fovCenterX), static_cast<int>(fovCenterY)),
+					static_cast<int>(fovRadius),
+					fovColor, tf->fovCircleThickness);
+			}
+		}
+
+		// 绘制从中心点到目标的连接线
+		cv::Point centerPoint(croppedFrame.cols / 2, croppedFrame.rows / 2);
+		
+		// 使用绿色绘制连接线
+		cv::Scalar lineColor(0, 255, 0, 255);
+		int lineThickness = 1;
+		
+		for (const auto& det : detectionsCopy) {
+			// 坐标转换：从原始帧坐标到裁切区域坐标
+			int targetX = static_cast<int>(det.centerX * originalWidth) - cropOffsetX;
+			int targetY = static_cast<int>(det.centerY * originalHeight) - cropOffsetY;
+			cv::Point targetPoint(targetX, targetY);
+			
+			// 确保目标点在裁剪区域内
+			if (targetX >= 0 && targetY >= 0 && targetX < croppedFrame.cols && targetY < croppedFrame.rows) {
+				// 绘制从中心点到目标的连接线
+				cv::line(croppedFrame, centerPoint, targetPoint, lineColor, lineThickness);
+			}
+		}
+
+		// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
+		if (tf->showLabel || tf->showConfidence) {
+			int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+			double fontScale = tf->labelFontScale;
+			int thickness = 2;
+			int baseline = 0;
 			
 			for (const auto& det : detectionsCopy) {
-				// 计算目标在裁剪帧中的坐标
-				int targetX = static_cast<int>(det.centerX * originalImage.cols) - cropX;
-				int targetY = static_cast<int>(det.centerY * originalImage.rows) - cropY;
-				cv::Point targetPoint(targetX, targetY);
-				
-				// 确保目标点在裁剪区域内
-				if (targetX >= 0 && targetY >= 0 && targetX < croppedFrame.cols && targetY < croppedFrame.rows) {
-					// 绘制从中心点到目标的连接线
-					cv::line(croppedFrame, centerPoint, targetPoint, lineColor, lineThickness);
-				}
-			}
-
-			// 如果需要显示标签和置信度，就在 croppedFrame 上绘制
-			if (tf->showLabel || tf->showConfidence) {
-				int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-				double fontScale = tf->labelFontScale;
-				int thickness = 2;
-				int baseline = 0;
-				
-				for (const auto& det : detectionsCopy) {
-					int x = static_cast<int>(det.x * originalImage.cols) - cropX;
-					int y = static_cast<int>(det.y * originalImage.rows) - cropY;
+				// 坐标转换：从原始帧坐标到裁切区域坐标
+				int x = static_cast<int>(det.x * originalWidth) - cropOffsetX;
+				int y = static_cast<int>(det.y * originalHeight) - cropOffsetY;
 					
 					// 确保在裁剪区域内
 					if (x >= 0 && y >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
@@ -4390,38 +4397,39 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 					}
 				}
 			}
-
-			// 绘制 FPS 和检测数量信息（无背景）
-			int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-			double fontScale = 0.6;
-			int thickness = 2;
-			int baseline = 0;
-
-			char fpsText[64];
-			snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", tf->currentFps);
-			cv::Size fpsSize = cv::getTextSize(fpsText, fontFace, fontScale, thickness, &baseline);
-
-			char detText[64];
-			snprintf(detText, sizeof(detText), "Detected: %zu", detectionCount);
-			cv::Size detSize = cv::getTextSize(detText, fontFace, fontScale, thickness, &baseline);
-
-			cv::putText(croppedFrame, fpsText,
-				cv::Point(10, 10 + fpsSize.height),
-				fontFace, fontScale, cv::Scalar(0, 255, 0), thickness);
-
-			cv::putText(croppedFrame, detText,
-				cv::Point(10, 10 + fpsSize.height + detSize.height + 10),
-				fontFace, fontScale, cv::Scalar(0, 255, 255), thickness);
-
-			if (croppedFrame.cols != cropWidth || croppedFrame.rows != cropHeight) {
-				cv::Mat resizedFrame;
-				cv::resize(croppedFrame, resizedFrame, cv::Size(cropWidth, cropHeight));
-				updateFloatingWindowFrame(tf.get(), resizedFrame);
-			} else {
-				updateFloatingWindowFrame(tf.get(), croppedFrame);
-			}
-			renderFloatingWindow(tf.get());
 		}
+
+		// 绘制 FPS 和检测数量信息（无背景）
+		int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+		double fontScale = 0.6;
+		int thickness = 2;
+		int baseline = 0;
+
+		char fpsText[64];
+		snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", tf->currentFps);
+		cv::Size fpsSize = cv::getTextSize(fpsText, fontFace, fontScale, thickness, &baseline);
+
+		char detText[64];
+		snprintf(detText, sizeof(detText), "Detected: %zu", detectionCount);
+		cv::Size detSize = cv::getTextSize(detText, fontFace, fontScale, thickness, &baseline);
+
+		cv::putText(croppedFrame, fpsText,
+			cv::Point(10, 10 + fpsSize.height),
+			fontFace, fontScale, cv::Scalar(0, 255, 0), thickness);
+
+		cv::putText(croppedFrame, detText,
+			cv::Point(10, 10 + fpsSize.height + detSize.height + 10),
+			fontFace, fontScale, cv::Scalar(0, 255, 255), thickness);
+
+		// 如果裁切后的尺寸与悬浮窗尺寸不匹配，需要调整
+		if (croppedFrame.cols != tf->floatingWindowWidth || croppedFrame.rows != tf->floatingWindowHeight) {
+			cv::Mat resizedFrame;
+			cv::resize(croppedFrame, resizedFrame, cv::Size(tf->floatingWindowWidth, tf->floatingWindowHeight));
+			updateFloatingWindowFrame(tf.get(), resizedFrame);
+		} else {
+			updateFloatingWindowFrame(tf.get(), croppedFrame);
+		}
+		renderFloatingWindow(tf.get());
 
 		if (tf->showPidDebugWindow && tf->pidDebugWindowHandle) {
 			updatePidDebugWindow(tf.get());
