@@ -63,6 +63,7 @@ public:
     void compute(float target_x, float target_y, float crosshair_x, float crosshair_y,
                  float& out_x, float& out_y);
     void reset();
+    void resetPredictor();  // 只重置预测器，不重置积分
     
     std::array<float, 3> getComponents(const std::string& axis) const;
 

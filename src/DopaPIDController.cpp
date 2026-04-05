@@ -301,6 +301,16 @@ void DopaDualAxisPID::reset()
     time_history_.clear();
 }
 
+void DopaDualAxisPID::resetPredictor()
+{
+    // 只重置预测器，不重置积分项
+    // 这样在目标暂时丢失时，积分可以继续累积
+    predictor_.reset();
+    last_raw_error_.fill(0.0f);
+    last_pid_output_.fill(0.0f);
+    // 不重置 i_term_
+}
+
 std::array<float, 3> DopaDualAxisPID::getComponents(const std::string& axis) const
 {
     if (axis == "x") {

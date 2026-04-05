@@ -166,7 +166,13 @@ void AbstractMouseController::tick()
     if (!target) {
         if (isMoving) {
             isMoving = false;
-            resetPidState();
+            // 目标丢失时只重置预测器，不重置积分项
+            // 这样积分可以继续累积，PI控制才能真正发挥作用
+            predictor.reset();
+            kalmanFilter.reset();
+            kalmanFilterInitialized = false;
+            dopaController_.resetPredictor();
+            chrisController_.resetPredictor();
             resetMotionState();
         }
         if (autoTriggerHolding) {

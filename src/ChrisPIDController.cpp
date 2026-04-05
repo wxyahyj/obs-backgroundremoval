@@ -207,4 +207,14 @@ void ChrisAimController::reset()
     lock_start_time_ = 0.0;
 }
 
+void ChrisAimController::resetPredictor()
+{
+    // 只重置预测器，不重置积分项
+    // 这样在目标暂时丢失时，积分可以继续累积
+    predictor_.reset();
+    last_raw_error_.fill(0.0f);
+    last_output_.fill(0.0f);
+    // 不重置 i_term_
+}
+
 #endif // _WIN32

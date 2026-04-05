@@ -51,6 +51,7 @@ public:
     void setConfig(const ChrisPIDConfig& config);
     void update(float raw_dx, float raw_dy, double current_time, float& out_x, float& out_y);
     void reset();
+    void resetPredictor();  // 只重置预测器，不重置积分
 
 private:
     ChrisPIDConfig config_;

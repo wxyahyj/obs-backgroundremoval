@@ -142,8 +142,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::atomic<int> outputReadyIdx{-1};    // 推理完成位置（-1表示无结果）
 
 	// 缓冲区状态：0=空闲, 1=有数据待推理, 2=正在推理, 3=推理完成
-	std::atomic<uint8_t> bufferState[BUFFER_COUNT];
-	std::atomic<uint8_t> outputState[BUFFER_COUNT];
+	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
+	std::atomic<uint8_t> outputState[BUFFER_COUNT] = {};
 
 	std::chrono::high_resolution_clock::time_point lastFpsTime;
 	int fpsFrameCount;
@@ -4298,13 +4298,13 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 						// 计算裁切区域信息
 						int frameCropX = 0, frameCropY = 0;
-						int frameCropWidth = width, frameCropHeight = height;
+						int frameCropWidth = static_cast<int>(width), frameCropHeight = static_cast<int>(height);
 						
 						if (tf->useRegion) {
 							frameCropX = std::max(0, tf->regionX);
 							frameCropY = std::max(0, tf->regionY);
-							frameCropWidth = std::min(tf->regionWidth, width - frameCropX);
-							frameCropHeight = std::min(tf->regionHeight, height - frameCropY);
+							frameCropWidth = std::min(tf->regionWidth, static_cast<int>(width) - frameCropX);
+							frameCropHeight = std::min(tf->regionHeight, static_cast<int>(height) - frameCropY);
 							if (frameCropWidth <= 0 || frameCropHeight <= 0) {
 								frameCropX = 0;
 								frameCropY = 0;
