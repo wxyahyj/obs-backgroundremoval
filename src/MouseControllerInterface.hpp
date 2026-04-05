@@ -161,6 +161,7 @@ struct MouseControllerConfig {
     float chrisInitScale = 0.6f;
     float chrisRampTime = 0.5f;
     float chrisOutputMax = 150.0f;
+    float chrisIMax = 100.0f;
 };
 
 class MouseControllerInterface {

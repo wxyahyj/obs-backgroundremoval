@@ -357,6 +357,7 @@ void AbstractMouseController::tick()
         chrisConfig.initScale = config.chrisInitScale;
         chrisConfig.rampTime = config.chrisRampTime;
         chrisConfig.outputMax = config.chrisOutputMax;
+        chrisConfig.iMax = config.chrisIMax;
         
         chrisController_.setConfig(chrisConfig);
         double currentTime = std::chrono::duration<double>(

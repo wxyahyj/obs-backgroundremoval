@@ -443,6 +443,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisInitScale;
 	float chrisRampTime;
 	float chrisOutputMax;
+	float chrisIMax;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -984,13 +985,13 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(dopaWindupGuardXProp, "DopaPID X轴积分抗饱和限制");
 	obs_property_t *dopaWindupGuardYProp = obs_properties_add_float_slider(props, "dopa_windup_guard_y", "抗饱和限制Y", 0.0, 200.0, 1.0);
 	obs_property_set_long_description(dopaWindupGuardYProp, "DopaPID Y轴积分抗饱和限制");
-	obs_property_t *dopaOutputLimitMinXProp = obs_properties_add_float_slider(props, "dopa_output_limit_min_x", "输出下限X", -200.0, 0.0, 1.0);
+	obs_property_t *dopaOutputLimitMinXProp = obs_properties_add_float_slider(props, "dopa_output_limit_min_x", "输出下限X", -500.0, 0.0, 1.0);
 	obs_property_set_long_description(dopaOutputLimitMinXProp, "DopaPID X轴输出最小值");
-	obs_property_t *dopaOutputLimitMaxXProp = obs_properties_add_float_slider(props, "dopa_output_limit_max_x", "输出上限X", 0.0, 200.0, 1.0);
+	obs_property_t *dopaOutputLimitMaxXProp = obs_properties_add_float_slider(props, "dopa_output_limit_max_x", "输出上限X", 0.0, 500.0, 1.0);
 	obs_property_set_long_description(dopaOutputLimitMaxXProp, "DopaPID X轴输出最大值");
-	obs_property_t *dopaOutputLimitMinYProp = obs_properties_add_float_slider(props, "dopa_output_limit_min_y", "输出下限Y", -200.0, 0.0, 1.0);
+	obs_property_t *dopaOutputLimitMinYProp = obs_properties_add_float_slider(props, "dopa_output_limit_min_y", "输出下限Y", -500.0, 0.0, 1.0);
 	obs_property_set_long_description(dopaOutputLimitMinYProp, "DopaPID Y轴输出最小值");
-	obs_property_t *dopaOutputLimitMaxYProp = obs_properties_add_float_slider(props, "dopa_output_limit_max_y", "输出上限Y", 0.0, 200.0, 1.0);
+	obs_property_t *dopaOutputLimitMaxYProp = obs_properties_add_float_slider(props, "dopa_output_limit_max_y", "输出上限Y", 0.0, 500.0, 1.0);
 	obs_property_set_long_description(dopaOutputLimitMaxYProp, "DopaPID Y轴输出最大值");
 	obs_property_t *dopaPredWeightProp = obs_properties_add_float_slider(props, "dopa_pred_weight", "预测权重", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(dopaPredWeightProp, "DopaPID预测权重，越大预测影响越大");
@@ -1015,6 +1016,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(chrisRampTimeProp, "ChrisPID P增益从初始值爬升到1.0的时间（秒）");
 	obs_property_t *chrisOutputMaxProp = obs_properties_add_float_slider(props, "chris_output_max", "输出最大值", 0.0, 500.0, 1.0);
 	obs_property_set_long_description(chrisOutputMaxProp, "ChrisPID输出最大值限制");
+	obs_property_t *chrisIMaxProp = obs_properties_add_float_slider(props, "chris_i_max", "积分限幅", 0.0, 500.0, 1.0);
+	obs_property_set_long_description(chrisIMaxProp, "ChrisPID积分项限幅，防止积分饱和");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -1984,6 +1987,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->chrisInitScale = (float)obs_data_get_double(settings, "chris_init_scale");
 	tf->chrisRampTime = (float)obs_data_get_double(settings, "chris_ramp_time");
 	tf->chrisOutputMax = (float)obs_data_get_double(settings, "chris_output_max");
+	tf->chrisIMax = (float)obs_data_get_double(settings, "chris_i_max");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -3672,10 +3676,10 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->dopaKdY = 0.03f;
 		instance->dopaWindupGuardX = 50.0f;
 		instance->dopaWindupGuardY = 50.0f;
-		instance->dopaOutputLimitMinX = -50.0f;
-		instance->dopaOutputLimitMaxX = 50.0f;
-		instance->dopaOutputLimitMinY = -50.0f;
-		instance->dopaOutputLimitMaxY = 50.0f;
+		instance->dopaOutputLimitMinX = -200.0f;
+		instance->dopaOutputLimitMaxX = 200.0f;
+		instance->dopaOutputLimitMinY = -200.0f;
+		instance->dopaOutputLimitMaxY = 200.0f;
 		instance->dopaPredWeight = 0.8f;
 		instance->dopaGameFps = 60;
 
@@ -3688,6 +3692,7 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisInitScale = 0.6f;
 		instance->chrisRampTime = 0.5f;
 		instance->chrisOutputMax = 150.0f;
+		instance->chrisIMax = 100.0f;
 #endif
 
 		// 强制关闭悬浮窗（每次启动OBS时）
@@ -3980,6 +3985,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisInitScale = tf->chrisInitScale;
 		mcConfig.chrisRampTime = tf->chrisRampTime;
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
+		mcConfig.chrisIMax = tf->chrisIMax;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
