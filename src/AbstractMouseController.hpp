@@ -12,6 +12,8 @@
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
 #include "KalmanFilter.hpp"
+#include "DopaPIDController.hpp"
+#include "ChrisPIDController.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -70,6 +72,9 @@ protected:
     DerivativePredictor predictor;
     KalmanFilter kalmanFilter;
     bool kalmanFilterInitialized;
+    
+    DopaDualAxisPID dopaController_;
+    ChrisAimController chrisController_;
 
     std::chrono::steady_clock::time_point lastTickTime;
     float deltaTime;

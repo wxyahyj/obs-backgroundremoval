@@ -292,7 +292,113 @@ void AbstractMouseController::tick()
         filteredDeltaErrorY = 0.0f;
         integralX = 0.0f;
         integralY = 0.0f;
-    } else {
+    } else if (config.algorithmType == AlgorithmType::DopaPID) {
+        DopaPIDConfig dopaConfig;
+        dopaConfig.kpX = config.dopaKpX;
+        dopaConfig.kpY = config.dopaKpY;
+        dopaConfig.kiX = config.dopaKiX;
+        dopaConfig.kiY = config.dopaKiY;
+        dopaConfig.kdX = config.dopaKdX;
+        dopaConfig.kdY = config.dopaKdY;
+        dopaConfig.windupGuardX = config.dopaWindupGuardX;
+        dopaConfig.windupGuardY = config.dopaWindupGuardY;
+        dopaConfig.outputLimitMinX = config.dopaOutputLimitMinX;
+        dopaConfig.outputLimitMaxX = config.dopaOutputLimitMaxX;
+        dopaConfig.outputLimitMinY = config.dopaOutputLimitMinY;
+        dopaConfig.outputLimitMaxY = config.dopaOutputLimitMaxY;
+        dopaConfig.predWeight = config.dopaPredWeight;
+        dopaConfig.gameFps = config.dopaGameFps;
+        
+        dopaController_.setConfig(dopaConfig);
+        dopaController_.compute(targetPixelX, targetPixelY, fovCenterX, fovCenterY, moveX, moveY);
+        
+        static int dopaLogCounter = 0;
+        if (++dopaLogCounter >= 30) {
+            dopaLogCounter = 0;
+            blog(LOG_INFO, "[DopaPID] errorX=%.1f errorY=%.1f | moveX=%.1f moveY=%.1f | kpX=%.2f kpY=%.2f",
+                 errorX, errorY, moveX, moveY, config.dopaKpX, config.dopaKpY);
+        }
+        
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.dopaKpX;
+            data.currentKi = config.dopaKiX;
+            data.currentKd = config.dopaKdX;
+            pidDataCallback_(data);
+        }
+        
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 0.0f;
+    } else if (config.algorithmType == AlgorithmType::ChrisPID) {
+        ChrisPIDConfig chrisConfig;
+        chrisConfig.kp = config.chrisKp;
+        chrisConfig.ki = config.chrisKi;
+        chrisConfig.kd = config.chrisKd;
+        chrisConfig.predWeightX = config.chrisPredWeightX;
+        chrisConfig.predWeightY = config.chrisPredWeightY;
+        chrisConfig.initScale = config.chrisInitScale;
+        chrisConfig.rampTime = config.chrisRampTime;
+        chrisConfig.outputMax = config.chrisOutputMax;
+        
+        chrisController_.setConfig(chrisConfig);
+        double currentTime = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        chrisController_.update(errorX, errorY, currentTime, moveX, moveY);
+        
+        static int chrisLogCounter = 0;
+        if (++chrisLogCounter >= 30) {
+            chrisLogCounter = 0;
+            blog(LOG_INFO, "[ChrisPID] errorX=%.1f errorY=%.1f | moveX=%.1f moveY=%.1f | kp=%.2f",
+                 errorX, errorY, moveX, moveY, config.chrisKp);
+        }
+        
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.chrisKp;
+            data.currentKi = config.chrisKi;
+            data.currentKd = config.chrisKd;
+            pidDataCallback_(data);
+        }
+        
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 0.0f;
+    } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
         float predictedX = 0.0f, predictedY = 0.0f;
 
         if (config.useKalmanFilter) {
@@ -656,6 +762,8 @@ void AbstractMouseController::resetPidState()
     stdPreviousMoveX = 0.0f;
     stdPreviousMoveY = 0.0f;
     lockedTrackId = -1;
+    dopaController_.reset();
+    chrisController_.reset();
 }
 
 void AbstractMouseController::resetMotionState()

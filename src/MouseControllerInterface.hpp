@@ -13,7 +13,9 @@ enum class ControllerType {
 
 enum class AlgorithmType {
     AdvancedPID,  // 高级PID（当前使用的自适应PID）
-    StandardPID   // 标准PID（经典PID）
+    StandardPID,  // 标准PID（经典PID）
+    DopaPID,      // DopaPID（开源PID+预测）
+    ChrisPID      // ChrisPID（克里斯控制器）
 };
 
 // PID数据回调函数类型
@@ -133,6 +135,32 @@ struct MouseControllerConfig {
     bool enableBezierMovement = false;
     float bezierCurvature = 0.3f;
     float bezierRandomness = 0.2f;
+    
+    // DopaPID参数（完全复刻dopa开源pid）
+    float dopaKpX = 0.8f;
+    float dopaKpY = 0.6f;
+    float dopaKiX = 0.005f;
+    float dopaKiY = 0.004f;
+    float dopaKdX = 0.025f;
+    float dopaKdY = 0.03f;
+    float dopaWindupGuardX = 50.0f;
+    float dopaWindupGuardY = 50.0f;
+    float dopaOutputLimitMinX = -50.0f;
+    float dopaOutputLimitMaxX = 50.0f;
+    float dopaOutputLimitMinY = -50.0f;
+    float dopaOutputLimitMaxY = 50.0f;
+    float dopaPredWeight = 0.8f;
+    int dopaGameFps = 60;
+    
+    // ChrisPID参数（完全复刻克里斯控制器）
+    float chrisKp = 0.45f;
+    float chrisKi = 0.02f;
+    float chrisKd = 0.04f;
+    float chrisPredWeightX = 0.5f;
+    float chrisPredWeightY = 0.1f;
+    float chrisInitScale = 0.6f;
+    float chrisRampTime = 0.5f;
+    float chrisOutputMax = 150.0f;
 };
 
 class MouseControllerInterface {
