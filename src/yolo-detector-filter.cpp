@@ -142,6 +142,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::atomic<int> outputReadyIdx{-1};    // 推理完成位置（-1表示无新结果）
 	std::atomic<int64_t> outputSequence{0};  // 输出序列号，用于判断结果是否更新
 	std::atomic<int64_t> lastConsumedSeq{-1}; // 上次消费的序列号
+	std::atomic<int64_t> lastResultTimestamp{0}; // 上次有新结果的时刻
 
 	// 缓冲区状态：0=空闲, 1=有数据待推理, 2=正在推理, 3=推理完成
 	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
@@ -3944,6 +3945,22 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			tf->outputState[readyIdx].store(0, std::memory_order_release);
 			tf->lastConsumedSeq.store(currentSeq, std::memory_order_release);
 			tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
+			
+			// 更新最后有结果的时刻
+			auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+			tf->lastResultTimestamp.store(nowMs, std::memory_order_relaxed);
+		} else {
+			// 没有新结果，检查是否超时需要清空
+			auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+			int64_t lastTs = tf->lastResultTimestamp.load(std::memory_order_acquire);
+			
+			// 超过500ms没有新结果，自动清空检测框
+			if (nowMs - lastTs > 500 && !tf->detections.empty()) {
+				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+				tf->detections.clear();
+			}
 		}
 	}
 
