@@ -3399,9 +3399,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			}
 		}
 
-		// 释放frame缓冲区到内存池
-		releaseImageBuffer(filter, std::move(frame));
-
 		auto endTime = std::chrono::high_resolution_clock::now();
 		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
 			endTime - startTime
@@ -4398,14 +4395,15 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				int x = static_cast<int>(det.x * originalWidth) - cropOffsetX;
 				int y = static_cast<int>(det.y * originalHeight) - cropOffsetY;
 				
-				// 确保在裁剪区域内
-				if (x >= 0 && y >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
+				// 确保在裁剪区域内（包括文本绘制位置）
+				int textY = y - 5;
+				if (x >= 0 && textY >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
 					// 构建标签文本
 					char labelText[64];
 					snprintf(labelText, sizeof(labelText), "%d: %.2f", det.classId, det.confidence);
 					
 					// 只绘制文本，不绘制黑色背景
-					cv::Point textOrg(x, y - 5);
+					cv::Point textOrg(x, textY);
 					cv::putText(croppedFrame, labelText, 
 						textOrg,
 						fontFace, fontScale, 
