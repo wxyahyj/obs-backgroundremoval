@@ -319,17 +319,13 @@ void AbstractMouseController::tick()
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
         }
 
+        // 卡尔曼预测：预测目标位置偏移，加到误差上（瞄准预测位置）
         float fusedErrorX = errorX;
         float fusedErrorY = errorY;
         
         if (config.useKalmanFilter) {
             fusedErrorX += config.kalmanPredictionWeightX * predictedX;
             fusedErrorY += config.kalmanPredictionWeightY * predictedY;
-        }
-        
-        if (config.useDerivativePredictor) {
-            fusedErrorX += config.predictionWeightX * derivPredictedX;
-            fusedErrorY += config.predictionWeightY * derivPredictedY;
         }
 
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
@@ -347,6 +343,13 @@ void AbstractMouseController::tick()
         float pidOutputX = dynamicP * fusedErrorX + config.pidD * filteredDeltaErrorX + integralTermX;
         float pidOutputY = dynamicP * fusedErrorY + config.pidD * filteredDeltaErrorY + integralTermY;
 
+        // 导数预测作为前馈项：预测目标移动方向，提前移动
+        // 注意：前馈项直接加到输出上，不经过PID计算
+        if (config.useDerivativePredictor) {
+            pidOutputX += config.predictionWeightX * derivPredictedX;
+            pidOutputY += config.predictionWeightY * derivPredictedY;
+        }
+
         moveX = pidOutputX;
         moveY = pidOutputY;
 
@@ -355,8 +358,8 @@ void AbstractMouseController::tick()
             logCounter = 0;
             blog(LOG_INFO, "[%s高级PID] errorX=%.1f errorY=%.1f | fusedX=%.1f fusedY=%.1f | dynamicP=%.3f",
                  getLogPrefix(), errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID] deltaErrX=%.1f deltaErrY=%.1f | filteredDeltaX=%.1f filteredDeltaY=%.1f",
-                 getLogPrefix(), deltaErrorX, deltaErrorY, filteredDeltaErrorX, filteredDeltaErrorY);
+            blog(LOG_INFO, "[%s高级PID] derivPredX=%.1f derivPredY=%.1f | kalmanPredX=%.1f kalmanPredY=%.1f",
+                 getLogPrefix(), derivPredictedX, derivPredictedY, predictedX, predictedY);
             blog(LOG_INFO, "[%s高级PID] integralX=%.1f integralY=%.1f | pidI=%.3f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
                  getLogPrefix(), integralTermX, integralTermY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
         }
