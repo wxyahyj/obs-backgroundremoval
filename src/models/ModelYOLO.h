@@ -121,6 +121,10 @@ private:
     std::vector<float> outputBuffer_;  // 预分配输出缓冲区
     bool useIOBinding_;  // 是否使用IOBinding
     
+    // 预分配letterbox缓冲区，避免每帧分配
+    cv::Mat letterboxBuffer_;
+    cv::Mat resizedBuffer_;
+    
     std::thread inferenceThread_;
     std::atomic<bool> inferenceThreadRunning_;
     std::queue<std::unique_ptr<InferenceTask>> inferenceTasks_;

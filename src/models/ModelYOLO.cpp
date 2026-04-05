@@ -27,11 +27,23 @@ ModelYOLO::LetterboxInfo ModelYOLO::letterbox(const cv::Mat& input, cv::Mat& out
     info.padX = (inputWidth_ - newWidth) / 2;
     info.padY = (inputHeight_ - newHeight) / 2;
     
-    cv::Mat resized;
-    cv::resize(input, resized, cv::Size(newWidth, newHeight), 0, 0, cv::INTER_LINEAR);
+    // 使用预分配的resized缓冲区
+    if (resizedBuffer_.rows != newHeight || resizedBuffer_.cols != newWidth) {
+        resizedBuffer_ = cv::Mat(newHeight, newWidth, input.type());
+    }
+    cv::resize(input, resizedBuffer_, cv::Size(newWidth, newHeight), 0, 0, cv::INTER_LINEAR);
     
-    output = cv::Mat(inputHeight_, inputWidth_, input.type(), cv::Scalar(114, 114, 114, 114));
-    resized.copyTo(output(cv::Rect(info.padX, info.padY, newWidth, newHeight)));
+    // 使用预分配的letterbox输出缓冲区
+    if (letterboxBuffer_.rows != inputHeight_ || letterboxBuffer_.cols != inputWidth_) {
+        letterboxBuffer_ = cv::Mat(inputHeight_, inputWidth_, input.type(), cv::Scalar(114, 114, 114, 114));
+    } else {
+        // 重置填充区域为灰色
+        letterboxBuffer_.setTo(cv::Scalar(114, 114, 114, 114));
+    }
+    resizedBuffer_.copyTo(letterboxBuffer_(cv::Rect(info.padX, info.padY, newWidth, newHeight)));
+    
+    // 输出指向预分配缓冲区
+    output = letterboxBuffer_;
     
     return info;
 }

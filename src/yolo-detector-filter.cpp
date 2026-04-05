@@ -150,6 +150,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	const int MAX_BUFFER_POOL_SIZE = 3;
 	const int THREAD_POOL_SIZE = 4;
 
+	// 预分配推理缓冲区，避免每帧分配
+	cv::Mat preallocatedInferenceFrame;
+	std::mutex inferenceFrameMutex;
+
 #ifdef _WIN32
 	bool showFloatingWindow;
 	int floatingWindowWidth;
@@ -3181,8 +3185,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		// 推理启用时，立即重置休眠时间以提高响应速度
 		sleepTime = 1;
 
-		cv::Mat fullFrame;
-		cv::Mat frame;
 		int cropX = 0;
 		int cropY = 0;
 		int cropWidth = 0;
@@ -3202,6 +3204,9 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			fullWidth = filter->inputBGRA.cols;
 			fullHeight = filter->inputBGRA.rows;
 
+			// 使用预分配缓冲区
+			std::lock_guard<std::mutex> frameLock(filter->inferenceFrameMutex);
+			
 			if (filter->useRegion) {
 				cropX = std::max(0, filter->regionX);
 				cropY = std::max(0, filter->regionY);
@@ -3209,19 +3214,31 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				cropHeight = std::min(filter->regionHeight, fullHeight - cropY);
 
 				if (cropWidth > 0 && cropHeight > 0) {
-					frame = getImageBuffer(filter, cropHeight, cropWidth, filter->inputBGRA.type());
-					filter->inputBGRA(cv::Rect(cropX, cropY, cropWidth, cropHeight)).copyTo(frame);
+					// 检查并调整预分配缓冲区大小
+					if (filter->preallocatedInferenceFrame.rows != cropHeight || 
+						filter->preallocatedInferenceFrame.cols != cropWidth) {
+						filter->preallocatedInferenceFrame = cv::Mat(cropHeight, cropWidth, filter->inputBGRA.type());
+					}
+					filter->inputBGRA(cv::Rect(cropX, cropY, cropWidth, cropHeight)).copyTo(filter->preallocatedInferenceFrame);
 				} else {
-					frame = getImageBuffer(filter, fullHeight, fullWidth, filter->inputBGRA.type());
-					filter->inputBGRA.copyTo(frame);
+					// 检查并调整预分配缓冲区大小
+					if (filter->preallocatedInferenceFrame.rows != fullHeight || 
+						filter->preallocatedInferenceFrame.cols != fullWidth) {
+						filter->preallocatedInferenceFrame = cv::Mat(fullHeight, fullWidth, filter->inputBGRA.type());
+					}
+					filter->inputBGRA.copyTo(filter->preallocatedInferenceFrame);
 					cropX = 0;
 					cropY = 0;
 					cropWidth = fullWidth;
 					cropHeight = fullHeight;
 				}
 			} else {
-				frame = getImageBuffer(filter, fullHeight, fullWidth, filter->inputBGRA.type());
-				filter->inputBGRA.copyTo(frame);
+				// 检查并调整预分配缓冲区大小
+				if (filter->preallocatedInferenceFrame.rows != fullHeight || 
+					filter->preallocatedInferenceFrame.cols != fullWidth) {
+					filter->preallocatedInferenceFrame = cv::Mat(fullHeight, fullWidth, filter->inputBGRA.type());
+				}
+				filter->inputBGRA.copyTo(filter->preallocatedInferenceFrame);
 			}
 		}
 
@@ -3235,7 +3252,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (filter->yoloModel) {
-				newDetections = filter->yoloModel->inference(frame);
+				newDetections = filter->yoloModel->inference(filter->preallocatedInferenceFrame);
 			}
 		}
 
