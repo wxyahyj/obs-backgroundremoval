@@ -139,7 +139,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 无锁索引管理
 	std::atomic<int> inputWriteIdx{0};      // 主线程写入位置
 	std::atomic<int> inputReadIdx{0};       // 推理线程读取位置
-	std::atomic<int> outputReadyIdx{-1};    // 推理完成位置（-1表示无结果）
+	std::atomic<int> outputReadyIdx{-1};    // 推理完成位置（-1表示无新结果）
+	std::atomic<int64_t> outputSequence{0};  // 输出序列号，用于判断结果是否更新
+	std::atomic<int64_t> lastConsumedSeq{-1}; // 上次消费的序列号
 
 	// 缓冲区状态：0=空闲, 1=有数据待推理, 2=正在推理, 3=推理完成
 	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
@@ -3238,11 +3240,23 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 	#endif
 
+	int inferenceFrameCounter = 0;
+	// 从UI配置读取推理间隔，0表示每帧都推理
+	int inferenceInterval = std::max(1, filter->inferenceIntervalFrames);
+
 	while (filter->inferenceRunning) {
 		if (!filter->isInferencing) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			continue;
 		}
+
+		// 帧间隔控制：不是每帧都推理
+		inferenceFrameCounter++;
+		if (inferenceFrameCounter < inferenceInterval) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			continue;
+		}
+		inferenceFrameCounter = 0;
 
 		// 无锁获取待推理帧
 		int readIdx = -1;
@@ -3432,11 +3446,15 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 			filter->framesInferred.fetch_add(1, std::memory_order_relaxed);
 
-			// 标记输出缓冲区为完成
+			// 标记输出缓冲区为完成，递增序列号
+			int64_t currentSeq = filter->outputSequence.fetch_add(1, std::memory_order_relaxed);
 			filter->outputState[readIdx].store(1, std::memory_order_release);
 			
-			// 更新就绪索引
-			filter->outputReadyIdx.store(readIdx, std::memory_order_release);
+			// 只有序列号更新时才更新就绪索引（防止重复消费）
+			int64_t lastSeq = filter->lastConsumedSeq.load(std::memory_order_acquire);
+			if (currentSeq > lastSeq) {
+				filter->outputReadyIdx.store(readIdx, std::memory_order_release);
+			}
 
 			// 导出坐标
 			if (filter->exportCoordinates && !newDetections.empty()) {
@@ -3891,23 +3909,30 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		tf->lastFpsTime = now;
 	}
 
-	// === 四缓冲区：消费推理结果 ===
+	// === 四缓冲区：消费推理结果（带序列号防重复） ===
 	int readyIdx = tf->outputReadyIdx.load(std::memory_order_acquire);
 	if (readyIdx >= 0 && readyIdx < tf->BUFFER_COUNT && 
 		tf->outputState[readyIdx].load(std::memory_order_acquire) == 1) {
 		
-		std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-		tf->detections = tf->outputDetections[readyIdx];
+		// 检查是否是新的结果（防止重复消费）
+		int64_t currentSeq = tf->outputSequence.load(std::memory_order_acquire);
+		int64_t lastSeq = tf->lastConsumedSeq.load(std::memory_order_acquire);
 		
-		std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
-		tf->inferenceFrameWidth = tf->outputFrameWidths[readyIdx];
-		tf->inferenceFrameHeight = tf->outputFrameHeights[readyIdx];
-		tf->cropOffsetX = tf->outputCropX[readyIdx];
-		tf->cropOffsetY = tf->outputCropY[readyIdx];
+		if (currentSeq > lastSeq) {
+			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+			tf->detections = tf->outputDetections[readyIdx];
+			
+			std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
+			tf->inferenceFrameWidth = tf->outputFrameWidths[readyIdx];
+			tf->inferenceFrameHeight = tf->outputFrameHeights[readyIdx];
+			tf->cropOffsetX = tf->outputCropX[readyIdx];
+			tf->cropOffsetY = tf->outputCropY[readyIdx];
 
-		// 标记输出缓冲区为已消费
-		tf->outputState[readyIdx].store(0, std::memory_order_release);
-		tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
+			// 标记输出缓冲区为已消费，更新已消费序列号
+			tf->outputState[readyIdx].store(0, std::memory_order_release);
+			tf->lastConsumedSeq.store(currentSeq, std::memory_order_release);
+			tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
+		}
 	}
 
 #ifdef _WIN32
