@@ -1181,7 +1181,6 @@ static void setPredictorPropertiesVisible(obs_properties_t *props, int configInd
 	snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
-}
 
 // 设置鼠标控制-扳机页面的控件可见性
 static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
@@ -1320,8 +1319,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "coordinate_output_path"), page == 5);
 
 	// 页面3: 鼠标控制 - PID参数（整合所有控制算法）
-	int algorithm = (int)obs_data_get_int(settings, "algorithm_type_global");
-	
 	// 算法选择（在页面3始终显示）
 	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 3);
 	
