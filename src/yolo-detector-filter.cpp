@@ -780,45 +780,47 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *yUnlockDelayProp = obs_properties_add_int_slider(props, propName, "Y 轴解锁延迟 (ms)", 100, 2000, 50);
 		obs_property_set_long_description(yUnlockDelayProp, "Y轴解锁延迟时间（毫秒）");
 
-		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
-		obs_property_t *enableAutoTriggerProp = obs_properties_add_bool(props, propName, "启用自动扳机");
-		obs_property_set_long_description(enableAutoTriggerProp, "当目标进入触发半径时自动点击");
+		// 自动扳机分组（可折叠）
+		snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
+		obs_properties_t *autoTriggerProps = obs_properties_create();
 		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
-		obs_property_t *triggerRadiusProp = obs_properties_add_int_slider(props, propName, "扳机触发半径(像素)", 1, 50, 1);
+		obs_property_t *triggerRadiusProp = obs_properties_add_int_slider(autoTriggerProps, propName, "扳机触发半径(像素)", 1, 50, 1);
 		obs_property_set_long_description(triggerRadiusProp, "自动扳机触发半径（像素）");
 		snprintf(propName, sizeof(propName), "trigger_cooldown_%d", i);
-		obs_property_t *triggerCooldownProp = obs_properties_add_int_slider(props, propName, "扳机冷却时间(ms)", 50, 1000, 50);
+		obs_property_t *triggerCooldownProp = obs_properties_add_int_slider(autoTriggerProps, propName, "扳机冷却时间(ms)", 50, 1000, 50);
 		obs_property_set_long_description(triggerCooldownProp, "两次自动点击之间的最小间隔（毫秒）");
 		snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", i);
-		obs_property_t *triggerFireDelayProp = obs_properties_add_int_slider(props, propName, "开火延时(ms)", 0, 500, 10);
+		obs_property_t *triggerFireDelayProp = obs_properties_add_int_slider(autoTriggerProps, propName, "开火延时(ms)", 0, 500, 10);
 		obs_property_set_long_description(triggerFireDelayProp, "检测到目标后延迟多久开火（毫秒）");
 		snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", i);
-		obs_property_t *triggerFireDurationProp = obs_properties_add_int_slider(props, propName, "开火时长(ms)", 10, 500, 10);
+		obs_property_t *triggerFireDurationProp = obs_properties_add_int_slider(autoTriggerProps, propName, "开火时长(ms)", 10, 500, 10);
 		obs_property_set_long_description(triggerFireDurationProp, "鼠标按下持续时间（毫秒）");
 		snprintf(propName, sizeof(propName), "trigger_interval_%d", i);
-		obs_property_t *triggerIntervalProp = obs_properties_add_int_slider(props, propName, "间隔设置(ms)", 10, 500, 10);
+		obs_property_t *triggerIntervalProp = obs_properties_add_int_slider(autoTriggerProps, propName, "间隔设置(ms)", 10, 500, 10);
 		obs_property_set_long_description(triggerIntervalProp, "自动扳机触发间隔（毫秒）");
 		snprintf(propName, sizeof(propName), "enable_trigger_delay_random_%d", i);
-		obs_property_t *enableTriggerDelayRandomProp = obs_properties_add_bool(props, propName, "启用随机延时");
+		obs_property_t *enableTriggerDelayRandomProp = obs_properties_add_bool(autoTriggerProps, propName, "启用随机延时");
 		obs_property_set_long_description(enableTriggerDelayRandomProp, "启用随机开火延时，增加不可预测性");
 		snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", i);
-		obs_property_t *triggerDelayRandomMinProp = obs_properties_add_int_slider(props, propName, "随机延时下限(ms)", 0, 200, 5);
+		obs_property_t *triggerDelayRandomMinProp = obs_properties_add_int_slider(autoTriggerProps, propName, "随机延时下限(ms)", 0, 200, 5);
 		obs_property_set_long_description(triggerDelayRandomMinProp, "随机开火延时的下限");
 		snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", i);
-		obs_property_t *triggerDelayRandomMaxProp = obs_properties_add_int_slider(props, propName, "随机延时上限(ms)", 0, 200, 5);
+		obs_property_t *triggerDelayRandomMaxProp = obs_properties_add_int_slider(autoTriggerProps, propName, "随机延时上限(ms)", 0, 200, 5);
 		obs_property_set_long_description(triggerDelayRandomMaxProp, "随机开火延时的上限");
 		snprintf(propName, sizeof(propName), "enable_trigger_duration_random_%d", i);
-		obs_property_t *enableTriggerDurationRandomProp = obs_properties_add_bool(props, propName, "启用随机时长");
+		obs_property_t *enableTriggerDurationRandomProp = obs_properties_add_bool(autoTriggerProps, propName, "启用随机时长");
 		obs_property_set_long_description(enableTriggerDurationRandomProp, "启用随机开火时长");
 		snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", i);
-		obs_property_t *triggerDurationRandomMinProp = obs_properties_add_int_slider(props, propName, "随机时长下限(ms)", 0, 200, 5);
+		obs_property_t *triggerDurationRandomMinProp = obs_properties_add_int_slider(autoTriggerProps, propName, "随机时长下限(ms)", 0, 200, 5);
 		obs_property_set_long_description(triggerDurationRandomMinProp, "随机开火时长的下限");
 		snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", i);
-		obs_property_t *triggerDurationRandomMaxProp = obs_properties_add_int_slider(props, propName, "随机时长上限(ms)", 0, 200, 5);
+		obs_property_t *triggerDurationRandomMaxProp = obs_properties_add_int_slider(autoTriggerProps, propName, "随机时长上限(ms)", 0, 200, 5);
 		obs_property_set_long_description(triggerDurationRandomMaxProp, "随机开火时长的上限");
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
-		obs_property_t *triggerMoveCompensationProp = obs_properties_add_int_slider(props, propName, "移动补偿(像素)", 0, 100, 1);
+		obs_property_t *triggerMoveCompensationProp = obs_properties_add_int_slider(autoTriggerProps, propName, "移动补偿(像素)", 0, 100, 1);
 		obs_property_set_long_description(triggerMoveCompensationProp, "移动补偿像素数，用于补偿鼠标移动时的延迟");
+		snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
+		obs_properties_add_group(props, propName, "自动扳机", OBS_GROUP_CHECKABLE, autoTriggerProps);
 
 		// 新功能参数设置
 		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
@@ -840,50 +842,51 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *pGainRampDurationProp = obs_properties_add_float_slider(props, propName, "P-Gain Ramp持续时间(秒)", 0.0, 2.0, 0.1);
 		obs_property_set_long_description(pGainRampDurationProp, "P-Gain Ramp持续时间，从初始比例过渡到100%的时间");
 
-		// 自动压枪参数
-		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
-		obs_property_t *autoRecoilProp = obs_properties_add_bool(props, propName, "启用自动压枪");
-		obs_property_set_long_description(autoRecoilProp, "开火时自动向下移动鼠标以抵消后坐力");
+		// 后坐力控制分组（可折叠）
+		snprintf(propName, sizeof(propName), "recoil_group_%d", i);
+		obs_properties_t *recoilProps = obs_properties_create();
 		snprintf(propName, sizeof(propName), "recoil_strength_%d", i);
-		obs_property_t *recoilStrengthProp = obs_properties_add_float_slider(props, propName, "压枪强度(像素)", 0.0, 50.0, 1.0);
+		obs_property_t *recoilStrengthProp = obs_properties_add_float_slider(recoilProps, propName, "压枪强度(像素)", 0.0, 50.0, 1.0);
 		obs_property_set_long_description(recoilStrengthProp, "每次压枪移动的像素数，值越大压枪幅度越大");
 		snprintf(propName, sizeof(propName), "recoil_speed_%d", i);
-		obs_property_t *recoilSpeedProp = obs_properties_add_int_slider(props, propName, "压枪速度(ms)", 1, 100, 1);
+		obs_property_t *recoilSpeedProp = obs_properties_add_int_slider(recoilProps, propName, "压枪速度(ms)", 1, 100, 1);
 		obs_property_set_long_description(recoilSpeedProp, "压枪移动的时间间隔（毫秒），值越小压枪频率越高");
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
-		obs_property_t *recoilPidGainScaleProp = obs_properties_add_float_slider(props, propName, "压枪时Y轴PID增益", 0.0, 1.0, 0.05);
+		obs_property_t *recoilPidGainScaleProp = obs_properties_add_float_slider(recoilProps, propName, "压枪时Y轴PID增益", 0.0, 1.0, 0.05);
 		obs_property_set_long_description(recoilPidGainScaleProp, "压枪时Y轴PID控制的增益系数，0表示完全禁用Y轴PID，1表示保持原增益");
+		snprintf(propName, sizeof(propName), "recoil_group_%d", i);
+		obs_properties_add_group(props, propName, "后坐力控制", OBS_GROUP_CHECKABLE, recoilProps);
 	}
 
 	// 卡尔曼滤波器独立配置组
-	obs_properties_add_group(props, "kalman_filter_group", "卡尔曼滤波器设置", OBS_GROUP_NORMAL, nullptr);
-	
 	for (int i = 0; i < 5; i++) {
 		char propName[64];
 		
-		snprintf(propName, sizeof(propName), "use_kalman_filter_%d", i);
-		obs_property_t *useKalmanFilterProp = obs_properties_add_bool(props, propName, "启用卡尔曼滤波器");
-		obs_property_set_long_description(useKalmanFilterProp, "使用卡尔曼滤波器进行目标运动预测，替代原有的简单导数预测器。开启后可以提高对移动目标的跟踪精度，特别是在目标运动模式复杂或检测噪声较大的情况下。");
+		// 卡尔曼滤波器分组（可折叠）
+		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
+		obs_properties_t *kalmanProps = obs_properties_create();
 		
 		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
-		obs_property_t *kalmanProcessNoiseProp = obs_properties_add_float_slider(props, propName, "过程噪声", 0.001f, 0.1f, 0.001f);
+		obs_property_t *kalmanProcessNoiseProp = obs_properties_add_float_slider(kalmanProps, propName, "过程噪声", 0.001f, 0.1f, 0.001f);
 		obs_property_set_long_description(kalmanProcessNoiseProp, "卡尔曼滤波器的过程噪声Q。值越大表示对系统模型的信任度越低，滤波器会更依赖测量值。增大此值会使跟踪更敏感但可能引入更多噪声；减小此值会使跟踪更平滑但可能响应变慢。建议范围：0.001-0.05");
 		
 		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
-		obs_property_t *kalmanMeasurementNoiseProp = obs_properties_add_float_slider(props, propName, "测量噪声", 0.1f, 10.0f, 0.1f);
+		obs_property_t *kalmanMeasurementNoiseProp = obs_properties_add_float_slider(kalmanProps, propName, "测量噪声", 0.1f, 10.0f, 0.1f);
 		obs_property_set_long_description(kalmanMeasurementNoiseProp, "卡尔曼滤波器的测量噪声R。值越大表示对检测结果的信任度越低，滤波器会更依赖预测值。增大此值会使预测更占主导，适合检测噪声大的场景；减小此值会使检测更占主导，适合检测精度高的场景。建议范围：0.5-5.0");
 		
 		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
-		obs_property_t *kalmanConfidenceScaleProp = obs_properties_add_float_slider(props, propName, "置信度缩放", 0.1f, 5.0f, 0.1f);
+		obs_property_t *kalmanConfidenceScaleProp = obs_properties_add_float_slider(kalmanProps, propName, "置信度缩放", 0.1f, 5.0f, 0.1f);
 		obs_property_set_long_description(kalmanConfidenceScaleProp, "置信度缩放因子，用于根据检测置信度动态调整测量噪声。值越大，高置信度检测对滤波器的影响越大。建议范围：0.5-2.0");
+		
+		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
+		obs_properties_add_group(props, propName, "卡尔曼滤波器", OBS_GROUP_CHECKABLE, kalmanProps);
 	}
 
-	obs_properties_add_group(props, "predictor_group", "预测器配置", OBS_GROUP_NORMAL, nullptr);
-	
+	// 预测器配置组
 	for (int i = 0; i < 5; i++) {
 		char propName[64];
 		
-		// 卡尔曼预测权重
+		// 卡尔曼预测权重（始终显示）
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", i);
 		obs_property_t *kalmanPredWeightXProp = obs_properties_add_float_slider(props, propName, "卡尔曼预测权重X", 0.0f, 1.0f, 0.05f);
 		obs_property_set_long_description(kalmanPredWeightXProp, "卡尔曼预测在X轴的融合权重。值越大预测偏移影响越大，建议0.1-0.3");
@@ -892,48 +895,52 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *kalmanPredWeightYProp = obs_properties_add_float_slider(props, propName, "卡尔曼预测权重Y", 0.0f, 1.0f, 0.05f);
 		obs_property_set_long_description(kalmanPredWeightYProp, "卡尔曼预测在Y轴的融合权重。值越大预测偏移影响越大，建议0.05-0.2");
 		
-		// DerivativePredictor参数
-		snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", i);
-		obs_property_t *useDerivativePredProp = obs_properties_add_bool(props, propName, "启用导数预测器");
-		obs_property_set_long_description(useDerivativePredProp, "启用基于速度/加速度的导数预测器，适合稳定目标");
+		// 导数预测器分组（可折叠）
+		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
+		obs_properties_t *derivPredProps = obs_properties_create();
 		
 		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
-		obs_property_t *predictionWeightXProp = obs_properties_add_float_slider(props, propName, "导数预测权重X", 0.0f, 1.0f, 0.1f);
+		obs_property_t *predictionWeightXProp = obs_properties_add_float_slider(derivPredProps, propName, "导数预测权重X", 0.0f, 1.0f, 0.1f);
 		obs_property_set_long_description(predictionWeightXProp, "导数预测器在X轴的融合权重，值越大预测效果越强");
 		
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
-		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(props, propName, "导数预测权重Y", 0.0f, 1.0f, 0.1f);
+		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(derivPredProps, propName, "导数预测权重Y", 0.0f, 1.0f, 0.1f);
 		obs_property_set_long_description(predictionWeightYProp, "导数预测器在Y轴的融合权重，值越大预测效果越强");
 		
 		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
-		obs_property_t *velSmoothProp = obs_properties_add_float_slider(props, propName, "速度平滑系数", 0.01f, 0.5f, 0.01f);
+		obs_property_t *velSmoothProp = obs_properties_add_float_slider(derivPredProps, propName, "速度平滑系数", 0.01f, 0.5f, 0.01f);
 		obs_property_set_long_description(velSmoothProp, "速度的指数平滑系数，值越大响应越快但噪声越大，建议0.1-0.3");
 		
 		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
-		obs_property_t *accSmoothProp = obs_properties_add_float_slider(props, propName, "加速度平滑系数", 0.01f, 0.5f, 0.01f);
+		obs_property_t *accSmoothProp = obs_properties_add_float_slider(derivPredProps, propName, "加速度平滑系数", 0.01f, 0.5f, 0.01f);
 		obs_property_set_long_description(accSmoothProp, "加速度的指数平滑系数，值越大响应越快但噪声越大，建议0.1-0.3");
 		
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
-		obs_property_t *maxPredTimeProp = obs_properties_add_float_slider(props, propName, "最大预测时间(秒)", 0.01f, 0.3f, 0.01f);
+		obs_property_t *maxPredTimeProp = obs_properties_add_float_slider(derivPredProps, propName, "最大预测时间(秒)", 0.01f, 0.3f, 0.01f);
 		obs_property_set_long_description(maxPredTimeProp, "预测的最大时间范围，值越大预测越远但误差越大，建议0.05-0.15");
+		
+		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
+		obs_properties_add_group(props, propName, "导数预测器", OBS_GROUP_CHECKABLE, derivPredProps);
 	}
 
-	obs_properties_add_group(props, "bezier_movement_group", "贝塞尔曲线移动", OBS_GROUP_NORMAL, nullptr);
-	
+	// 贝塞尔曲线移动分组
 	for (int i = 0; i < 5; i++) {
 		char propName[64];
 		
-		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
-		obs_property_t *enableBezierProp = obs_properties_add_bool(props, propName, "启用贝塞尔曲线移动");
-		obs_property_set_long_description(enableBezierProp, "启用贝塞尔曲线移动，让鼠标移动轨迹更自然，呈曲线而非直线");
+		// 贝塞尔曲线移动分组（可折叠）
+		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
+		obs_properties_t *bezierProps = obs_properties_create();
 		
 		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
-		obs_property_t *bezierCurvatureProp = obs_properties_add_float_slider(props, propName, "曲线弯曲程度", 0.0f, 1.0f, 0.05f);
+		obs_property_t *bezierCurvatureProp = obs_properties_add_float_slider(bezierProps, propName, "曲线弯曲程度", 0.0f, 1.0f, 0.05f);
 		obs_property_set_long_description(bezierCurvatureProp, "贝塞尔曲线的弯曲程度，值越大曲线越弯曲");
 		
 		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
-		obs_property_t *bezierRandomnessProp = obs_properties_add_float_slider(props, propName, "随机程度", 0.0f, 0.5f, 0.05f);
+		obs_property_t *bezierRandomnessProp = obs_properties_add_float_slider(bezierProps, propName, "随机程度", 0.0f, 0.5f, 0.05f);
 		obs_property_set_long_description(bezierRandomnessProp, "曲线的随机程度，值越大每次移动的轨迹越不固定");
+		
+		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
+		obs_properties_add_group(props, propName, "贝塞尔曲线移动", OBS_GROUP_CHECKABLE, bezierProps);
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -1099,6 +1106,13 @@ static void setMouseBasicPropertiesVisible(obs_properties_t *props, int configIn
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "screen_height_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// Y轴偏移与解锁（从页面3迁移）
+	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 // 设置鼠标控制-PID页面的控件可见性
@@ -1130,38 +1144,18 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "target_y_offset_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "enable_y_axis_unlock_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "auto_recoil_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "recoil_strength_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "recoil_speed_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// 以下参数已迁移到其他页面：
+	// target_y_offset, enable_y_axis_unlock, y_axis_unlock_delay -> 页面2（基础）
+	// prediction_weight_x, prediction_weight_y -> 页面6（预测与滤波）
+	// auto_recoil, recoil_strength, recoil_speed, recoil_pid_gain_scale -> 页面4（扳机）
 }
 
 // 设置卡尔曼滤波器页面的控件可见性
 static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
 	char propName[64];
-
-	snprintf(propName, sizeof(propName), "use_kalman_filter_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "kalman_process_noise_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", configIndex);
+	// 卡尔曼滤波器分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "kalman_filter_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1169,12 +1163,8 @@ static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int config
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
 	char propName[64];
-
-	snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "bezier_curvature_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "bezier_randomness_%d", configIndex);
+	// 贝塞尔曲线移动分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "bezier_movement_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1182,26 +1172,15 @@ static void setBezierMovementPropertiesVisible(obs_properties_t *props, int conf
 static void setPredictorPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
 	char propName[64];
-
-	// 卡尔曼预测权重
+	// 卡尔曼预测权重（始终显示）
 	snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	// DerivativePredictor参数
-	snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", configIndex);
+	// 导数预测器分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "prediction_weight_x_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "prediction_weight_y_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	// 平滑系数和预测时间
-	snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "max_prediction_time_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
+}
 }
 
 // 设置鼠标控制-扳机页面的控件可见性
@@ -1209,31 +1188,11 @@ static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int config
 {
 	char propName[64];
 
-	snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", configIndex);
+	// 自动扳机分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "auto_trigger_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_radius_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_cooldown_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_fire_delay_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_fire_duration_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_interval_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "enable_trigger_delay_random_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_delay_random_min_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_delay_random_max_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "enable_trigger_duration_random_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_duration_random_min_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_duration_random_max_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", configIndex);
+	// 后坐力控制分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "recoil_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1241,11 +1200,13 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 {
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
 	int page = (int)obs_data_get_int(settings, "settings_page");
+	int algorithm = (int)obs_data_get_int(settings, "algorithm_type_global");
 
 	for (int i = 0; i < 5; i++) {
 		bool isCurrentConfig = (i == currentConfig);
 		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
-		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
+		// 高级PID参数只在algorithm == 0时显示
+		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 7);
@@ -1325,10 +1286,12 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 
 	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
+	int algorithm = (int)obs_data_get_int(settings, "algorithm_type_global");
 	for (int i = 0; i < 5; i++) {
 		bool isCurrentConfig = (i == currentConfig);
 		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
-		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3);
+		// 高级PID参数只在algorithm == 0时显示
+		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
@@ -1536,7 +1499,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		obs_data_set_default_int(settings, propName, 500);
 
-		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+		snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
 		obs_data_set_default_int(settings, propName, 5);
@@ -1581,10 +1544,10 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 
-		// 持续自瞄和自动压枪默认值
+		// 持续自瞄和后坐力控制默认值
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
-		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
+		snprintf(propName, sizeof(propName), "recoil_group_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "recoil_strength_%d", i);
 		obs_data_set_default_double(settings, propName, 5.0);
@@ -1593,7 +1556,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.3);
 		// 卡尔曼滤波器参数默认值
-		snprintf(propName, sizeof(propName), "use_kalman_filter_%d", i);
+		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
 		obs_data_set_default_bool(settings, propName, true);
 		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
 		obs_data_set_default_double(settings, propName, 0.01);
@@ -1606,7 +1569,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 		// DerivativePredictor参数默认值
-		snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", i);
+		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 		obs_data_set_default_bool(settings, propName, true);
 		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
 		obs_data_set_default_double(settings, propName, 0.5);
@@ -1619,7 +1582,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 		// 贝塞尔曲线移动参数默认值
-		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
+		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
 		obs_data_set_default_double(settings, propName, 0.3);
@@ -1898,7 +1861,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
 		tf->mouseConfigs[i].yAxisUnlockDelay = (int)obs_data_get_int(settings, propName);
 
-		snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+		snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
 		tf->mouseConfigs[i].enableAutoTrigger = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
 		tf->mouseConfigs[i].triggerRadius = (int)obs_data_get_int(settings, propName);
@@ -1943,10 +1906,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
 
-		// 读取持续自瞄和自动压枪配置
+		// 读取持续自瞄和后坐力控制配置
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
 		tf->mouseConfigs[i].continuousAimEnabled = obs_data_get_bool(settings, propName);
-		snprintf(propName, sizeof(propName), "auto_recoil_%d", i);
+		snprintf(propName, sizeof(propName), "recoil_group_%d", i);
 		tf->mouseConfigs[i].autoRecoilControlEnabled = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "recoil_strength_%d", i);
 		tf->mouseConfigs[i].recoilStrength = (float)obs_data_get_double(settings, propName);
@@ -1955,7 +1918,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		tf->mouseConfigs[i].recoilPidGainScale = (float)obs_data_get_double(settings, propName);
 		// 卡尔曼滤波器参数
-		snprintf(propName, sizeof(propName), "use_kalman_filter_%d", i);
+		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
 		tf->mouseConfigs[i].useKalmanFilter = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
 		tf->mouseConfigs[i].kalmanProcessNoise = (float)obs_data_get_double(settings, propName);
@@ -1969,7 +1932,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].kalmanPredictionWeightY = (float)obs_data_get_double(settings, propName);
 		// DerivativePredictor参数
-		snprintf(propName, sizeof(propName), "use_derivative_predictor_%d", i);
+		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 		tf->mouseConfigs[i].useDerivativePredictor = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
 		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
@@ -1982,7 +1945,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		tf->mouseConfigs[i].maxPredictionTime = (float)obs_data_get_double(settings, propName);
 		// 贝塞尔曲线移动参数
-		snprintf(propName, sizeof(propName), "enable_bezier_movement_%d", i);
+		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
 		tf->mouseConfigs[i].bezierCurvature = (float)obs_data_get_double(settings, propName);
@@ -2268,7 +2231,7 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         snprintf(propName, sizeof(propName), "y_axis_unlock_delay_%d", i);
         fprintf(f, "      \"yAxisUnlockDelay\": %d,\n", (int)obs_data_get_int(settings, propName));
         
-        snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+        snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
         fprintf(f, "      \"enableAutoTrigger\": %s,\n", obs_data_get_bool(settings, propName) ? "true" : "false");
         
         snprintf(propName, sizeof(propName), "trigger_radius_%d", i);
@@ -2525,7 +2488,7 @@ static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property
             obs_data_set_int(settings, propName, atoi(val.c_str()));
         }
         
-        snprintf(propName, sizeof(propName), "enable_auto_trigger_%d", i);
+        snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
         if (findValueInConfig(i, "enableAutoTrigger", val)) {
             obs_data_set_bool(settings, propName, val.find("true") != std::string::npos);
         }
