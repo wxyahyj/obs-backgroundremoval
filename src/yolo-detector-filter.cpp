@@ -975,9 +975,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_text(props, "avg_inference_time", obs_module_text("AvgInferenceTime"), OBS_TEXT_INFO);
 	obs_properties_add_text(props, "detected_objects", obs_module_text("DetectedObjects"), OBS_TEXT_INFO);
 
-	// 页面6: 标准PID配置
-	obs_properties_add_group(props, "std_pid_group", "算法选择与标准PID配置", OBS_GROUP_NORMAL, nullptr);
-	
+	// 页面6: PID参数 - 算法选择放在最上面
 	// 算法选择（全局）
 	obs_property_t *algorithmTypeList = obs_properties_add_list(props, "algorithm_type_global", "控制算法", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(algorithmTypeList, "高级PID (自适应)", 0);
@@ -986,6 +984,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 3);
 	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；DopaPID是开源PID实现；ChrisPID是克里斯控制器");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
+	
+	// 标准PID配置分组
+	obs_properties_add_group(props, "std_pid_group", "标准PID配置", OBS_GROUP_NORMAL, nullptr);
 	
 	// 标准PID参数
 	obs_property_t *stdKpProp = obs_properties_add_float_slider(props, "std_kp_global", "标准PID-Kp", 0.0, 1.0, 0.01);
