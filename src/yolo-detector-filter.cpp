@@ -738,7 +738,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *dProp = obs_properties_add_float_slider(props, propName, "微分系数", 0.0, 0.1, 0.001);
 		obs_property_set_long_description(dProp, "微分增益，控制对误差变化率的响应。值越大响应越快但容易抖动，值越小越平滑但锁定感弱");
 		snprintf(propName, sizeof(propName), "i_%d", i);
-		obs_property_t *iProp = obs_properties_add_float_slider(props, propName, "积分系数", 0.0, 2.0, 0.01);
+		obs_property_t *iProp = obs_properties_add_float_slider(props, propName, "积分系数", 0.0, 0.1, 0.001);
 		obs_property_set_long_description(iProp, "积分增益，用于消除稳态误差。值越大消除误差越快但容易超调，值越小越稳定但可能有残留误差");
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_property_t *derivFilterProp = obs_properties_add_float_slider(props, propName, "微分滤波系数", 0.01, 1.00, 0.01);
@@ -2705,9 +2705,15 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 	int frameWidth = filter->floatingWindowFrame.cols;
 	int frameHeight = filter->floatingWindowFrame.rows;
 
-	// 绘制检测框和trackId
-	{
+	// 绘制检测框和trackId（仅在showBBox启用时绘制）
+	if (filter->showBBox) {
 		std::lock_guard<std::mutex> detLock(filter->detectionsMutex);
+		int lineWidth = filter->bboxLineWidth;
+		float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
+		float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
+		float b = (filter->bboxColor & 0xFF) / 255.0f;
+		cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
+		
 		for (const auto& det : filter->detections) {
 			float x = det.x * frameWidth;
 			float y = det.y * frameHeight;
@@ -2718,7 +2724,7 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 			cv::rectangle(filter->floatingWindowFrame,
 				cv::Rect(static_cast<int>(x), static_cast<int>(y),
 					static_cast<int>(w), static_cast<int>(h)),
-				cv::Scalar(0, 255, 0), 2);
+				bboxColor, lineWidth);
 
 			// 绘制trackId
 			if (filter->showTrackIdInFloatingWindow) {
@@ -2732,7 +2738,7 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 					textOrg.y = static_cast<int>(y) + textSize.height + 5;
 				}
 				cv::putText(filter->floatingWindowFrame, idText, textOrg,
-					cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
+					cv::FONT_HERSHEY_SIMPLEX, fontScale, bboxColor, thickness);
 			}
 		}
 	}

@@ -470,24 +470,24 @@ void AbstractMouseController::tick()
         bool shouldIntegrateX = adjustIntegralGain(fusedErrorX, pidPreviousErrorX, integralGainX);
         bool shouldIntegrateY = adjustIntegralGain(fusedErrorY, pidPreviousErrorY, integralGainY);
 
-        float iIncrementX = fusedErrorX * deltaTime * config.pidI;
-        float iIncrementY = fusedErrorY * deltaTime * config.pidI;
-        
         if (std::abs(fusedErrorX) >= config.integralDeadZone && shouldIntegrateX) {
-            integralX += iIncrementX;
+            integralX += fusedErrorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
             integralX *= 0.9f;  // 衰减而非完全清零
         }
         if (std::abs(fusedErrorY) >= config.integralDeadZone && shouldIntegrateY) {
-            integralY += iIncrementY;
+            integralY += fusedErrorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
             integralY *= 0.9f;  // 衰减而非完全清零
         }
 
-        float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralX;
-        float pidOutputY = dynamicP * fusedErrorY + filteredDeltaErrorY + integralY;
+        float integralTermX = config.pidI * integralX;
+        float integralTermY = config.pidI * integralY;
+
+        float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralTermX;
+        float pidOutputY = dynamicP * fusedErrorY + filteredDeltaErrorY + integralTermY;
 
         // 导数预测作为前馈项：预测目标移动方向，提前移动
         // 注意：前馈项直接加到输出上，不经过PID计算
@@ -506,8 +506,8 @@ void AbstractMouseController::tick()
                  getLogPrefix(), deltaTime, errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
             blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID] iIncX=%.3f iIncY=%.3f | integralX=%.2f integralY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
-                 getLogPrefix(), iIncrementX, iIncrementY, integralX, integralY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
+            blog(LOG_INFO, "[%s高级PID] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
+                 getLogPrefix(), integralX, integralY, integralTermX, integralTermY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
         }
 
         if (pidDataCallback_) {
