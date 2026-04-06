@@ -3327,33 +3327,33 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			}
 		}
 
-		// 处理推理结果
-		if (!newDetections.empty() || !filter->trackedTargets.empty()) {
-			// 坐标转换（如果有裁切区域）
-			if (cropWidth > 0 && cropHeight > 0 && 
-				(cropX > 0 || cropY > 0 || cropWidth < fullWidth || cropHeight < fullHeight)) {
-				for (auto& det : newDetections) {
-					float pixelX = det.x * cropWidth + cropX;
-					float pixelY = det.y * cropHeight + cropY;
-					float pixelW = det.width * cropWidth;
-					float pixelH = det.height * cropHeight;
-					float pixelCenterX = det.centerX * cropWidth + cropX;
-					float pixelCenterY = det.centerY * cropHeight + cropY;
-					
-					det.x = pixelX / fullWidth;
-					det.y = pixelY / fullHeight;
-					det.width = pixelW / fullWidth;
-					det.height = pixelH / fullHeight;
-					det.centerX = pixelCenterX / fullWidth;
-					det.centerY = pixelCenterY / fullHeight;
-				}
+		// 记录推理时间
+		auto endTime = std::chrono::high_resolution_clock::now();
+		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+			endTime - inferenceStartTime).count();
+
+		// 坐标转换（如果有裁切区域且有检测结果）
+		if (!newDetections.empty() && cropWidth > 0 && cropHeight > 0 && 
+			(cropX > 0 || cropY > 0 || cropWidth < fullWidth || cropHeight < fullHeight)) {
+			for (auto& det : newDetections) {
+				float pixelX = det.x * cropWidth + cropX;
+				float pixelY = det.y * cropHeight + cropY;
+				float pixelW = det.width * cropWidth;
+				float pixelH = det.height * cropHeight;
+				float pixelCenterX = det.centerX * cropWidth + cropX;
+				float pixelCenterY = det.centerY * cropHeight + cropY;
+				
+				det.x = pixelX / fullWidth;
+				det.y = pixelY / fullHeight;
+				det.width = pixelW / fullWidth;
+				det.height = pixelH / fullHeight;
+				det.centerX = pixelCenterX / fullWidth;
+				det.centerY = pixelCenterY / fullHeight;
 			}
+		}
 
-			auto endTime = std::chrono::high_resolution_clock::now();
-			auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-				endTime - inferenceStartTime).count();
-
-			// 处理目标追踪
+		// 处理目标追踪（如果有检测结果或已有追踪目标）
+		if (!newDetections.empty() || !filter->trackedTargets.empty()) {
 			std::vector<Detection> trackedDetections;
 			{
 				std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
@@ -3429,8 +3429,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				filter->trackedTargets = std::move(trackedDetections);
 			}
 
-			// 应用检测框平滑
-			if (filter->detectionSmoothingEnabled) {
+			// 应用检测框平滑（如果有追踪目标）
+			if (filter->detectionSmoothingEnabled && !filter->trackedTargets.empty()) {
 				std::lock_guard<std::mutex> smoothLock(filter->smoothedDetectionsMutex);
 				for (auto& det : filter->trackedTargets) {
 					auto [it, inserted] = filter->smoothedDetections.try_emplace(det.trackId);
@@ -3443,34 +3443,37 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					det.height = it->second.height;
 				}
 			}
+		}
 
-			// 写入输出缓冲区
+		// 写入输出缓冲区（总是执行，确保主线程能收到空结果通知）
+		{
+			std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
 			filter->outputDetections[readIdx] = filter->trackedTargets;
 			filter->outputTrackedTargets[readIdx] = filter->trackedTargets;
-			filter->outputFrameWidths[readIdx] = fullWidth;
-			filter->outputFrameHeights[readIdx] = fullHeight;
-			filter->outputCropX[readIdx] = cropX;
-			filter->outputCropY[readIdx] = cropY;
+		}
+		filter->outputFrameWidths[readIdx] = fullWidth;
+		filter->outputFrameHeights[readIdx] = fullHeight;
+		filter->outputCropX[readIdx] = cropX;
+		filter->outputCropY[readIdx] = cropY;
 
-			// 更新统计信息
-			filter->inferenceCount++;
-			filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
-			filter->framesInferred.fetch_add(1, std::memory_order_relaxed);
+		// 更新统计信息
+		filter->inferenceCount++;
+		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
+		filter->framesInferred.fetch_add(1, std::memory_order_relaxed);
 
-			// 标记输出缓冲区为完成，递增序列号
-			int64_t currentSeq = filter->outputSequence.fetch_add(1, std::memory_order_relaxed);
-			filter->outputState[readIdx].store(1, std::memory_order_release);
-			
-			// 只有序列号更新时才更新就绪索引（防止重复消费）
-			int64_t lastSeq = filter->lastConsumedSeq.load(std::memory_order_acquire);
-			if (currentSeq > lastSeq) {
-				filter->outputReadyIdx.store(readIdx, std::memory_order_release);
-			}
+		// 标记输出缓冲区为完成，递增序列号
+		int64_t currentSeq = filter->outputSequence.fetch_add(1, std::memory_order_relaxed);
+		filter->outputState[readIdx].store(1, std::memory_order_release);
+		
+		// 只有序列号更新时才更新就绪索引（防止重复消费）
+		int64_t lastSeq = filter->lastConsumedSeq.load(std::memory_order_acquire);
+		if (currentSeq > lastSeq) {
+			filter->outputReadyIdx.store(readIdx, std::memory_order_release);
+		}
 
-			// 导出坐标
-			if (filter->exportCoordinates && !newDetections.empty()) {
-				exportCoordinatesToFile(filter, fullWidth, fullHeight);
-			}
+		// 导出坐标（如果有检测结果）
+		if (filter->exportCoordinates && !newDetections.empty()) {
+			exportCoordinatesToFile(filter, fullWidth, fullHeight);
 		}
 	}
 
