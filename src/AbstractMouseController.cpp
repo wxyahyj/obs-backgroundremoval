@@ -460,11 +460,20 @@ void AbstractMouseController::tick()
         filteredDeltaErrorX = alpha * dTermX + (1.0f - alpha) * filteredDeltaErrorX;
         filteredDeltaErrorY = alpha * dTermY + (1.0f - alpha) * filteredDeltaErrorY;
 
-        float integralTermX = calculateIntegral(fusedErrorX, integralX, integralGainX, pidPreviousErrorX, deltaTime);
-        float integralTermY = calculateIntegral(fusedErrorY, integralY, integralGainY, pidPreviousErrorY, deltaTime);
+        float iIncrementX = fusedErrorX * deltaTime * config.pidI;
+        float iIncrementY = fusedErrorY * deltaTime * config.pidI;
+        
+        if (std::abs(fusedErrorX) >= config.integralDeadZone) {
+            integralX += iIncrementX;
+            integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
+        }
+        if (std::abs(fusedErrorY) >= config.integralDeadZone) {
+            integralY += iIncrementY;
+            integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
+        }
 
-        float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralTermX;
-        float pidOutputY = dynamicP * fusedErrorY + filteredDeltaErrorY + integralTermY;
+        float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralX;
+        float pidOutputY = dynamicP * fusedErrorY + filteredDeltaErrorY + integralY;
 
         // 导数预测作为前馈项：预测目标移动方向，提前移动
         // 注意：前馈项直接加到输出上，不经过PID计算
@@ -483,8 +492,8 @@ void AbstractMouseController::tick()
                  getLogPrefix(), deltaTime, errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
             blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.3f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID] integralX=%.1f integralY=%.1f | pidI=%.3f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
-                 getLogPrefix(), integralTermX, integralTermY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
+            blog(LOG_INFO, "[%s高级PID] iIncX=%.3f iIncY=%.3f | integralX=%.2f integralY=%.2f | pidI=%.4f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
+                 getLogPrefix(), iIncrementX, iIncrementY, integralX, integralY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
         }
 
         if (pidDataCallback_) {
