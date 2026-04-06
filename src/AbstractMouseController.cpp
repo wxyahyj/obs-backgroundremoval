@@ -460,16 +460,24 @@ void AbstractMouseController::tick()
         filteredDeltaErrorX = alpha * dTermX + (1.0f - alpha) * filteredDeltaErrorX;
         filteredDeltaErrorY = alpha * dTermY + (1.0f - alpha) * filteredDeltaErrorY;
 
+        // 自适应积分增益控制
+        bool shouldIntegrateX = adjustIntegralGain(fusedErrorX, pidPreviousErrorX, integralGainX);
+        bool shouldIntegrateY = adjustIntegralGain(fusedErrorY, pidPreviousErrorY, integralGainY);
+
         float iIncrementX = fusedErrorX * deltaTime * config.pidI;
         float iIncrementY = fusedErrorY * deltaTime * config.pidI;
         
-        if (std::abs(fusedErrorX) >= config.integralDeadZone) {
+        if (std::abs(fusedErrorX) >= config.integralDeadZone && shouldIntegrateX) {
             integralX += iIncrementX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
+        } else {
+            integralX *= 0.9f;  // 衰减而非完全清零
         }
-        if (std::abs(fusedErrorY) >= config.integralDeadZone) {
+        if (std::abs(fusedErrorY) >= config.integralDeadZone && shouldIntegrateY) {
             integralY += iIncrementY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
+        } else {
+            integralY *= 0.9f;  // 衰减而非完全清零
         }
 
         float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralX;
@@ -490,10 +498,10 @@ void AbstractMouseController::tick()
             logCounter = 0;
             blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusedX=%.1f fusedY=%.1f | dynamicP=%.3f",
                  getLogPrefix(), deltaTime, errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.3f",
+            blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID] iIncX=%.3f iIncY=%.3f | integralX=%.2f integralY=%.2f | pidI=%.4f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
-                 getLogPrefix(), iIncrementX, iIncrementY, integralX, integralY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
+            blog(LOG_INFO, "[%s高级PID] iIncX=%.3f iIncY=%.3f | integralX=%.2f integralY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
+                 getLogPrefix(), iIncrementX, iIncrementY, integralX, integralY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
         }
 
         if (pidDataCallback_) {

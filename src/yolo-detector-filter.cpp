@@ -735,11 +735,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *pSlopeProp = obs_properties_add_float_slider(props, propName, "P增长斜率", 0.00, 10, 0.01);
 		obs_property_set_long_description(pSlopeProp, "距离-增益曲线斜率，控制P值随距离变化的敏感度");
 		snprintf(propName, sizeof(propName), "d_%d", i);
-		obs_property_t *dProp = obs_properties_add_float_slider(props, propName, "微分系数", 0.000, 1.00, 0.001);
-		obs_property_set_long_description(dProp, "微分增益，控制对误差变化率的响应");
+		obs_property_t *dProp = obs_properties_add_float_slider(props, propName, "微分系数", 0.0, 0.1, 0.001);
+		obs_property_set_long_description(dProp, "微分增益，控制对误差变化率的响应。值越大响应越快但容易抖动，值越小越平滑但锁定感弱");
 		snprintf(propName, sizeof(propName), "i_%d", i);
-		obs_property_t *iProp = obs_properties_add_float_slider(props, propName, "积分系数", 0.000, 0.10, 0.001);
-		obs_property_set_long_description(iProp, "积分增益，用于消除稳态误差");
+		obs_property_t *iProp = obs_properties_add_float_slider(props, propName, "积分系数", 0.0, 2.0, 0.01);
+		obs_property_set_long_description(iProp, "积分增益，用于消除稳态误差。值越大消除误差越快但容易超调，值越小越稳定但可能有残留误差");
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_property_t *derivFilterProp = obs_properties_add_float_slider(props, propName, "微分滤波系数", 0.01, 1.00, 0.01);
 		obs_property_set_long_description(derivFilterProp, "微分滤波系数，用于平滑D项，减少抖动");
