@@ -445,18 +445,26 @@ void AbstractMouseController::tick()
 
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
-        float deltaErrorX = fusedErrorX - pidPreviousErrorX;
-        float deltaErrorY = fusedErrorY - pidPreviousErrorY;
+        float dTermX = 0.0f;
+        float dTermY = 0.0f;
+        if (deltaTime > 1e-6f) {
+            float deltaErrorX = fusedErrorX - pidPreviousErrorX;
+            float deltaErrorY = fusedErrorY - pidPreviousErrorY;
+            dTermX = deltaErrorX / deltaTime * config.pidD;
+            dTermY = deltaErrorY / deltaTime * config.pidD;
+        }
+        dTermX = std::clamp(dTermX, -50.0f, 50.0f);
+        dTermY = std::clamp(dTermY, -50.0f, 50.0f);
 
         float alpha = config.derivativeFilterAlpha;
-        filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
-        filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
+        filteredDeltaErrorX = alpha * dTermX + (1.0f - alpha) * filteredDeltaErrorX;
+        filteredDeltaErrorY = alpha * dTermY + (1.0f - alpha) * filteredDeltaErrorY;
 
         float integralTermX = calculateIntegral(fusedErrorX, integralX, integralGainX, pidPreviousErrorX, deltaTime);
         float integralTermY = calculateIntegral(fusedErrorY, integralY, integralGainY, pidPreviousErrorY, deltaTime);
 
-        float pidOutputX = dynamicP * fusedErrorX + config.pidD * filteredDeltaErrorX + integralTermX;
-        float pidOutputY = dynamicP * fusedErrorY + config.pidD * filteredDeltaErrorY + integralTermY;
+        float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralTermX;
+        float pidOutputY = dynamicP * fusedErrorY + filteredDeltaErrorY + integralTermY;
 
         // 导数预测作为前馈项：预测目标移动方向，提前移动
         // 注意：前馈项直接加到输出上，不经过PID计算
@@ -471,10 +479,10 @@ void AbstractMouseController::tick()
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID] errorX=%.1f errorY=%.1f | fusedX=%.1f fusedY=%.1f | dynamicP=%.3f",
-                 getLogPrefix(), errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID] derivPredX=%.1f derivPredY=%.1f | kalmanPredX=%.1f kalmanPredY=%.1f",
-                 getLogPrefix(), derivPredictedX, derivPredictedY, predictedX, predictedY);
+            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusedX=%.1f fusedY=%.1f | dynamicP=%.3f",
+                 getLogPrefix(), deltaTime, errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
+            blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.3f",
+                 getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
             blog(LOG_INFO, "[%s高级PID] integralX=%.1f integralY=%.1f | pidI=%.3f | pidOutX=%.1f pidOutY=%.1f | moveX=%.1f moveY=%.1f",
                  getLogPrefix(), integralTermX, integralTermY, config.pidI, pidOutputX, pidOutputY, moveX, moveY);
         }
