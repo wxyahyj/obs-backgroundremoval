@@ -57,6 +57,10 @@ AbstractMouseController::AbstractMouseController()
     , currentTargetTrackId(-1)
     , targetLockStartTime(std::chrono::steady_clock::now())
     , currentTargetDistance(0.0f)
+    , pendingTargetTrackId(-1)
+    , pendingTargetStartTime(std::chrono::steady_clock::now())
+    , pendingTargetScore(0.0f)
+    , currentTargetScore(0.0f)
     , kalmanFilterInitialized(false)
     , bezierPhase(0.0f)
     , pidDataCallback_(nullptr)
@@ -598,6 +602,9 @@ Detection* AbstractMouseController::selectTarget()
 {
     if (currentDetections.empty()) {
         lockedTrackId = -1;
+        pendingTargetTrackId = -1;
+        currentTargetScore = 0.0f;
+        pendingTargetScore = 0.0f;
         return nullptr;
     }
 
@@ -610,25 +617,11 @@ Detection* AbstractMouseController::selectTarget()
     int fovCenterY = frameHeight / 2;
     float fovRadius = static_cast<float>(config.fovRadiusPixels);
 
-    if (lockedTrackId >= 0) {
-        for (auto& det : currentDetections) {
-            if (det.trackId == lockedTrackId) {
-                float pixelX = det.centerX * frameWidth;
-                float pixelY = det.centerY * frameHeight;
-                float dx = pixelX - fovCenterX;
-                float dy = pixelY - fovCenterY;
-                float distSq = dx * dx + dy * dy;
-                
-                if (distSq <= fovRadius * fovRadius) {
-                    currentTargetDistance = std::sqrt(distSq);
-                    return &det;
-                }
-            }
-        }
-    }
-
+    // 计算所有在FOV内的目标分数
     Detection* bestTarget = nullptr;
     float bestScore = -1.0f;
+    Detection* currentTarget = nullptr;
+    float currentScore = 0.0f;
 
     for (auto& det : currentDetections) {
         float pixelX = det.centerX * frameWidth;
@@ -648,21 +641,111 @@ Detection* AbstractMouseController::selectTarget()
             bestScore = score;
             bestTarget = &det;
         }
+
+        if (det.trackId == lockedTrackId) {
+            currentTarget = &det;
+            currentScore = score;
+        }
     }
 
-    if (bestTarget) {
+    // 没有任何目标
+    if (!bestTarget) {
+        lockedTrackId = -1;
+        pendingTargetTrackId = -1;
+        currentTargetScore = 0.0f;
+        pendingTargetScore = 0.0f;
+        currentTargetDistance = 0.0f;
+        return nullptr;
+    }
+
+    // 如果当前没有锁定目标，直接选择最佳目标
+    if (lockedTrackId < 0 || !currentTarget) {
         lockedTrackId = bestTarget->trackId;
+        pendingTargetTrackId = -1;
+        currentTargetScore = bestScore;
+        pendingTargetScore = 0.0f;
         float pixelX = bestTarget->centerX * frameWidth;
         float pixelY = bestTarget->centerY * frameHeight;
         float dx = pixelX - fovCenterX;
         float dy = pixelY - fovCenterY;
         currentTargetDistance = std::sqrt(dx * dx + dy * dy);
-    } else {
-        lockedTrackId = -1;
-        currentTargetDistance = 0.0f;
+        return bestTarget;
     }
 
-    return bestTarget;
+    // 当前有锁定目标，检查是否需要切换
+    // 新目标必须比当前目标好一定容差才考虑切换
+    float scoreImprovement = bestScore - currentScore;
+    float toleranceThreshold = config.targetSwitchTolerance;
+
+    if (scoreImprovement <= toleranceThreshold) {
+        // 新目标不够好，继续锁定当前目标，清除待切换状态
+        pendingTargetTrackId = -1;
+        pendingTargetScore = 0.0f;
+        float pixelX = currentTarget->centerX * frameWidth;
+        float pixelY = currentTarget->centerY * frameHeight;
+        float dx = pixelX - fovCenterX;
+        float dy = pixelY - fovCenterY;
+        currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+        return currentTarget;
+    }
+
+    // 新目标比当前目标好超过容差，检查是否需要延迟
+    int switchDelayMs = config.targetSwitchDelayMs;
+
+    if (switchDelayMs <= 0) {
+        // 无延迟，直接切换
+        lockedTrackId = bestTarget->trackId;
+        pendingTargetTrackId = -1;
+        currentTargetScore = bestScore;
+        pendingTargetScore = 0.0f;
+        float pixelX = bestTarget->centerX * frameWidth;
+        float pixelY = bestTarget->centerY * frameHeight;
+        float dx = pixelX - fovCenterX;
+        float dy = pixelY - fovCenterY;
+        currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+        return bestTarget;
+    }
+
+    // 有延迟，检查是否已经在等待切换
+    if (pendingTargetTrackId == bestTarget->trackId) {
+        // 已经在等待这个目标，检查延迟时间
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - pendingTargetStartTime).count();
+
+        if (elapsed >= switchDelayMs) {
+            // 延迟时间已到，切换目标
+            lockedTrackId = bestTarget->trackId;
+            pendingTargetTrackId = -1;
+            currentTargetScore = bestScore;
+            pendingTargetScore = 0.0f;
+            float pixelX = bestTarget->centerX * frameWidth;
+            float pixelY = bestTarget->centerY * frameHeight;
+            float dx = pixelX - fovCenterX;
+            float dy = pixelY - fovCenterY;
+            currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+            return bestTarget;
+        } else {
+            // 延迟时间未到，继续锁定当前目标
+            float pixelX = currentTarget->centerX * frameWidth;
+            float pixelY = currentTarget->centerY * frameHeight;
+            float dx = pixelX - fovCenterX;
+            float dy = pixelY - fovCenterY;
+            currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+            return currentTarget;
+        }
+    } else {
+        // 新的候选目标，开始计时
+        pendingTargetTrackId = bestTarget->trackId;
+        pendingTargetStartTime = std::chrono::steady_clock::now();
+        pendingTargetScore = bestScore;
+        // 继续锁定当前目标
+        float pixelX = currentTarget->centerX * frameWidth;
+        float pixelY = currentTarget->centerY * frameHeight;
+        float dx = pixelX - fovCenterX;
+        float dy = pixelY - fovCenterY;
+        currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+        return currentTarget;
+    }
 }
 
 float AbstractMouseController::calculateDynamicP(float distance)
@@ -803,6 +886,9 @@ void AbstractMouseController::resetPidState()
     stdPreviousMoveX = 0.0f;
     stdPreviousMoveY = 0.0f;
     lockedTrackId = -1;
+    pendingTargetTrackId = -1;
+    pendingTargetScore = 0.0f;
+    currentTargetScore = 0.0f;
     dopaController_.reset();
     chrisController_.reset();
 }

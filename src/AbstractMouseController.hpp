@@ -93,6 +93,12 @@ protected:
     std::chrono::steady_clock::time_point targetLockStartTime;
     float currentTargetDistance;
     
+    // 延迟转火相关
+    int pendingTargetTrackId;
+    std::chrono::steady_clock::time_point pendingTargetStartTime;
+    float pendingTargetScore;
+    float currentTargetScore;
+    
     std::string currentWeapon;
     
     float bezierPhase;
