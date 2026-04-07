@@ -166,6 +166,12 @@ struct MouseControllerConfig {
     
     // DopaPID D项滤波
     float dopaDFilterAlpha = 0.3f;  // D项滤波系数
+    
+    // 多指标融合追踪权重
+    float trackingWeightIou = 0.4f;       // IoU距离权重
+    float trackingWeightCenter = 0.3f;    // 中心点距离权重
+    float trackingWeightAspect = 0.15f;   // 宽高比距离权重
+    float trackingWeightArea = 0.15f;     // 面积距离权重
 };
 
 class MouseControllerInterface {

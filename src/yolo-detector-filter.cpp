@@ -51,6 +51,25 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int nextTrackId;
 	int maxLostFrames;
 	float iouThreshold;
+	
+	// 多指标融合追踪权重
+	float trackingWeightIou;
+	float trackingWeightCenter;
+	float trackingWeightAspect;
+	float trackingWeightArea;
+	
+	// 目标重识别缓冲区
+	struct LostTarget {
+		int trackId;
+		float x, y, width, height;
+		float centerX, centerY;
+		int lostFrames;
+		std::chrono::steady_clock::time_point lostTime;
+	};
+	std::vector<LostTarget> lostTargets;
+	std::mutex lostTargetsMutex;
+	int maxReidentifyFrames;  // 重识别最大帧数
+	float reidentifyCenterThreshold;  // 重识别中心点距离阈值
 
 	std::string modelPath;
 	int inputResolution;
@@ -954,6 +973,22 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(targetSwitchDelayProp, "切换目标前的延迟时间（毫秒）");
 	obs_property_t *targetSwitchToleranceProp = obs_properties_add_float_slider(props, "target_switch_tolerance", "切换容差", 0.0, 0.5, 0.05);
 	obs_property_set_long_description(targetSwitchToleranceProp, "切换目标的容差，防止频繁切换");
+	
+	// 多指标融合追踪权重
+	obs_property_t *trackingWeightIouProp = obs_properties_add_float_slider(props, "tracking_weight_iou", "IoU权重", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(trackingWeightIouProp, "IoU距离在目标匹配中的权重，值越大越重视检测框重叠度");
+	obs_property_t *trackingWeightCenterProp = obs_properties_add_float_slider(props, "tracking_weight_center", "中心点权重", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(trackingWeightCenterProp, "中心点距离在目标匹配中的权重，值越大越重视目标位置");
+	obs_property_t *trackingWeightAspectProp = obs_properties_add_float_slider(props, "tracking_weight_aspect", "宽高比权重", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(trackingWeightAspectProp, "宽高比距离在目标匹配中的权重，值越大越重视目标形状");
+	obs_property_t *trackingWeightAreaProp = obs_properties_add_float_slider(props, "tracking_weight_area", "面积权重", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(trackingWeightAreaProp, "面积距离在目标匹配中的权重，值越大越重视目标大小");
+	
+	// 重识别设置
+	obs_property_t *maxReidentifyFramesProp = obs_properties_add_int_slider(props, "max_reidentify_frames", "重识别帧数", 0, 60, 5);
+	obs_property_set_long_description(maxReidentifyFramesProp, "目标丢失后保留重识别的最大帧数，超过则完全放弃");
+	obs_property_t *reidentifyCenterThresholdProp = obs_properties_add_float_slider(props, "reidentify_center_threshold", "重识别距离阈值", 0.01, 0.3, 0.01);
+	obs_property_set_long_description(reidentifyCenterThresholdProp, "重识别时中心点距离阈值，距离小于此值认为是同一目标");
 
 	obs_properties_add_group(props, "floating_window_group", obs_module_text("FloatingWindow"), OBS_GROUP_NORMAL, nullptr);
 	obs_property_t *showFloatingWindowProp = obs_properties_add_bool(props, "show_floating_window", obs_module_text("ShowFloatingWindow"));
@@ -1307,6 +1342,17 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "max_lost_frames"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "target_switch_delay"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "target_switch_tolerance"), page == 5);
+	
+	// 多指标融合追踪权重（页面5）
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_iou"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_center"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_aspect"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_area"), page == 5);
+	
+	// 重识别设置（页面5）
+	obs_property_set_visible(obs_properties_get(props, "max_reidentify_frames"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "reidentify_center_threshold"), page == 5);
+	
 	obs_property_set_visible(obs_properties_get(props, "floating_window_group"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "show_floating_window"), page == 5);
     obs_property_set_visible(obs_properties_get(props, "floating_window_width"), page == 5);
@@ -1594,6 +1640,17 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "max_lost_frames", 10);
     obs_data_set_default_int(settings, "target_switch_delay", 500);
     obs_data_set_default_double(settings, "target_switch_tolerance", 0.15);
+    
+    // 多指标融合追踪权重默认值
+    obs_data_set_default_double(settings, "tracking_weight_iou", 0.4);
+    obs_data_set_default_double(settings, "tracking_weight_center", 0.3);
+    obs_data_set_default_double(settings, "tracking_weight_aspect", 0.15);
+    obs_data_set_default_double(settings, "tracking_weight_area", 0.15);
+    
+    // 重识别参数默认值
+    obs_data_set_default_int(settings, "max_reidentify_frames", 30);
+    obs_data_set_default_double(settings, "reidentify_center_threshold", 0.1);
+    
     obs_data_set_default_int(settings, "settings_page", 0);
     
     // 全局标准PID参数默认值
@@ -2016,6 +2073,16 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->configList = obs_data_get_string(settings, "config_list");
 	tf->iouThreshold = (float)obs_data_get_double(settings, "iou_threshold");
 	tf->maxLostFrames = (int)obs_data_get_int(settings, "max_lost_frames");
+	
+	// 多指标融合追踪权重
+	tf->trackingWeightIou = (float)obs_data_get_double(settings, "tracking_weight_iou");
+	tf->trackingWeightCenter = (float)obs_data_get_double(settings, "tracking_weight_center");
+	tf->trackingWeightAspect = (float)obs_data_get_double(settings, "tracking_weight_aspect");
+	tf->trackingWeightArea = (float)obs_data_get_double(settings, "tracking_weight_area");
+	
+	// 重识别参数
+	tf->maxReidentifyFrames = (int)obs_data_get_int(settings, "max_reidentify_frames");
+	tf->reidentifyCenterThreshold = (float)obs_data_get_double(settings, "reidentify_center_threshold");
 #endif
 
 	tf->isDisabled = false;
@@ -3322,7 +3389,11 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							cv::Point2f trackCenter(trackedTargets[j].centerX, trackedTargets[j].centerY);
 							
 							costMatrix[i][j] = HungarianAlgorithm::calculateFusedDistance(
-								detBox, trackBox, detCenter, trackCenter);
+								detBox, trackBox, detCenter, trackCenter,
+								filter->trackingWeightIou,
+								filter->trackingWeightCenter,
+								filter->trackingWeightAspect,
+								filter->trackingWeightArea);
 						}
 					}
 					
@@ -3355,6 +3426,69 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							trackedTargets[j].lostFrames++;
 							if (trackedTargets[j].lostFrames <= filter->maxLostFrames) {
 								trackedDetections.push_back(trackedTargets[j]);
+							} else {
+								// 目标丢失超过阈值，添加到重识别缓冲区
+								std::lock_guard<std::mutex> lostLock(filter->lostTargetsMutex);
+								LostTarget lost;
+								lost.trackId = trackedTargets[j].trackId;
+								lost.x = trackedTargets[j].x;
+								lost.y = trackedTargets[j].y;
+								lost.width = trackedTargets[j].width;
+								lost.height = trackedTargets[j].height;
+								lost.centerX = trackedTargets[j].centerX;
+								lost.centerY = trackedTargets[j].centerY;
+								lost.lostFrames = 0;
+								lost.lostTime = std::chrono::steady_clock::now();
+								
+								// 检查是否已存在相同trackId，更新而非添加
+								bool found = false;
+								for (auto& existing : filter->lostTargets) {
+									if (existing.trackId == lost.trackId) {
+										existing = lost;
+										found = true;
+										break;
+									}
+								}
+								if (!found) {
+									filter->lostTargets.push_back(lost);
+								}
+							}
+						}
+					}
+					
+					// 尝试重识别丢失目标
+					{
+						std::lock_guard<std::mutex> lostLock(filter->lostTargetsMutex);
+						auto now = std::chrono::steady_clock::now();
+						for (auto it = filter->lostTargets.begin(); it != filter->lostTargets.end(); ) {
+							// 检查重识别时间是否超时
+							auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->lostTime).count();
+							if (elapsed > filter->maxReidentifyFrames * 33) {  // 约33ms每帧
+								it = filter->lostTargets.erase(it);
+								continue;
+							}
+							
+							// 尝试与未匹配的检测进行重识别
+							for (int i = 0; i < n; ++i) {
+								if (detectionMatched[i]) continue;
+								
+								float dx = newDetections[i].centerX - it->centerX;
+								float dy = newDetections[i].centerY - it->centerY;
+								float centerDist = std::sqrt(dx * dx + dy * dy);
+								
+								// 中心点距离很近，认为是同一目标
+								if (centerDist < filter->reidentifyCenterThreshold) {
+									newDetections[i].trackId = it->trackId;
+									newDetections[i].lostFrames = 0;
+									trackedDetections.push_back(newDetections[i]);
+									detectionMatched[i] = true;
+									it = filter->lostTargets.erase(it);
+									break;
+								}
+							}
+							
+							if (it != filter->lostTargets.end()) {
+								++it;
 							}
 						}
 					}

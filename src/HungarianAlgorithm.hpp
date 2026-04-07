@@ -12,7 +12,7 @@ public:
 
     static float calculateEuclideanDistance(const cv::Point2f& a, const cv::Point2f& b);
 
-    // 多指标融合距离计算
+    // 多指标融合距离计算（使用配置权重）
     static float calculateFusedDistance(
         const cv::Rect2f& detBox, const cv::Rect2f& trackBox,
         const cv::Point2f& detCenter, const cv::Point2f& trackCenter,

@@ -5,23 +5,23 @@
 
 class KalmanFilter {
 private:
-    // 状态向量 [x, y, vx, vy]
-    Eigen::Vector4f state;
+    // 状态向量 [x, y, vx, vy, ax, ay] - 增强型6维状态
+    Eigen::Vector6f state;
 
-    // 误差协方差矩阵 (4x4)
-    Eigen::Matrix4f covariance;
+    // 误差协方差矩阵 (6x6)
+    Eigen::Matrix6f covariance;
 
     // 过程噪声协方差
-    Eigen::Matrix4f processNoise;
+    Eigen::Matrix6f processNoise;
 
     // 测量噪声协方差
     Eigen::Matrix2f measurementNoise;
 
     // 状态转移矩阵
-    Eigen::Matrix4f stateTransition;
+    Eigen::Matrix6f stateTransition;
 
     // 观测矩阵
-    Eigen::Matrix<float, 2, 4> measurementMatrix;
+    Eigen::Matrix<float, 2, 6> measurementMatrix;
 
     // 时间步长
     float dt;
@@ -41,6 +41,9 @@ private:
 
     // 初始化矩阵
     void initializeMatrices();
+
+    // 更新状态转移矩阵（根据dt）
+    void updateStateTransition(float deltaTime);
 
 public:
     KalmanFilter();
@@ -80,12 +83,16 @@ public:
 
     // 获取当前状态估计
     void getState(float& x, float& y, float& vx, float& vy);
+    void getStateFull(float& x, float& y, float& vx, float& vy, float& ax, float& ay);
 
     // 获取当前位置
     void getPosition(float& x, float& y);
 
     // 获取当前速度
     void getVelocity(float& vx, float& vy);
+
+    // 获取当前加速度
+    void getAcceleration(float& ax, float& ay);
 
     // 重置滤波器
     void reset();
@@ -94,6 +101,9 @@ public:
     void setProcessNoise(float q);
     void setMeasurementNoise(float r);
     void setConfidenceScale(float scale);
+
+    // 自适应噪声调整（根据速度和置信度）
+    void adaptNoise(float velocity, float confidence);
 
     // 获取噪声参数
     float getProcessNoise() const { return baseProcessNoise; }
