@@ -122,6 +122,18 @@ void KalmanFilter::update(float measuredX, float measuredY, float confidence)
     // 计算残差协方差: S = H * P * H^T + R
     Eigen::Matrix2f S = measurementMatrix * covariance * measurementMatrix.transpose() + measurementNoise;
 
+    // 检查矩阵奇异性，避免数值不稳定
+    float det = S.determinant();
+    if (std::abs(det) < 1e-6f) {
+        // 矩阵接近奇异，使用伪逆代替
+        Eigen::Matrix2f S_pinv = S.completeOrthogonalDecomposition().pseudoInverse();
+        Eigen::Matrix<float, 6, 2> gain = covariance * measurementMatrix.transpose() * S_pinv;
+        state += gain * residual;
+        Eigen::Matrix6f identity = Eigen::Matrix6f::Identity();
+        covariance = (identity - gain * measurementMatrix) * covariance;
+        return;
+    }
+
     // 计算卡尔曼增益: K = P * H^T * S^(-1)
     Eigen::Matrix<float, 6, 2> gain = covariance * measurementMatrix.transpose() * S.inverse();
 
