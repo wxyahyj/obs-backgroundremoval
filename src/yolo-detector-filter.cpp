@@ -2705,43 +2705,7 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 	int frameWidth = filter->floatingWindowFrame.cols;
 	int frameHeight = filter->floatingWindowFrame.rows;
 
-	// 绘制检测框和trackId（仅在showBBox启用时绘制）
-	if (filter->showBBox) {
-		std::lock_guard<std::mutex> detLock(filter->detectionsMutex);
-		int lineWidth = filter->bboxLineWidth;
-		float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
-		float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
-		float b = (filter->bboxColor & 0xFF) / 255.0f;
-		cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
-		
-		for (const auto& det : filter->detections) {
-			float x = det.x * frameWidth;
-			float y = det.y * frameHeight;
-			float w = det.width * frameWidth;
-			float h = det.height * frameHeight;
-
-			// 绘制边界框
-			cv::rectangle(filter->floatingWindowFrame,
-				cv::Rect(static_cast<int>(x), static_cast<int>(y),
-					static_cast<int>(w), static_cast<int>(h)),
-				bboxColor, lineWidth);
-
-			// 绘制trackId
-			if (filter->showTrackIdInFloatingWindow) {
-				std::string idText = "ID:" + std::to_string(det.trackId);
-				int baseline = 0;
-				double fontScale = 0.5;
-				int thickness = 1;
-				cv::Size textSize = cv::getTextSize(idText, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-				cv::Point textOrg(static_cast<int>(x), static_cast<int>(y) - 5);
-				if (textOrg.y < textSize.height) {
-					textOrg.y = static_cast<int>(y) + textSize.height + 5;
-				}
-				cv::putText(filter->floatingWindowFrame, idText, textOrg,
-					cv::FONT_HERSHEY_SIMPLEX, fontScale, bboxColor, thickness);
-			}
-		}
-	}
+	// 检测框和trackId已在主渲染中绘制，这里不再重复绘制
 
 	// 绘制卡尔曼预测位置
 	if (filter->showKalmanPredictionInFloatingWindow && filter->mouseController) {
@@ -4446,6 +4410,21 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 						cv::Point(x + w, y + h), 
 						bboxColor, 
 						lineWidth);
+					
+					// 绘制trackId
+					if (tf->showTrackIdInFloatingWindow) {
+						std::string idText = "ID:" + std::to_string(det.trackId);
+						int baseline = 0;
+						double fontScale = 0.5;
+						int thickness = 1;
+						cv::Size textSize = cv::getTextSize(idText, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+						cv::Point textOrg(x, y - 5);
+						if (textOrg.y < textSize.height) {
+							textOrg.y = y + textSize.height + 5;
+						}
+						cv::putText(croppedFrame, idText, textOrg,
+							cv::FONT_HERSHEY_SIMPLEX, fontScale, bboxColor, thickness);
+					}
 				}
 			}
 		}
