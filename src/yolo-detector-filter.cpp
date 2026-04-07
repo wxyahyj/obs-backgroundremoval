@@ -38,6 +38,15 @@
 #include "obs-utils/obs-utils.h"
 #include "consts.h"
 
+// 目标重识别结构体
+struct LostTarget {
+    int trackId;
+    float x, y, width, height;
+    float centerX, centerY;
+    int lostFrames;
+    std::chrono::steady_clock::time_point lostTime;
+};
+
 struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
 	std::unique_ptr<ModelYOLO> yoloModel;
 	std::mutex yoloModelMutex;
@@ -59,13 +68,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float trackingWeightArea;
 	
 	// 目标重识别缓冲区
-	struct LostTarget {
-		int trackId;
-		float x, y, width, height;
-		float centerX, centerY;
-		int lostFrames;
-		std::chrono::steady_clock::time_point lostTime;
-	};
 	std::vector<LostTarget> lostTargets;
 	std::mutex lostTargetsMutex;
 	int maxReidentifyFrames;  // 重识别最大帧数

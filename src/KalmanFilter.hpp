@@ -3,22 +3,26 @@
 
 #include <Eigen/Dense>
 
+// 定义6维向量和6x6矩阵类型（Eigen没有内置Vector6f/Matrix6f）
+using Vector6f = Eigen::Matrix<float, 6, 1>;
+using Matrix6f = Eigen::Matrix<float, 6, 6>;
+
 class KalmanFilter {
 private:
     // 状态向量 [x, y, vx, vy, ax, ay] - 增强型6维状态
-    Eigen::Vector6f state;
+    Vector6f state;
 
     // 误差协方差矩阵 (6x6)
-    Eigen::Matrix6f covariance;
+    Matrix6f covariance;
 
     // 过程噪声协方差
-    Eigen::Matrix6f processNoise;
+    Matrix6f processNoise;
 
     // 测量噪声协方差
     Eigen::Matrix2f measurementNoise;
 
     // 状态转移矩阵
-    Eigen::Matrix6f stateTransition;
+    Matrix6f stateTransition;
 
     // 观测矩阵
     Eigen::Matrix<float, 2, 6> measurementMatrix;

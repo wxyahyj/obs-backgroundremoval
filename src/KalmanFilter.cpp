@@ -5,11 +5,11 @@
 int KalmanFilter::nextId = 0;
 
 KalmanFilter::KalmanFilter()
-    : state(Eigen::Vector6f::Zero())
-    , covariance(Eigen::Matrix6f::Identity() * 100.0f)
-    , processNoise(Eigen::Matrix6f::Identity())
+    : state(Vector6f::Zero())
+    , covariance(Matrix6f::Identity() * 100.0f)
+    , processNoise(Matrix6f::Identity())
     , measurementNoise(Eigen::Matrix2f::Identity())
-    , stateTransition(Eigen::Matrix6f::Identity())
+    , stateTransition(Matrix6f::Identity())
     , measurementMatrix(Eigen::Matrix<float, 2, 6>::Zero())
     , dt(0.016f)
     , baseProcessNoise(0.01f)
@@ -32,7 +32,7 @@ void KalmanFilter::initializeMatrices()
     // vy' = vy + ay*dt
     // ax' = ax
     // ay' = ay
-    stateTransition = Eigen::Matrix6f::Identity();
+    stateTransition = Matrix6f::Identity();
     // 位置更新
     stateTransition(0, 2) = dt;   // x += vx*dt
     stateTransition(1, 3) = dt;   // y += vy*dt
@@ -50,7 +50,7 @@ void KalmanFilter::initializeMatrices()
 
     // 过程噪声协方差 Q
     // 对位置、速度、加速度设置不同的噪声
-    processNoise = Eigen::Matrix6f::Identity();
+    processNoise = Matrix6f::Identity();
     processNoise(0, 0) = baseProcessNoise;       // x
     processNoise(1, 1) = baseProcessNoise;       // y
     processNoise(2, 2) = baseProcessNoise * 0.1f; // vx
@@ -81,7 +81,7 @@ void KalmanFilter::init(float x, float y)
     state << x, y, 0.0f, 0.0f, 0.0f, 0.0f;
 
     // 重置协方差矩阵
-    covariance = Eigen::Matrix6f::Identity() * 100.0f;
+    covariance = Matrix6f::Identity() * 100.0f;
 
     // 重新初始化矩阵
     initializeMatrices();
@@ -129,7 +129,7 @@ void KalmanFilter::update(float measuredX, float measuredY, float confidence)
         Eigen::Matrix2f S_pinv = S.completeOrthogonalDecomposition().pseudoInverse();
         Eigen::Matrix<float, 6, 2> gain = covariance * measurementMatrix.transpose() * S_pinv;
         state += gain * residual;
-        Eigen::Matrix6f identity = Eigen::Matrix6f::Identity();
+        Matrix6f identity = Matrix6f::Identity();
         covariance = (identity - gain * measurementMatrix) * covariance;
         return;
     }
@@ -141,7 +141,7 @@ void KalmanFilter::update(float measuredX, float measuredY, float confidence)
     state += gain * residual;
 
     // 协方差更新 P = (I - K * H) * P
-    Eigen::Matrix6f identity = Eigen::Matrix6f::Identity();
+    Matrix6f identity = Matrix6f::Identity();
     covariance = (identity - gain * measurementMatrix) * covariance;
 }
 
@@ -232,8 +232,8 @@ void KalmanFilter::getAcceleration(float& ax, float& ay)
 
 void KalmanFilter::reset()
 {
-    state = Eigen::Vector6f::Zero();
-    covariance = Eigen::Matrix6f::Identity() * 100.0f;
+    state = Vector6f::Zero();
+    covariance = Matrix6f::Identity() * 100.0f;
     initializeMatrices();
     lostFrameCount = 0;
 }
