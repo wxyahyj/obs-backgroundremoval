@@ -97,3 +97,47 @@ float HungarianAlgorithm::calculateEuclideanDistance(const cv::Point2f& a, const
     float dy = a.y - b.y;
     return std::sqrt(dx * dx + dy * dy);
 }
+
+float HungarianAlgorithm::calculateCenterDistance(const cv::Point2f& a, const cv::Point2f& b, float maxDist) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    float dist = std::sqrt(dx * dx + dy * dy);
+    return dist / maxDist;
+}
+
+float HungarianAlgorithm::calculateAspectDistance(const cv::Rect2f& a, const cv::Rect2f& b) {
+    if (a.height <= 0 || b.height <= 0) {
+        return 1.0f;
+    }
+    float aspectA = a.width / a.height;
+    float aspectB = b.width / b.height;
+    float maxAspect = std::max(aspectA, aspectB);
+    if (maxAspect <= 0) {
+        return 1.0f;
+    }
+    return std::abs(aspectA - aspectB) / maxAspect;
+}
+
+float HungarianAlgorithm::calculateAreaDistance(const cv::Rect2f& a, const cv::Rect2f& b) {
+    float areaA = a.width * a.height;
+    float areaB = b.width * b.height;
+    float maxArea = std::max(areaA, areaB);
+    if (maxArea <= 0) {
+        return 1.0f;
+    }
+    return std::abs(areaA - areaB) / maxArea;
+}
+
+float HungarianAlgorithm::calculateFusedDistance(
+    const cv::Rect2f& detBox, const cv::Rect2f& trackBox,
+    const cv::Point2f& detCenter, const cv::Point2f& trackCenter,
+    float w_iou, float w_center, float w_aspect, float w_area) {
+    
+    float iouDist = calculateIoUDistance(detBox, trackBox);
+    float maxDist = std::sqrt(2.0f);
+    float centerDist = calculateCenterDistance(detCenter, trackCenter, maxDist);
+    float aspectDist = calculateAspectDistance(detBox, trackBox);
+    float areaDist = calculateAreaDistance(detBox, trackBox);
+    
+    return w_iou * iouDist + w_center * centerDist + w_aspect * aspectDist + w_area * areaDist;
+}

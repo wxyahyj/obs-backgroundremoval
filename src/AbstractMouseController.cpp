@@ -131,11 +131,12 @@ void AbstractMouseController::tick()
             resetPidState();
             resetMotionState();
         } else {
-            // 即使isMoving为false（目标丢失导致），热键松开时也要重置积分
+            // 即使isMoving为false（目标丢失导致），热键松开时也要重置所有状态
             integralX = 0.0f;
             integralY = 0.0f;
             integralGainX = 0.0f;
             integralGainY = 0.0f;
+            lockedTrackId = -1;  // 重置目标锁定
         }
         yUnlockActive = false;
         releaseAutoTrigger();

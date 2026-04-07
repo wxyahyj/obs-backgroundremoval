@@ -3310,6 +3310,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							newDetections[i].width,
 							newDetections[i].height
 						);
+						cv::Point2f detCenter(newDetections[i].centerX, newDetections[i].centerY);
 						
 						for (int j = 0; j < m; ++j) {
 							cv::Rect2f trackBox(
@@ -3318,8 +3319,10 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 								trackedTargets[j].width,
 								trackedTargets[j].height
 							);
+							cv::Point2f trackCenter(trackedTargets[j].centerX, trackedTargets[j].centerY);
 							
-							costMatrix[i][j] = HungarianAlgorithm::calculateIoUDistance(detBox, trackBox);
+							costMatrix[i][j] = HungarianAlgorithm::calculateFusedDistance(
+								detBox, trackBox, detCenter, trackCenter);
 						}
 					}
 					
