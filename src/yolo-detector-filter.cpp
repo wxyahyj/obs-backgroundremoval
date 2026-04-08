@@ -384,11 +384,16 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool enableBezierMovement;
 		float bezierCurvature;
 		float bezierRandomness;
-		// 爬山算法优化器参数
+		// 自动调参系统参数
 		bool optimizationEnabled;
+		int optimizationMode;
+		int optimizationStrategy;
 		int optimizationSampleFrames;
+		float optimizationMinValidRatio;
 		int optimizationMaxIterations;
-		float optimizationStepSize;
+		float optimizationTargetError;
+		bool optimizationAllowSpeedOpt;
+		float optimizationStepDecayFactor;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -468,11 +473,16 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
 			bezierRandomness = 0.2f;
-			// 爬山算法优化器参数默认值
+			// 自动调参系统参数默认值
 			optimizationEnabled = false;
+			optimizationMode = 0;           // 微调模式
+			optimizationStrategy = 1;     // 平衡
 			optimizationSampleFrames = 300;
+			optimizationMinValidRatio = 0.70f;
 			optimizationMaxIterations = 100;
-			optimizationStepSize = 0.01f;
+			optimizationTargetError = 10.0f;
+			optimizationAllowSpeedOpt = true;
+			optimizationStepDecayFactor = 0.16f;
 		}
 	};
 
@@ -1003,15 +1013,30 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *reidentifyCenterThresholdProp = obs_properties_add_float_slider(props, "reidentify_center_threshold", "重识别距离阈值", 0.01, 0.3, 0.01);
 	obs_property_set_long_description(reidentifyCenterThresholdProp, "重识别时中心点距离阈值，距离小于此值认为是同一目标");
 	
-	// 爬山算法优化器设置
-	obs_property_t *optimizationEnabledProp = obs_properties_add_bool(props, "optimization_enabled", "启用参数优化");
-	obs_property_set_long_description(optimizationEnabledProp, "启用爬山算法自动优化PID参数");
-	obs_property_t *optimizationSampleFramesProp = obs_properties_add_int_slider(props, "optimization_sample_frames", "采样帧数", 100, 1000, 50);
-	obs_property_set_long_description(optimizationSampleFramesProp, "每次优化迭代收集的帧数，帧数越多评估越准确但耗时越长");
+	// 自动调参系统设置
+	obs_property_t *optimizationEnabledProp = obs_properties_add_bool(props, "optimization_enabled", "启用自动调参");
+	obs_property_set_long_description(optimizationEnabledProp, "按误差、预测前馈占比、振荡和饱和率自动微调运行时参数，不直接改写手动参数");
+	obs_property_t *optimizationModeProp = obs_properties_add_list(props, "optimization_mode", "运行模式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(optimizationModeProp, "微调模式 (TUNING)", 0);
+	obs_property_list_add_int(optimizationModeProp, "独立模式 (INDEPENDENT)", 1);
+	obs_property_set_long_description(optimizationModeProp, "微调：在当前参数基础上调整 | 独立：忽略手调PID从头搜索");
+	obs_property_t *optimizationStrategyProp = obs_properties_add_list(props, "optimization_strategy", "优化策略", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(optimizationStrategyProp, "静稳优先", 0);
+	obs_property_list_add_int(optimizationStrategyProp, "平衡", 1);
+	obs_property_list_add_int(optimizationStrategyProp, "激进", 2);
+	obs_property_set_long_description(optimizationStrategyProp, "静稳优先：降低振荡和饱和 | 平衡：综合优化 | 激进：追求最小误差");
+	obs_property_t *optimizationSampleFramesProp = obs_properties_add_int_slider(props, "optimization_sample_frames", "窗口样本", 100, 1000, 50);
+	obs_property_set_long_description(optimizationSampleFramesProp, "每次评估收集的帧数");
+	obs_property_t *optimizationMinValidRatioProp = obs_properties_add_float_slider(props, "optimization_min_valid_ratio", "最小有效样本比", 0.3, 1.0, 0.05);
+	obs_property_set_long_description(optimizationMinValidRatioProp, "有效样本(sticky+reacq)占总样本的最小比例");
 	obs_property_t *optimizationMaxIterationsProp = obs_properties_add_int_slider(props, "optimization_max_iterations", "最大迭代次数", 10, 500, 10);
 	obs_property_set_long_description(optimizationMaxIterationsProp, "优化算法的最大迭代次数");
-	obs_property_t *optimizationStepSizeProp = obs_properties_add_float_slider(props, "optimization_step_size", "参数步长", 0.001, 0.1, 0.001);
-	obs_property_set_long_description(optimizationStepSizeProp, "参数调整的初始步长，步长越大调整越激进");
+	obs_property_t *optimizationTargetErrorProp = obs_properties_add_float_slider(props, "optimization_target_error", "目标误差(px)", 1.0, 50.0, 1.0);
+	obs_property_set_long_description(optimizationTargetErrorProp, "达到此平均误差后停止优化");
+	obs_property_t *optimizationAllowSpeedOptProp = obs_properties_add_bool(props, "optimization_allow_speed_opt", "允许速度优化");
+	obs_property_set_long_description(optimizationAllowSpeedOptProp, "在达到目标误差后继续优化收敛速度");
+	obs_property_t *optimizationStepDecayProp = obs_properties_add_float_slider(props, "optimization_step_decay_factor", "降参幅度", 0.05, 0.5, 0.01);
+	obs_property_set_long_description(optimizationStepDecayProp, "步长衰减因子，值越小调整越保守");
 
 	obs_properties_add_group(props, "floating_window_group", obs_module_text("FloatingWindow"), OBS_GROUP_NORMAL, nullptr);
 	obs_property_t *showFloatingWindowProp = obs_properties_add_bool(props, "show_floating_window", obs_module_text("ShowFloatingWindow"));
@@ -1443,11 +1468,16 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
 	
-	// 页面7: 参数优化（爬山算法）
+	// 页面7: 参数优化（自动调参系统）
 	obs_property_set_visible(obs_properties_get(props, "optimization_enabled"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "optimization_mode"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "optimization_strategy"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "optimization_sample_frames"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "optimization_min_valid_ratio"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "optimization_max_iterations"), page == 7);
-	obs_property_set_visible(obs_properties_get(props, "optimization_step_size"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "optimization_target_error"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "optimization_allow_speed_opt"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "optimization_step_decay_factor"), page == 7);
 #else
 	(void)page;
 #endif
@@ -1680,11 +1710,16 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "max_reidentify_frames", 30);
     obs_data_set_default_double(settings, "reidentify_center_threshold", 0.1);
     
-    // 爬山算法优化器默认值
+    // 自动调参系统默认值
     obs_data_set_default_bool(settings, "optimization_enabled", false);
+    obs_data_set_default_int(settings, "optimization_mode", 0);           // 微调模式
+    obs_data_set_default_int(settings, "optimization_strategy", 1);     // 平衡
     obs_data_set_default_int(settings, "optimization_sample_frames", 300);
+    obs_data_set_default_double(settings, "optimization_min_valid_ratio", 0.70);
     obs_data_set_default_int(settings, "optimization_max_iterations", 100);
-    obs_data_set_default_double(settings, "optimization_step_size", 0.01);
+    obs_data_set_default_double(settings, "optimization_target_error", 10.0);
+    obs_data_set_default_bool(settings, "optimization_allow_speed_opt", true);
+    obs_data_set_default_double(settings, "optimization_step_decay_factor", 0.16);
     
     obs_data_set_default_int(settings, "settings_page", 0);
     
@@ -2119,21 +2154,32 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->maxReidentifyFrames = (int)obs_data_get_int(settings, "max_reidentify_frames");
 	tf->reidentifyCenterThreshold = (float)obs_data_get_double(settings, "reidentify_center_threshold");
 	
-	// 爬山算法优化器参数
+	// 自动调参系统参数
 	bool optimizationEnabled = obs_data_get_bool(settings, "optimization_enabled");
+	int optimizationMode = (int)obs_data_get_int(settings, "optimization_mode");
+	int optimizationStrategy = (int)obs_data_get_int(settings, "optimization_strategy");
 	int optimizationSampleFrames = (int)obs_data_get_int(settings, "optimization_sample_frames");
+	float optimizationMinValidRatio = (float)obs_data_get_double(settings, "optimization_min_valid_ratio");
 	int optimizationMaxIterations = (int)obs_data_get_int(settings, "optimization_max_iterations");
-	float optimizationStepSize = (float)obs_data_get_double(settings, "optimization_step_size");
+	float optimizationTargetError = (float)obs_data_get_double(settings, "optimization_target_error");
+	bool optimizationAllowSpeedOpt = obs_data_get_bool(settings, "optimization_allow_speed_opt");
+	float optimizationStepDecayFactor = (float)obs_data_get_double(settings, "optimization_step_decay_factor");
 	
-	obs_log(LOG_INFO, "[yolo-detector] 优化器参数: enabled=%d, sampleFrames=%d, maxIterations=%d, stepSize=%.4f",
-	        optimizationEnabled, optimizationSampleFrames, optimizationMaxIterations, optimizationStepSize);
+	obs_log(LOG_INFO, "[yolo-detector] 自动调参: enabled=%d mode=%d strategy=%d samples=%d targetErr=%.1f",
+	        optimizationEnabled, optimizationMode, optimizationStrategy, 
+	        optimizationSampleFrames, optimizationTargetError);
 	
 	// 更新所有配置的优化器参数
 	for (int i = 0; i < 5; i++) {
 		tf->mouseConfigs[i].optimizationEnabled = optimizationEnabled;
+		tf->mouseConfigs[i].optimizationMode = optimizationMode;
+		tf->mouseConfigs[i].optimizationStrategy = optimizationStrategy;
 		tf->mouseConfigs[i].optimizationSampleFrames = optimizationSampleFrames;
+		tf->mouseConfigs[i].optimizationMinValidRatio = optimizationMinValidRatio;
 		tf->mouseConfigs[i].optimizationMaxIterations = optimizationMaxIterations;
-		tf->mouseConfigs[i].optimizationStepSize = optimizationStepSize;
+		tf->mouseConfigs[i].optimizationTargetError = optimizationTargetError;
+		tf->mouseConfigs[i].optimizationAllowSpeedOpt = optimizationAllowSpeedOpt;
+		tf->mouseConfigs[i].optimizationStepDecayFactor = optimizationStepDecayFactor;
 	}
 #endif
 
@@ -4231,11 +4277,16 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
 		mcConfig.chrisIMax = tf->chrisIMax;
 		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
-		// 爬山算法优化器参数
+		// 自动调参系统参数
 		mcConfig.optimizationEnabled = cfg.optimizationEnabled;
+		mcConfig.optimizationMode = cfg.optimizationMode;
+		mcConfig.optimizationStrategy = cfg.optimizationStrategy;
 		mcConfig.optimizationSampleFrames = cfg.optimizationSampleFrames;
+		mcConfig.optimizationMinValidRatio = cfg.optimizationMinValidRatio;
 		mcConfig.optimizationMaxIterations = cfg.optimizationMaxIterations;
-		mcConfig.optimizationStepSize = cfg.optimizationStepSize;
+		mcConfig.optimizationTargetError = cfg.optimizationTargetError;
+		mcConfig.optimizationAllowSpeedOpt = cfg.optimizationAllowSpeedOpt;
+		mcConfig.optimizationStepDecayFactor = cfg.optimizationStepDecayFactor;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

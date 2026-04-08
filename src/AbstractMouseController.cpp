@@ -181,8 +181,24 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     optimizer_.setAlgorithmType(config.algorithmType);
     OptimizerConfig optConfig = optimizer_.getConfig();
     optConfig.enabled = config.optimizationEnabled;
+    
+    // 设置模式和策略
+    optConfig.mode = (config.optimizationMode == 0) ? OptimizationMode::TUNING : OptimizationMode::INDEPENDENT;
+    switch (config.optimizationStrategy) {
+        case 0: optConfig.strategy = OptimizationStrategy::STABLE_FIRST; break;
+        case 1: optConfig.strategy = OptimizationStrategy::BALANCED; break;
+        case 2: optConfig.strategy = OptimizationStrategy::AGGRESSIVE; break;
+        default: optConfig.strategy = OptimizationStrategy::BALANCED; break;
+    }
+    
+    // 设置采样和迭代参数
     optConfig.sampleFrames = config.optimizationSampleFrames;
     optConfig.maxIterations = config.optimizationMaxIterations;
+    optConfig.targetError = config.optimizationTargetError;
+    optConfig.allowSpeedOptimization = config.optimizationAllowSpeedOpt;
+    optConfig.stepDecayFactor = config.optimizationStepDecayFactor;
+    optConfig.minValidSampleRatio = config.optimizationMinValidRatio;
+    
     optimizer_.setConfig(optConfig);
     
     // 设置参数更新回调
@@ -709,10 +725,21 @@ void AbstractMouseController::tick()
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
-    // 收集优化器数据
+    // 收集优化器数据（增强版）
     if (config.optimizationEnabled && optimizer_.isRunning()) {
-        optimizer_.addSample(errorX, errorY, finalMoveX, finalMoveY, 
-                            targetVelocityX, targetVelocityY);
+        float predX = predictedTargetPos.x - currentTargetPos.x;
+        float predY = predictedTargetPos.y - currentTargetPos.y;
+        bool saturated = (std::abs(finalMoveX) >= config.outputMaxX || 
+                         std::abs(finalMoveY) >= config.outputMaxY);
+        
+        SampleType sampleType = SampleType::STICKY;
+        if (lockedTrackId < 0 && pendingTargetTrackId >= 0) {
+            sampleType = SampleType::REACQ;
+        }
+        
+        optimizer_.addSample(errorX, errorY, finalMoveX, finalMoveY,
+                            targetVelocityX, targetVelocityY,
+                            predX, predY, saturated, sampleType);
         
         // 每帧调用优化器更新
         optimizer_.update();

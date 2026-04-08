@@ -7,27 +7,72 @@
 #include <functional>
 #include <chrono>
 #include <mutex>
+#include <algorithm>
 #include "MouseControllerInterface.hpp"
+
+// 优化器运行模式
+enum class OptimizationMode {
+    TUNING,      // 微调模式：在当前参数基础上微调
+    INDEPENDENT  // 独立模式：忽略当前手调PID，从头搜索最优解
+};
+
+// 优化策略
+enum class OptimizationStrategy {
+    STABLE_FIRST,  // 静稳优先：优先降低振荡和饱和
+    BALANCED,      // 平衡：综合优化所有指标
+    AGGRESSIVE     // 激进：优先追求最小误差
+};
+
+// 采样分类类型
+enum class SampleType {
+    STICKY,   // 稳定跟踪：误差小且稳定
+    AMB,      // 歧义：多目标干扰
+    REACQ,    // 重获取：目标丢失后重新获取
+    SWITCH    // 切换目标
+};
+
+// 详细采样统计
+struct SamplingStats {
+    int stickyCount = 0;
+    int ambCount = 0;
+    int reacqCount = 0;
+    int switchCount = 0;
+    
+    // 窗口目标指标
+    float avgError = 0;
+    float p95Error = 0;
+    float oscillation = 0;
+    float saturation = 0;
+    float settleTime = 0;
+    float predAccuracy = 0;
+};
 
 // 性能指标结构体
 struct PerformanceMetrics {
-    float avgError;           // 平均跟踪误差
-    float maxError;           // 最大跟踪误差
-    float oscillation;        // 振荡程度（输出变化方差）
-    float smoothness;         // 平滑度（输出变化率）
-    float convergenceRate;    // 收敛速度
-    float score;              // 综合得分（越小越好）
+    float avgError;
+    float maxError;
+    float p95Error;
+    float oscillation;
+    float smoothness;
+    float convergenceRate;
+    float saturation;     // 输出饱和率
+    float settleTime;     // 稳定时间
+    float predAccuracy;   // 预测准确度
+    float score;
     
-    PerformanceMetrics() : avgError(0), maxError(0), oscillation(0), 
-                           smoothness(0), convergenceRate(0), score(0) {}
+    SamplingStats stats;
+    
+    PerformanceMetrics() : avgError(0), maxError(0), p95Error(0), oscillation(0),
+                           smoothness(0), convergenceRate(0), saturation(0),
+                           settleTime(0), predAccuracy(0), score(0) {}
 };
 
 // 参数边界结构体
 struct ParameterBounds {
     float minVal;
     float maxVal;
-    float step;           // 初始步长
-    float minStep;        // 最小步长
+    float step;
+    float minStep;
     
     ParameterBounds(float minVal = 0, float maxVal = 1, 
                     float step = 0.01f, float minStep = 0.001f)
@@ -37,71 +82,48 @@ struct ParameterBounds {
 // 优化配置结构体
 struct OptimizerConfig {
     bool enabled = false;
-    int sampleFrames = 300;             // 采样帧数
-    int maxIterations = 100;            // 最大迭代次数
-    float convergenceThreshold = 0.01f; // 收敛阈值
-    float stepDecay = 0.5f;             // 步长衰减系数
-    float stepGrowth = 1.2f;            // 步长增长系数
     
-    // 目标函数权重
-    float weightAvgError = 1.0f;
-    float weightMaxError = 0.5f;
-    float weightOscillation = 0.3f;
-    float weightSmoothness = 0.2f;
-    float weightConvergence = 0.3f;
+    // 模式和策略
+    OptimizationMode mode = OptimizationMode::TUNING;
+    OptimizationStrategy strategy = OptimizationStrategy::BALANCED;
     
-    // 参数边界（每种算法）
+    // 采样配置
+    int sampleFrames = 300;
+    int windowSize = 120;
+    float minValidSampleRatio = 0.70f;
+    
+    // 迭代控制
+    int maxIterations = 100;
+    float targetError = 10.0f;
+    bool allowSpeedOptimization = true;
+    float stepDecayFactor = 0.16f;
+    float convergenceThreshold = 0.01f;
+    
+    // 目标函数权重（根据策略调整）
+    struct Weights {
+        float weightAvgError = 1.0f;
+        float weightMaxError = 0.5f;
+        float weightP95Error = 0.3f;
+        float weightOscillation = 0.4f;
+        float weightSaturation = 0.5f;
+        float weightSmoothness = 0.2f;
+        float weightConvergence = 0.3f;
+        
+        void setForStrategy(OptimizationStrategy strategy);
+    } weights;
+    
+    // 参数边界
     std::vector<ParameterBounds> advancedPidBounds;
     std::vector<ParameterBounds> standardPidBounds;
     std::vector<ParameterBounds> dopaPidBounds;
     std::vector<ParameterBounds> chrisPidBounds;
     
     OptimizerConfig() {
-        // AdvancedPID参数边界
-        advancedPidBounds = {
-            {0.05f, 0.5f, 0.01f, 0.001f},   // pidPMin
-            {0.3f, 1.0f, 0.02f, 0.002f},    // pidPMax
-            {0.001f, 0.05f, 0.001f, 0.0001f}, // pidD
-            {0.001f, 0.1f, 0.005f, 0.0005f}, // pidI
-            {0.05f, 0.5f, 0.02f, 0.002f},   // derivativeFilterAlpha
-            {0.0f, 0.5f, 0.02f, 0.002f},    // kalmanPredictionWeightX
-            {0.0f, 0.3f, 0.01f, 0.001f},    // kalmanPredictionWeightY
-            {0.0f, 0.5f, 0.02f, 0.002f},    // predictionWeightX
-            {0.0f, 0.3f, 0.01f, 0.001f}     // predictionWeightY
-        };
-        
-        // StandardPID参数边界
-        standardPidBounds = {
-            {0.1f, 0.8f, 0.02f, 0.002f},    // stdKp
-            {0.001f, 0.1f, 0.005f, 0.0005f}, // stdKi
-            {0.001f, 0.03f, 0.001f, 0.0001f}, // stdKd
-            {0.05f, 0.5f, 0.02f, 0.002f},   // stdDerivativeFilterAlpha
-            {0.3f, 0.95f, 0.02f, 0.002f},   // stdSmoothingX
-            {0.3f, 0.95f, 0.02f, 0.002f}    // stdSmoothingY
-        };
-        
-        // DopaPID参数边界
-        dopaPidBounds = {
-            {0.3f, 1.5f, 0.05f, 0.005f},    // dopaKpX
-            {0.3f, 1.5f, 0.05f, 0.005f},    // dopaKpY
-            {0.001f, 0.05f, 0.002f, 0.0002f}, // dopaKiX
-            {0.001f, 0.05f, 0.002f, 0.0002f}, // dopaKiY
-            {0.01f, 0.1f, 0.005f, 0.0005f}, // dopaKdX
-            {0.01f, 0.1f, 0.005f, 0.0005f}, // dopaKdY
-            {0.3f, 1.0f, 0.05f, 0.005f},    // dopaPredWeight
-            {0.1f, 0.5f, 0.02f, 0.002f}     // dopaDFilterAlpha
-        };
-        
-        // ChrisPID参数边界
-        chrisPidBounds = {
-            {0.2f, 0.8f, 0.02f, 0.002f},    // chrisKp
-            {0.005f, 0.1f, 0.005f, 0.0005f}, // chrisKi
-            {0.01f, 0.1f, 0.005f, 0.0005f}, // chrisKd
-            {0.2f, 0.8f, 0.05f, 0.005f},    // chrisPredWeightX
-            {0.0f, 0.3f, 0.02f, 0.002f},    // chrisPredWeightY
-            {0.1f, 0.5f, 0.02f, 0.002f}     // chrisDFilterAlpha
-        };
+        initDefaultBounds();
     }
+    
+private:
+    void initDefaultBounds();
 };
 
 // 数据采样点
@@ -112,18 +134,30 @@ struct SamplePoint {
     float outputY;
     float targetVelocityX;
     float targetVelocityY;
+    float predictedX;
+    float predictedY;
+    bool isSaturated;
+    SampleType type;
     std::chrono::steady_clock::time_point timestamp;
+    
+    SamplePoint() : errorX(0), errorY(0), outputX(0), outputY(0),
+                     targetVelocityX(0), targetVelocityY(0),
+                     predictedX(0), predictedY(0), isSaturated(false),
+                     type(SampleType::STICKY) {}
 };
 
-// 参数更新回调类型
 using ParameterUpdateCallback = std::function<void(const std::vector<float>& params)>;
 
 // 优化器状态
 enum class OptimizerState {
-    IDLE,           // 空闲
-    COLLECTING,     // 收集数据中
-    EVALUATING,     // 评估中（决定下一步）
-    TESTING         // 测试新参数中
+    IDLE,
+    COLLECTING_BASELINE,
+    EVALUATING_BASELINE,
+    TESTING_PARAMETER,
+    COLLECTING_TEST,
+    EVALUATING_TEST,
+    CONVERGED,
+    STOPPED
 };
 
 class HillClimbingOptimizer {
@@ -135,35 +169,49 @@ public:
     void setConfig(const OptimizerConfig& config);
     OptimizerConfig getConfig() const;
     
-    // 设置算法类型
     void setAlgorithmType(AlgorithmType type);
+    AlgorithmType getAlgorithmType() const;
     
-    // 设置参数更新回调
     void setParameterUpdateCallback(ParameterUpdateCallback callback);
     
-    // 数据收集
+    // 数据收集（增强版）
     void addSample(float errorX, float errorY, 
                    float outputX, float outputY,
-                   float targetVelX = 0, float targetVelY = 0);
+                   float targetVelX = 0, float targetVelY = 0,
+                   float predX = 0, float predY = 0,
+                   bool saturated = false,
+                   SampleType type = SampleType::STICKY);
     
-    // 优化控制
+    // 控制
     void start();
     void stop();
     void reset();
+    void applyBestToUI();
     bool isRunning() const;
     
-    // 获取当前状态
-    PerformanceMetrics getCurrentMetrics() const;
-    std::vector<float> getCurrentParameters() const;
-    std::vector<float> getBestParameters() const;
+    // 状态查询
+    OptimizerState getState() const;
+    const char* getStateString() const;
     int getCurrentIteration() const;
     int getSampleCount() const;
-    OptimizerState getState() const;
+    int getRequiredSamples() const;
+    float getProgress() const;
     
-    // 设置当前参数（从外部）
+    // 参数查询
+    std::vector<float> getCurrentParameters() const;
+    std::vector<float> getBestParameters() const;
+    std::vector<std::string> getParameterNames() const;
+    
+    // 性能指标
+    PerformanceMetrics getCurrentMetrics() const;
+    PerformanceMetrics getBaselineMetrics() const;
+    PerformanceMetrics getBestMetrics() const;
+    SamplingStats getSamplingStats() const;
+    
+    // 设置当前参数
     void setCurrentParameters(const std::vector<float>& params);
     
-    // 主更新函数（每帧调用）
+    // 主更新函数
     void update();
     
 private:
@@ -171,29 +219,24 @@ private:
     OptimizerConfig config_;
     AlgorithmType algorithmType_;
     
-    // 数据缓冲
     std::deque<SamplePoint> samples_;
     
-    // 参数状态
     std::vector<float> currentParams_;
     std::vector<float> bestParams_;
     std::vector<float> currentSteps_;
     PerformanceMetrics currentMetrics_;
+    PerformanceMetrics baselineMetrics_;
     PerformanceMetrics bestMetrics_;
-    PerformanceMetrics baselineMetrics_;  // 基线得分（用于比较）
     
-    // 优化状态
     bool running_;
     int iteration_;
     int consecutiveNoImprovement_;
     OptimizerState state_;
     
-    // 当前测试的参数
     int currentParamIndex_;
     float currentDelta_;
     bool testingIncrease_;
     
-    // 回调
     ParameterUpdateCallback paramUpdateCallback_;
     
     // 内部方法
@@ -205,6 +248,13 @@ private:
     void applyParameterChange(int index, float delta);
     void revertParameterChange(int index, float delta);
     void moveToNextParameter();
+    void checkConvergence();
+    void adjustWeightsForStrategy();
+    SamplingStats calculateSamplingStats();
+    float calculateP95Error();
+    float calculateSaturation();
+    float calculateSettleTime();
+    float calculatePredAccuracy();
 };
 
 #endif // HILL_CLIMBING_OPTIMIZER_HPP

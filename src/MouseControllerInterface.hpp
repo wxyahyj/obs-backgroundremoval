@@ -173,11 +173,16 @@ struct MouseControllerConfig {
     float trackingWeightAspect = 0.15f;   // 宽高比距离权重
     float trackingWeightArea = 0.15f;     // 面积距离权重
     
-    // 爬山算法优化器配置
+    // 自动调参系统配置
     bool optimizationEnabled = false;           // 是否启用优化
-    int optimizationSampleFrames = 300;         // 采样帧数
+    int optimizationMode = 0;                   // 0=微调模式 1=独立模式
+    int optimizationStrategy = 1;               // 0=静稳优先 1=平衡 2=激进
+    int optimizationSampleFrames = 300;         // 窗口样本数
     int optimizationMaxIterations = 100;        // 最大迭代次数
-    float optimizationStepSize = 0.01f;         // 参数调整步长
+    float optimizationTargetError = 10.0f;      // 目标误差(px)
+    bool optimizationAllowSpeedOpt = true;     // 允许速度优化
+    float optimizationStepDecayFactor = 0.16f; // 降参幅度
+    float optimizationMinValidRatio = 0.70f;    // 最小有效样本比
 };
 
 class MouseControllerInterface {
