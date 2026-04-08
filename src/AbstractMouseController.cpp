@@ -109,8 +109,12 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         });
         optimizer_.start();
         optimizationFrameCounter_ = 0;
+        obs_log(LOG_INFO, "[%s] 优化器已启动: algorithmType=%d, sampleFrames=%d, maxIterations=%d",
+                getLogPrefix(), static_cast<int>(config.algorithmType), 
+                config.optimizationSampleFrames, config.optimizationMaxIterations);
     } else if (!config.optimizationEnabled && optimizer_.isRunning()) {
         optimizer_.stop();
+        obs_log(LOG_INFO, "[%s] 优化器已停止", getLogPrefix());
     }
     
     if (configChanged) {

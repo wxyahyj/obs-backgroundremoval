@@ -2125,6 +2125,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	int optimizationMaxIterations = (int)obs_data_get_int(settings, "optimization_max_iterations");
 	float optimizationStepSize = (float)obs_data_get_double(settings, "optimization_step_size");
 	
+	obs_log(LOG_INFO, "[yolo-detector] 优化器参数: enabled=%d, sampleFrames=%d, maxIterations=%d, stepSize=%.4f",
+	        optimizationEnabled, optimizationSampleFrames, optimizationMaxIterations, optimizationStepSize);
+	
 	// 更新所有配置的优化器参数
 	for (int i = 0; i < 5; i++) {
 		tf->mouseConfigs[i].optimizationEnabled = optimizationEnabled;
@@ -4228,6 +4231,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
 		mcConfig.chrisIMax = tf->chrisIMax;
 		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
+		// 爬山算法优化器参数
+		mcConfig.optimizationEnabled = cfg.optimizationEnabled;
+		mcConfig.optimizationSampleFrames = cfg.optimizationSampleFrames;
+		mcConfig.optimizationMaxIterations = cfg.optimizationMaxIterations;
+		mcConfig.optimizationStepSize = cfg.optimizationStepSize;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
