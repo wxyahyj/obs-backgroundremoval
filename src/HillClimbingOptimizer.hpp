@@ -29,9 +29,9 @@ struct ParameterBounds {
     float step;           // 初始步长
     float minStep;        // 最小步长
     
-    ParameterBounds(float minV = 0, float maxV = 1, 
-                    float stepV = 0.01f, float minStepV = 0.001f)
-        : minVal(minV), maxVal(maxV), step(stepV), minStep(minStepV) {}
+    ParameterBounds(float minVal = 0, float maxVal = 1, 
+                    float step = 0.01f, float minStep = 0.001f)
+        : minVal(minVal), maxVal(maxVal), step(step), minStep(minStep) {}
 };
 
 // 优化配置结构体
