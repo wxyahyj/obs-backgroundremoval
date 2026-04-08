@@ -24,14 +24,14 @@ struct PerformanceMetrics {
 
 // 参数边界结构体
 struct ParameterBounds {
-    float min;
-    float max;
+    float minVal;
+    float maxVal;
     float step;           // 初始步长
     float minStep;        // 最小步长
     
-    ParameterBounds(float minVal = 0, float maxVal = 1, 
-                    float stepVal = 0.01f, float minStepVal = 0.001f)
-        : min(minVal), max(maxVal), step(stepVal), minStep(minStepVal) {}
+    ParameterBounds(float minV = 0, float maxV = 1, 
+                    float stepV = 0.01f, float minStepV = 0.001f)
+        : minVal(minV), maxVal(maxV), step(stepV), minStep(minStepV) {}
 };
 
 // 优化配置结构体

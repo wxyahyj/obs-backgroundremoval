@@ -384,6 +384,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool enableBezierMovement;
 		float bezierCurvature;
 		float bezierRandomness;
+		// 爬山算法优化器参数
+		bool optimizationEnabled;
+		int optimizationSampleFrames;
+		int optimizationMaxIterations;
+		float optimizationStepSize;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -463,6 +468,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
 			bezierRandomness = 0.2f;
+			// 爬山算法优化器参数默认值
+			optimizationEnabled = false;
+			optimizationSampleFrames = 300;
+			optimizationMaxIterations = 100;
+			optimizationStepSize = 0.01f;
 		}
 	};
 

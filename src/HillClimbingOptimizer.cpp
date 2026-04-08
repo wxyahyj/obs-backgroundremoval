@@ -336,7 +336,7 @@ void HillClimbingOptimizer::initializeParameters()
     
     // 初始化参数为边界中点
     for (size_t i = 0; i < bounds.size(); ++i) {
-        currentParams_[i] = (bounds[i].min + bounds[i].max) / 2.0f;
+        currentParams_[i] = (bounds[i].minVal + bounds[i].maxVal) / 2.0f;
         currentSteps_[i] = bounds[i].step;
     }
     
@@ -353,7 +353,7 @@ bool HillClimbingOptimizer::tryParameterUpdate(int paramIndex, float delta)
     float newValue = currentParams_[paramIndex] + delta;
     
     // 检查边界
-    if (newValue < bounds[paramIndex].min || newValue > bounds[paramIndex].max) {
+    if (newValue < bounds[paramIndex].minVal || newValue > bounds[paramIndex].maxVal) {
         return false;
     }
     
