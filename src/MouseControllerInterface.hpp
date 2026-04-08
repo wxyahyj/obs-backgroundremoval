@@ -172,6 +172,12 @@ struct MouseControllerConfig {
     float trackingWeightCenter = 0.3f;    // 中心点距离权重
     float trackingWeightAspect = 0.15f;   // 宽高比距离权重
     float trackingWeightArea = 0.15f;     // 面积距离权重
+    
+    // 爬山算法优化器配置
+    bool optimizationEnabled = false;           // 是否启用优化
+    int optimizationSampleFrames = 300;         // 采样帧数
+    int optimizationMaxIterations = 100;        // 最大迭代次数
+    float optimizationStepSize = 0.01f;         // 参数调整步长
 };
 
 class MouseControllerInterface {

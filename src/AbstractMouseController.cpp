@@ -64,6 +64,11 @@ AbstractMouseController::AbstractMouseController()
     , kalmanFilterInitialized(false)
     , bezierPhase(0.0f)
     , pidDataCallback_(nullptr)
+    , optimizationFrameCounter_(0)
+    , lastOptimizationErrorX_(0.0f)
+    , lastOptimizationErrorY_(0.0f)
+    , lastOptimizationOutputX_(0.0f)
+    , lastOptimizationOutputY_(0.0f)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -88,6 +93,25 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     // 更新DerivativePredictor参数
     predictor.setSmoothFactors(config.velocitySmoothFactor, config.accelerationSmoothFactor);
     predictor.setMaxPredictionTime(config.maxPredictionTime);
+    
+    // 更新优化器配置
+    optimizer_.setAlgorithmType(config.algorithmType);
+    OptimizerConfig optConfig = optimizer_.getConfig();
+    optConfig.enabled = config.optimizationEnabled;
+    optConfig.sampleFrames = config.optimizationSampleFrames;
+    optConfig.maxIterations = config.optimizationMaxIterations;
+    optimizer_.setConfig(optConfig);
+    
+    // 设置参数更新回调
+    if (config.optimizationEnabled && !optimizer_.isRunning()) {
+        optimizer_.setParameterUpdateCallback([this](const std::vector<float>& params) {
+            this->applyOptimizedParameters(params);
+        });
+        optimizer_.start();
+        optimizationFrameCounter_ = 0;
+    } else if (!config.optimizationEnabled && optimizer_.isRunning()) {
+        optimizer_.stop();
+    }
     
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
@@ -595,6 +619,19 @@ void AbstractMouseController::tick()
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     
+    // 收集优化器数据
+    if (config.optimizationEnabled && optimizer_.isRunning()) {
+        optimizer_.addSample(errorX, errorY, finalMoveX, finalMoveY, 
+                            targetVelocityX, targetVelocityY);
+        optimizationFrameCounter_++;
+        
+        // 每隔一定帧数尝试优化步骤
+        if (optimizationFrameCounter_ >= config.optimizationSampleFrames / 10) {
+            optimizer_.step();
+            optimizationFrameCounter_ = 0;
+        }
+    }
+    
     moveMouse(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
 }
 
@@ -976,6 +1013,74 @@ void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 const char* AbstractMouseController::getLogPrefix() const
 {
     return "";
+}
+
+void AbstractMouseController::applyOptimizedParameters(const std::vector<float>& params)
+{
+    if (params.empty()) return;
+    
+    switch (config.algorithmType) {
+        case AlgorithmType::AdvancedPID:
+            if (params.size() >= 9) {
+                config.pidPMin = params[0];
+                config.pidPMax = params[1];
+                config.pidD = params[2];
+                config.pidI = params[3];
+                config.derivativeFilterAlpha = params[4];
+                config.kalmanPredictionWeightX = params[5];
+                config.kalmanPredictionWeightY = params[6];
+                config.predictionWeightX = params[7];
+                config.predictionWeightY = params[8];
+                
+                obs_log(LOG_INFO, "[HillClimbing] AdvancedPID参数更新: PMin=%.3f PMax=%.3f D=%.4f I=%.4f",
+                        config.pidPMin, config.pidPMax, config.pidD, config.pidI);
+            }
+            break;
+            
+        case AlgorithmType::StandardPID:
+            if (params.size() >= 6) {
+                config.stdKp = params[0];
+                config.stdKi = params[1];
+                config.stdKd = params[2];
+                config.stdDerivativeFilterAlpha = params[3];
+                config.stdSmoothingX = params[4];
+                config.stdSmoothingY = params[5];
+                
+                obs_log(LOG_INFO, "[HillClimbing] StandardPID参数更新: Kp=%.3f Ki=%.4f Kd=%.4f",
+                        config.stdKp, config.stdKi, config.stdKd);
+            }
+            break;
+            
+        case AlgorithmType::DopaPID:
+            if (params.size() >= 8) {
+                config.dopaKpX = params[0];
+                config.dopaKpY = params[1];
+                config.dopaKiX = params[2];
+                config.dopaKiY = params[3];
+                config.dopaKdX = params[4];
+                config.dopaKdY = params[5];
+                config.dopaPredWeight = params[6];
+                config.dopaDFilterAlpha = params[7];
+                
+                obs_log(LOG_INFO, "[HillClimbing] DopaPID参数更新: KpX=%.3f KpY=%.3f KiX=%.4f KiY=%.4f",
+                        config.dopaKpX, config.dopaKpY, config.dopaKiX, config.dopaKiY);
+            }
+            break;
+            
+        case AlgorithmType::ChrisPID:
+            if (params.size() >= 6) {
+                config.chrisKp = params[0];
+                config.chrisKi = params[1];
+                config.chrisKd = params[2];
+                config.chrisPredWeightX = params[3];
+                config.chrisPredWeightY = params[4];
+                config.chrisDFilterAlpha = params[5];
+                
+                obs_log(LOG_INFO, "[HillClimbing] ChrisPID参数更新: Kp=%.3f Ki=%.4f Kd=%.4f",
+                        config.chrisKp, config.chrisKi, config.chrisKd);
+            }
+            break;
+    }
 }
 
 #endif

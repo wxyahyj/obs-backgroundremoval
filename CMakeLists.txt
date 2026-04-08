@@ -248,6 +248,7 @@ if(WIN32)
       src/RecoilPatternManager.cpp
       src/DopaPIDController.cpp
       src/ChrisPIDController.cpp
+      src/HillClimbingOptimizer.cpp
   )
 endif()
 target_compile_options(
