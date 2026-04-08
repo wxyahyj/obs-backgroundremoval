@@ -78,7 +78,95 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                           config.autoTriggerEnabled != newConfig.autoTriggerEnabled ||
                           config.autoTriggerFireDuration != newConfig.autoTriggerFireDuration ||
                           config.autoTriggerInterval != newConfig.autoTriggerInterval);
-    config = newConfig;
+    
+    // 如果优化器正在运行，保留优化后的参数
+    if (optimizer_.isRunning()) {
+        // 根据算法类型保存优化器调整的参数
+        AlgorithmType algoType = config.algorithmType;
+        
+        // AdvancedPID 参数
+        float savedPidPMin = config.pidPMin;
+        float savedPidPMax = config.pidPMax;
+        float savedPidD = config.pidD;
+        float savedPidI = config.pidI;
+        float savedDerivativeFilterAlpha = config.derivativeFilterAlpha;
+        float savedKalmanPredX = config.kalmanPredictionWeightX;
+        float savedKalmanPredY = config.kalmanPredictionWeightY;
+        float savedPredX = config.predictionWeightX;
+        float savedPredY = config.predictionWeightY;
+        
+        // StandardPID 参数
+        float savedStdKp = config.stdKp;
+        float savedStdKi = config.stdKi;
+        float savedStdKd = config.stdKd;
+        float savedStdDerivativeFilterAlpha = config.stdDerivativeFilterAlpha;
+        float savedStdSmoothingX = config.stdSmoothingX;
+        float savedStdSmoothingY = config.stdSmoothingY;
+        
+        // DopaPID 参数
+        float savedDopaKpX = config.dopaKpX;
+        float savedDopaKpY = config.dopaKpY;
+        float savedDopaKiX = config.dopaKiX;
+        float savedDopaKiY = config.dopaKiY;
+        float savedDopaKdX = config.dopaKdX;
+        float savedDopaKdY = config.dopaKdY;
+        float savedDopaPredWeight = config.dopaPredWeight;
+        float savedDopaDFilterAlpha = config.dopaDFilterAlpha;
+        
+        // ChrisPID 参数
+        float savedChrisKp = config.chrisKp;
+        float savedChrisKi = config.chrisKi;
+        float savedChrisKd = config.chrisKd;
+        float savedChrisPredWeightX = config.chrisPredWeightX;
+        float savedChrisPredWeightY = config.chrisPredWeightY;
+        float savedChrisDFilterAlpha = config.chrisDFilterAlpha;
+        
+        // 应用新配置
+        config = newConfig;
+        
+        // 根据算法类型恢复优化器调整的参数
+        switch (algoType) {
+            case AlgorithmType::AdvancedPID:
+                config.pidPMin = savedPidPMin;
+                config.pidPMax = savedPidPMax;
+                config.pidD = savedPidD;
+                config.pidI = savedPidI;
+                config.derivativeFilterAlpha = savedDerivativeFilterAlpha;
+                config.kalmanPredictionWeightX = savedKalmanPredX;
+                config.kalmanPredictionWeightY = savedKalmanPredY;
+                config.predictionWeightX = savedPredX;
+                config.predictionWeightY = savedPredY;
+                break;
+            case AlgorithmType::StandardPID:
+                config.stdKp = savedStdKp;
+                config.stdKi = savedStdKi;
+                config.stdKd = savedStdKd;
+                config.stdDerivativeFilterAlpha = savedStdDerivativeFilterAlpha;
+                config.stdSmoothingX = savedStdSmoothingX;
+                config.stdSmoothingY = savedStdSmoothingY;
+                break;
+            case AlgorithmType::DopaPID:
+                config.dopaKpX = savedDopaKpX;
+                config.dopaKpY = savedDopaKpY;
+                config.dopaKiX = savedDopaKiX;
+                config.dopaKiY = savedDopaKiY;
+                config.dopaKdX = savedDopaKdX;
+                config.dopaKdY = savedDopaKdY;
+                config.dopaPredWeight = savedDopaPredWeight;
+                config.dopaDFilterAlpha = savedDopaDFilterAlpha;
+                break;
+            case AlgorithmType::ChrisPID:
+                config.chrisKp = savedChrisKp;
+                config.chrisKi = savedChrisKi;
+                config.chrisKd = savedChrisKd;
+                config.chrisPredWeightX = savedChrisPredWeightX;
+                config.chrisPredWeightY = savedChrisPredWeightY;
+                config.chrisDFilterAlpha = savedChrisDFilterAlpha;
+                break;
+        }
+    } else {
+        config = newConfig;
+    }
     
     config.bezierCurvature = std::clamp(config.bezierCurvature, 0.0f, 1.0f);
     config.bezierRandomness = std::clamp(config.bezierRandomness, 0.0f, 0.5f);
