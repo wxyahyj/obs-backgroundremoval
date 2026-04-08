@@ -41,45 +41,72 @@ void OptimizerConfig::Weights::setForStrategy(OptimizationStrategy strategy) {
 
 // OptimizerConfig 默认边界初始化
 void OptimizerConfig::initDefaultBounds() {
+    // AdvancedPID完整参数：PID核心 + 预测 + 滤波
+    // 0-3: PID核心 (PMin, PMax, D, I)
+    // 4: D项滤波
+    // 5-6: 卡尔曼预测权重
+    // 7-8: 导数预测权重
+    // 9-10: 输出平滑
+    // 11-12: 速度/加速度平滑
+    // 13: 最大预测时间
     advancedPidBounds = {
-        {0.05f, 0.5f, 0.01f, 0.001f},
-        {0.3f, 1.0f, 0.02f, 0.002f},
-        {0.001f, 0.05f, 0.001f, 0.0001f},
-        {0.001f, 0.1f, 0.005f, 0.0005f},
-        {0.05f, 0.5f, 0.02f, 0.002f},
-        {0.0f, 0.5f, 0.02f, 0.002f},
-        {0.0f, 0.3f, 0.01f, 0.001f},
-        {0.0f, 0.5f, 0.02f, 0.002f},
-        {0.0f, 0.3f, 0.01f, 0.001f}
+        {0.05f, 0.5f, 0.01f, 0.001f},     // pidPMin
+        {0.3f, 1.0f, 0.02f, 0.002f},      // pidPMax
+        {0.001f, 0.05f, 0.001f, 0.0001f},  // pidD
+        {0.001f, 0.1f, 0.005f, 0.0005f},   // pidI
+        {0.05f, 0.5f, 0.02f, 0.002f},      // derivativeFilterAlpha
+        {0.0f, 0.5f, 0.02f, 0.002f},       // kalmanPredictionWeightX
+        {0.0f, 0.3f, 0.01f, 0.001f},       // kalmanPredictionWeightY
+        {0.0f, 0.5f, 0.02f, 0.002f},       // predictionWeightX
+        {0.0f, 0.3f, 0.01f, 0.001f},       // predictionWeightY
+        {0.3f, 0.95f, 0.02f, 0.002f},      // aimSmoothingX
+        {0.3f, 0.95f, 0.02f, 0.002f},      // aimSmoothingY
+        {0.05f, 0.4f, 0.02f, 0.002f},      // velocitySmoothFactor
+        {0.05f, 0.4f, 0.02f, 0.002f},      // accelerationSmoothFactor
+        {0.03f, 0.2f, 0.01f, 0.001f}       // maxPredictionTime
     };
     
+    // StandardPID: PID + 滤波 + 平滑
     standardPidBounds = {
-        {0.1f, 0.8f, 0.02f, 0.002f},
-        {0.001f, 0.1f, 0.005f, 0.0005f},
-        {0.001f, 0.03f, 0.001f, 0.0001f},
-        {0.05f, 0.5f, 0.02f, 0.002f},
-        {0.3f, 0.95f, 0.02f, 0.002f},
-        {0.3f, 0.95f, 0.02f, 0.002f}
+        {0.1f, 0.8f, 0.02f, 0.002f},      // stdKp
+        {0.001f, 0.1f, 0.005f, 0.0005f},   // stdKi
+        {0.001f, 0.03f, 0.001f, 0.0001f},  // stdKd
+        {0.05f, 0.5f, 0.02f, 0.002f},      // stdDerivativeFilterAlpha
+        {0.3f, 0.95f, 0.02f, 0.002f},      // stdSmoothingX
+        {0.3f, 0.95f, 0.02f, 0.002f},      // stdSmoothingY
+        {0.05f, 0.4f, 0.02f, 0.002f},      // velocitySmoothFactor
+        {0.05f, 0.4f, 0.02f, 0.002f},      // accelerationSmoothFactor
+        {0.03f, 0.2f, 0.01f, 0.001f}       // maxPredictionTime
     };
     
+    // DopaPID: PID + 预测 + 滤波
     dopaPidBounds = {
-        {0.3f, 1.5f, 0.05f, 0.005f},
-        {0.3f, 1.5f, 0.05f, 0.005f},
-        {0.001f, 0.05f, 0.002f, 0.0002f},
-        {0.001f, 0.05f, 0.002f, 0.0002f},
-        {0.01f, 0.1f, 0.005f, 0.0005f},
-        {0.01f, 0.1f, 0.005f, 0.0005f},
-        {0.3f, 1.0f, 0.05f, 0.005f},
-        {0.1f, 0.5f, 0.02f, 0.002f}
+        {0.3f, 1.5f, 0.05f, 0.005f},      // dopaKpX
+        {0.3f, 1.5f, 0.05f, 0.005f},      // dopaKpY
+        {0.001f, 0.05f, 0.002f, 0.0002f}, // dopaKiX
+        {0.001f, 0.05f, 0.002f, 0.0002f}, // dopaKiY
+        {0.01f, 0.1f, 0.005f, 0.0005f},   // dopaKdX
+        {0.01f, 0.1f, 0.005f, 0.0005f},   // dopaKdY
+        {0.3f, 1.0f, 0.05f, 0.005f},      // dopaPredWeight
+        {0.1f, 0.5f, 0.02f, 0.002f},      // dopaDFilterAlpha
+        {0.3f, 0.95f, 0.02f, 0.002f},      // aimSmoothingX
+        {0.3f, 0.95f, 0.02f, 0.002f},      // aimSmoothingY
+        {0.05f, 0.4f, 0.02f, 0.002f},      // velocitySmoothFactor
+        {0.05f, 0.4f, 0.02f, 0.002f}       // accelerationSmoothFactor
     };
     
+    // ChrisPID: PID + 预测 + 滤波
     chrisPidBounds = {
-        {0.2f, 0.8f, 0.02f, 0.002f},
-        {0.005f, 0.1f, 0.005f, 0.0005f},
-        {0.01f, 0.1f, 0.005f, 0.0005f},
-        {0.2f, 0.8f, 0.05f, 0.005f},
-        {0.0f, 0.3f, 0.02f, 0.002f},
-        {0.1f, 0.5f, 0.02f, 0.002f}
+        {0.2f, 0.8f, 0.02f, 0.002f},      // chrisKp
+        {0.005f, 0.1f, 0.005f, 0.0005f},  // chrisKi
+        {0.01f, 0.1f, 0.005f, 0.0005f},   // chrisKd
+        {0.2f, 0.8f, 0.05f, 0.005f},      // chrisPredWeightX
+        {0.0f, 0.3f, 0.02f, 0.002f},      // chrisPredWeightY
+        {0.1f, 0.5f, 0.02f, 0.002f},      // chrisDFilterAlpha
+        {0.3f, 0.95f, 0.02f, 0.002f},      // aimSmoothingX
+        {0.3f, 0.95f, 0.02f, 0.002f},      // aimSmoothingY
+        {0.05f, 0.4f, 0.02f, 0.002f},      // velocitySmoothFactor
+        {0.05f, 0.4f, 0.02f, 0.002f}       // accelerationSmoothFactor
     };
     
     weights.setForStrategy(strategy);
@@ -259,13 +286,18 @@ std::vector<std::string> HillClimbingOptimizer::getParameterNames() const {
     switch (algorithmType_) {
         case AlgorithmType::AdvancedPID:
             return {"PMin", "PMax", "D", "I", "DFilterAlpha",
-                    "KalmanPredX", "KalmanPredY", "PredWeightX", "PredWeightY"};
+                    "KalmanPredX", "KalmanPredY", "PredWeightX", "PredWeightY",
+                    "SmoothX", "SmoothY", "VelSmooth", "AccSmooth", "MaxPredTime"};
         case AlgorithmType::StandardPID:
-            return {"Kp", "Ki", "Kd", "DFilterAlpha", "SmoothX", "SmoothY"};
+            return {"Kp", "Ki", "Kd", "DFilterAlpha", "SmoothX", "SmoothY",
+                    "VelSmooth", "AccSmooth", "MaxPredTime"};
         case AlgorithmType::DopaPID:
-            return {"KpX", "KpY", "KiX", "KiY", "KdX", "KdY", "PredWeight", "DFilterAlpha"};
+            return {"KpX", "KpY", "KiX", "KiY", "KdX", "KdY", 
+                    "PredWeight", "DFilterAlpha", "SmoothX", "SmoothY",
+                    "VelSmooth", "AccSmooth"};
         case AlgorithmType::ChrisPID:
-            return {"Kp", "Ki", "Kd", "PredWeightX", "PredWeightY", "DFilterAlpha"};
+            return {"Kp", "Ki", "Kd", "PredWeightX", "PredWeightY", "DFilterAlpha",
+                    "SmoothX", "SmoothY", "VelSmooth", "AccSmooth"};
         default:
             return {};
     }
