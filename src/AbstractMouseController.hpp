@@ -108,11 +108,6 @@ protected:
     
     // 爬山算法优化器
     HillClimbingOptimizer optimizer_;
-    int optimizationFrameCounter_;
-    float lastOptimizationErrorX_;
-    float lastOptimizationErrorY_;
-    float lastOptimizationOutputX_;
-    float lastOptimizationOutputY_;
 
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;
@@ -137,6 +132,7 @@ protected:
     float getCurrentPGain();
     
     void applyOptimizedParameters(const std::vector<float>& params);
+    std::vector<float> extractCurrentParameters();
     
     virtual const char* getLogPrefix() const;
 

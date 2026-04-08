@@ -64,11 +64,6 @@ AbstractMouseController::AbstractMouseController()
     , kalmanFilterInitialized(false)
     , bezierPhase(0.0f)
     , pidDataCallback_(nullptr)
-    , optimizationFrameCounter_(0)
-    , lastOptimizationErrorX_(0.0f)
-    , lastOptimizationErrorY_(0.0f)
-    , lastOptimizationOutputX_(0.0f)
-    , lastOptimizationOutputY_(0.0f)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -104,11 +99,14 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     // 设置参数更新回调
     if (config.optimizationEnabled && !optimizer_.isRunning()) {
+        // 将当前参数值设置到优化器
+        std::vector<float> currentParams = extractCurrentParameters();
+        optimizer_.setCurrentParameters(currentParams);
+        
         optimizer_.setParameterUpdateCallback([this](const std::vector<float>& params) {
             this->applyOptimizedParameters(params);
         });
         optimizer_.start();
-        optimizationFrameCounter_ = 0;
         obs_log(LOG_INFO, "[%s] 优化器已启动: algorithmType=%d, sampleFrames=%d, maxIterations=%d",
                 getLogPrefix(), static_cast<int>(config.algorithmType), 
                 config.optimizationSampleFrames, config.optimizationMaxIterations);
@@ -627,13 +625,9 @@ void AbstractMouseController::tick()
     if (config.optimizationEnabled && optimizer_.isRunning()) {
         optimizer_.addSample(errorX, errorY, finalMoveX, finalMoveY, 
                             targetVelocityX, targetVelocityY);
-        optimizationFrameCounter_++;
         
-        // 每隔一定帧数尝试优化步骤
-        if (optimizationFrameCounter_ >= config.optimizationSampleFrames / 10) {
-            optimizer_.step();
-            optimizationFrameCounter_ = 0;
-        }
+        // 每帧调用优化器更新
+        optimizer_.update();
     }
     
     moveMouse(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
@@ -1017,6 +1011,72 @@ void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 const char* AbstractMouseController::getLogPrefix() const
 {
     return "";
+}
+
+std::vector<float> AbstractMouseController::extractCurrentParameters()
+{
+    std::vector<float> params;
+    
+    switch (config.algorithmType) {
+        case AlgorithmType::AdvancedPID:
+            params = {
+                config.pidPMin,
+                config.pidPMax,
+                config.pidD,
+                config.pidI,
+                config.derivativeFilterAlpha,
+                config.kalmanPredictionWeightX,
+                config.kalmanPredictionWeightY,
+                config.predictionWeightX,
+                config.predictionWeightY
+            };
+            obs_log(LOG_INFO, "[HillClimbing] 提取当前AdvancedPID参数: PMin=%.3f PMax=%.3f D=%.4f I=%.4f",
+                    config.pidPMin, config.pidPMax, config.pidD, config.pidI);
+            break;
+            
+        case AlgorithmType::StandardPID:
+            params = {
+                config.stdKp,
+                config.stdKi,
+                config.stdKd,
+                config.stdDerivativeFilterAlpha,
+                config.stdSmoothingX,
+                config.stdSmoothingY
+            };
+            obs_log(LOG_INFO, "[HillClimbing] 提取当前StandardPID参数: Kp=%.3f Ki=%.4f Kd=%.4f",
+                    config.stdKp, config.stdKi, config.stdKd);
+            break;
+            
+        case AlgorithmType::DopaPID:
+            params = {
+                config.dopaKpX,
+                config.dopaKpY,
+                config.dopaKiX,
+                config.dopaKiY,
+                config.dopaKdX,
+                config.dopaKdY,
+                config.dopaPredWeight,
+                config.dopaDFilterAlpha
+            };
+            obs_log(LOG_INFO, "[HillClimbing] 提取当前DopaPID参数: KpX=%.3f KpY=%.3f",
+                    config.dopaKpX, config.dopaKpY);
+            break;
+            
+        case AlgorithmType::ChrisPID:
+            params = {
+                config.chrisKp,
+                config.chrisKi,
+                config.chrisKd,
+                config.chrisPredWeightX,
+                config.chrisPredWeightY,
+                config.chrisDFilterAlpha
+            };
+            obs_log(LOG_INFO, "[HillClimbing] 提取当前ChrisPID参数: Kp=%.3f Ki=%.4f Kd=%.4f",
+                    config.chrisKp, config.chrisKi, config.chrisKd);
+            break;
+    }
+    
+    return params;
 }
 
 void AbstractMouseController::applyOptimizedParameters(const std::vector<float>& params)

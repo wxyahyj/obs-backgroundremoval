@@ -10,6 +10,10 @@ HillClimbingOptimizer::HillClimbingOptimizer()
     , running_(false)
     , iteration_(0)
     , consecutiveNoImprovement_(0)
+    , state_(OptimizerState::IDLE)
+    , currentParamIndex_(0)
+    , currentDelta_(0)
+    , testingIncrease_(true)
 {
     initializeParameters();
 }
@@ -72,8 +76,14 @@ void HillClimbingOptimizer::start()
     samples_.clear();
     iteration_ = 0;
     consecutiveNoImprovement_ = 0;
+    state_ = OptimizerState::COLLECTING;
+    currentParamIndex_ = 0;
+    testingIncrease_ = true;
+    
     bestMetrics_ = PerformanceMetrics();
     bestMetrics_.score = std::numeric_limits<float>::max();
+    baselineMetrics_ = PerformanceMetrics();
+    baselineMetrics_.score = std::numeric_limits<float>::max();
     
     obs_log(LOG_INFO, "[HillClimbing] 优化器启动，算法类型: %d", static_cast<int>(algorithmType_));
 }
@@ -82,9 +92,10 @@ void HillClimbingOptimizer::stop()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     running_ = false;
+    state_ = OptimizerState::IDLE;
     
     obs_log(LOG_INFO, "[HillClimbing] 优化器停止，迭代次数: %d", iteration_);
-    if (bestParams_.size() > 0) {
+    if (bestParams_.size() > 0 && bestMetrics_.score < std::numeric_limits<float>::max()) {
         obs_log(LOG_INFO, "[HillClimbing] 最优得分: %.4f", bestMetrics_.score);
     }
 }
@@ -95,9 +106,12 @@ void HillClimbingOptimizer::reset()
     samples_.clear();
     iteration_ = 0;
     consecutiveNoImprovement_ = 0;
+    state_ = OptimizerState::IDLE;
     initializeParameters();
     bestMetrics_ = PerformanceMetrics();
     bestMetrics_.score = std::numeric_limits<float>::max();
+    baselineMetrics_ = PerformanceMetrics();
+    baselineMetrics_.score = std::numeric_limits<float>::max();
 }
 
 bool HillClimbingOptimizer::isRunning() const
@@ -136,6 +150,12 @@ int HillClimbingOptimizer::getSampleCount() const
     return static_cast<int>(samples_.size());
 }
 
+OptimizerState HillClimbingOptimizer::getState() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_;
+}
+
 void HillClimbingOptimizer::setCurrentParameters(const std::vector<float>& params)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -144,76 +164,115 @@ void HillClimbingOptimizer::setCurrentParameters(const std::vector<float>& param
     }
 }
 
-bool HillClimbingOptimizer::step()
+void HillClimbingOptimizer::update()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    if (!running_ || samples_.size() < static_cast<size_t>(config_.sampleFrames / 2)) {
-        return false;
-    }
+    if (!running_) return;
     
     // 检查是否达到最大迭代次数
     if (iteration_ >= config_.maxIterations) {
         running_ = false;
+        state_ = OptimizerState::IDLE;
         obs_log(LOG_INFO, "[HillClimbing] 达到最大迭代次数: %d", config_.maxIterations);
-        return false;
+        return;
     }
     
-    // 计算当前性能指标
-    currentMetrics_ = calculateMetrics();
-    float currentScore = currentMetrics_.score;
-    
-    // 检查是否有改进
-    bool improved = false;
-    if (currentScore < bestMetrics_.score) {
-        bestMetrics_ = currentMetrics_;
-        bestParams_ = currentParams_;
-        improved = true;
-        consecutiveNoImprovement_ = 0;
+    switch (state_) {
+        case OptimizerState::COLLECTING:
+            // 等待收集足够数据
+            if (static_cast<int>(samples_.size()) >= config_.sampleFrames) {
+                state_ = OptimizerState::EVALUATING;
+            }
+            break;
+            
+        case OptimizerState::EVALUATING: {
+            // 计算当前性能
+            currentMetrics_ = calculateMetrics();
+            
+            // 如果是基线评估（第一次或回退后）
+            if (baselineMetrics_.score >= std::numeric_limits<float>::max() - 1) {
+                baselineMetrics_ = currentMetrics_;
+                obs_log(LOG_INFO, "[HillClimbing] 基线得分: %.4f (avgError=%.2f, oscillation=%.2f)",
+                        baselineMetrics_.score, baselineMetrics_.avgError, baselineMetrics_.oscillation);
+                
+                // 开始测试第一个参数
+                tryNextParameter();
+            } else {
+                // 比较新得分和基线得分
+                if (currentMetrics_.score < baselineMetrics_.score) {
+                    // 有改进！更新基线
+                    float improvement = baselineMetrics_.score - currentMetrics_.score;
+                    baselineMetrics_ = currentMetrics_;
+                    
+                    if (currentMetrics_.score < bestMetrics_.score) {
+                        bestMetrics_ = currentMetrics_;
+                        bestParams_ = currentParams_;
+                    }
+                    
+                    obs_log(LOG_INFO, "[HillClimbing] 迭代 %d: 改进 %.4f, 新得分 %.4f (参数%d %s %.4f)",
+                            iteration_, improvement, currentMetrics_.score,
+                            currentParamIndex_, testingIncrease_ ? "+" : "-",
+                            currentDelta_);
+                    
+                    // 增大步长
+                    auto bounds = getParameterBounds();
+                    currentSteps_[currentParamIndex_] = std::min(
+                        bounds[currentParamIndex_].step,
+                        currentSteps_[currentParamIndex_] * config_.stepGrowth);
+                    
+                    consecutiveNoImprovement_ = 0;
+                    
+                    // 继续同方向
+                    applyParameterChange(currentParamIndex_, 
+                                        testingIncrease_ ? currentSteps_[currentParamIndex_] : -currentSteps_[currentParamIndex_]);
+                    iteration_++;
+                    samples_.clear();
+                    state_ = OptimizerState::COLLECTING;
+                } else {
+                    // 无改进，回退
+                    revertParameterChange(currentParamIndex_, 
+                                         testingIncrease_ ? currentDelta_ : -currentDelta_);
+                    
+                    consecutiveNoImprovement_++;
+                    
+                    // 尝试反方向
+                    if (testingIncrease_) {
+                        testingIncrease_ = false;
+                        currentDelta_ = currentSteps_[currentParamIndex_];
+                        applyParameterChange(currentParamIndex_, -currentDelta_);
+                        samples_.clear();
+                        state_ = OptimizerState::COLLECTING;
+                    } else {
+                        // 两个方向都试过了，移动到下一个参数
+                        moveToNextParameter();
+                    }
+                }
+            }
+            break;
+        }
         
-        obs_log(LOG_INFO, "[HillClimbing] 迭代 %d: 得分 %.4f -> %.4f (改进)", 
-                 iteration_, bestMetrics_.score, currentScore);
-    } else {
-        consecutiveNoImprovement_++;
+        case OptimizerState::TESTING:
+            // 不应该到达这里
+            state_ = OptimizerState::COLLECTING;
+            break;
+            
+        case OptimizerState::IDLE:
+        default:
+            break;
     }
     
-    // 检查收敛
-    if (consecutiveNoImprovement_ >= 10) {
-        // 连续10次无改进，衰减步长
-        decaySteps();
+    // 检查连续无改进
+    if (consecutiveNoImprovement_ >= static_cast<int>(currentParams_.size()) * 2) {
+        // 衰减步长
+        auto bounds = getParameterBounds();
+        for (size_t i = 0; i < currentSteps_.size(); ++i) {
+            currentSteps_[i] = std::max(bounds[i].minStep,
+                                        currentSteps_[i] * config_.stepDecay);
+        }
         consecutiveNoImprovement_ = 0;
-        
         obs_log(LOG_INFO, "[HillClimbing] 连续无改进，衰减步长");
     }
-    
-    // 尝试参数更新
-    bool anyUpdate = false;
-    auto bounds = getParameterBounds();
-    
-    for (size_t i = 0; i < currentParams_.size(); ++i) {
-        // 随机选择方向（先尝试增加，再尝试减少）
-        float delta = currentSteps_[i];
-        
-        // 尝试增加
-        if (tryParameterUpdate(static_cast<int>(i), delta)) {
-            anyUpdate = true;
-            growStep(static_cast<int>(i));
-            continue;
-        }
-        
-        // 尝试减少
-        if (tryParameterUpdate(static_cast<int>(i), -delta)) {
-            anyUpdate = true;
-            growStep(static_cast<int>(i));
-            continue;
-        }
-    }
-    
-    // 清空样本缓冲区，准备下一轮
-    samples_.clear();
-    iteration_++;
-    
-    return true;
 }
 
 PerformanceMetrics HillClimbingOptimizer::calculateMetrics()
@@ -249,7 +308,7 @@ PerformanceMetrics HillClimbingOptimizer::calculateMetrics()
         }
         float avgDelta = sumDelta / (samples_.size() - 1);
         float avgDeltaSq = sumDeltaSq / (samples_.size() - 1);
-        metrics.oscillation = avgDeltaSq - avgDelta * avgDelta; // 方差
+        metrics.oscillation = avgDeltaSq - avgDelta * avgDelta;
     }
     
     // 计算平滑度（输出变化率的平均值）
@@ -283,7 +342,7 @@ PerformanceMetrics HillClimbingOptimizer::calculateMetrics()
         }
     }
     
-    // 计算综合得分（越小越好）
+    // 计算综合得分
     metrics.score = calculateScore(metrics);
     
     return metrics;
@@ -291,14 +350,7 @@ PerformanceMetrics HillClimbingOptimizer::calculateMetrics()
 
 float HillClimbingOptimizer::calculateScore(const PerformanceMetrics& metrics)
 {
-    // 归一化并加权求和
-    // 平均误差：直接使用（像素）
-    // 最大误差：归一化到0-1范围
-    // 振荡：归一化到0-1范围
-    // 平滑度：归一化到0-1范围
-    // 收敛速度：已经是比率，直接使用
-    
-    float normalizedMaxError = metrics.maxError / 500.0f;  // 假设最大误差500像素
+    float normalizedMaxError = metrics.maxError / 500.0f;
     float normalizedOscillation = std::min(metrics.oscillation / 100.0f, 1.0f);
     float normalizedSmoothness = std::min(metrics.smoothness / 50.0f, 1.0f);
     float normalizedConvergence = std::max(0.0f, metrics.convergenceRate);
@@ -343,61 +395,80 @@ void HillClimbingOptimizer::initializeParameters()
     bestParams_ = currentParams_;
 }
 
-bool HillClimbingOptimizer::tryParameterUpdate(int paramIndex, float delta)
+void HillClimbingOptimizer::tryNextParameter()
 {
     auto bounds = getParameterBounds();
-    if (paramIndex < 0 || paramIndex >= static_cast<int>(bounds.size())) {
-        return false;
-    }
     
-    float newValue = currentParams_[paramIndex] + delta;
-    
-    // 检查边界
-    if (newValue < bounds[paramIndex].minVal || newValue > bounds[paramIndex].maxVal) {
-        return false;
-    }
-    
-    // 保存旧值
-    float oldValue = currentParams_[paramIndex];
-    
-    // 尝试新值
-    currentParams_[paramIndex] = newValue;
-    
-    // 计算新得分
-    PerformanceMetrics newMetrics = calculateMetrics();
-    float newScore = newMetrics.score;
-    
-    // 如果有改进，保留新值
-    if (newScore < currentMetrics_.score) {
-        currentMetrics_ = newMetrics;
+    // 找到下一个可以调整的参数
+    int attempts = 0;
+    while (attempts < static_cast<int>(bounds.size())) {
+        currentDelta_ = currentSteps_[currentParamIndex_];
+        testingIncrease_ = true;
         
-        // 调用回调更新参数
-        if (paramUpdateCallback_) {
-            paramUpdateCallback_(currentParams_);
+        // 检查是否可以增加
+        if (currentParams_[currentParamIndex_] + currentDelta_ <= bounds[currentParamIndex_].maxVal) {
+            applyParameterChange(currentParamIndex_, currentDelta_);
+            samples_.clear();
+            state_ = OptimizerState::COLLECTING;
+            obs_log(LOG_INFO, "[HillClimbing] 测试参数 %d: +%.4f (当前值 %.4f)",
+                    currentParamIndex_, currentDelta_, currentParams_[currentParamIndex_]);
+            return;
         }
         
-        return true;
+        // 尝试减少
+        if (currentParams_[currentParamIndex_] - currentDelta_ >= bounds[currentParamIndex_].minVal) {
+            testingIncrease_ = false;
+            applyParameterChange(currentParamIndex_, -currentDelta_);
+            samples_.clear();
+            state_ = OptimizerState::COLLECTING;
+            obs_log(LOG_INFO, "[HillClimbing] 测试参数 %d: -%.4f (当前值 %.4f)",
+                    currentParamIndex_, currentDelta_, currentParams_[currentParamIndex_]);
+            return;
+        }
+        
+        // 移动到下一个参数
+        currentParamIndex_ = (currentParamIndex_ + 1) % static_cast<int>(bounds.size());
+        attempts++;
     }
     
-    // 无改进，恢复旧值
-    currentParams_[paramIndex] = oldValue;
-    return false;
+    // 所有参数都无法调整
+    obs_log(LOG_INFO, "[HillClimbing] 所有参数已达边界，优化完成");
+    running_ = false;
+    state_ = OptimizerState::IDLE;
 }
 
-void HillClimbingOptimizer::decaySteps()
+void HillClimbingOptimizer::applyParameterChange(int index, float delta)
 {
     auto bounds = getParameterBounds();
-    for (size_t i = 0; i < currentSteps_.size(); ++i) {
-        currentSteps_[i] = std::max(bounds[i].minStep, 
-                                    currentSteps_[i] * config_.stepDecay);
+    float newValue = currentParams_[index] + delta;
+    newValue = std::max(bounds[index].minVal, std::min(bounds[index].maxVal, newValue));
+    currentParams_[index] = newValue;
+    
+    // 调用回调更新实际参数
+    if (paramUpdateCallback_) {
+        paramUpdateCallback_(currentParams_);
     }
 }
 
-void HillClimbingOptimizer::growStep(int paramIndex)
+void HillClimbingOptimizer::revertParameterChange(int index, float delta)
+{
+    currentParams_[index] -= delta;
+    
+    // 调用回调恢复参数
+    if (paramUpdateCallback_) {
+        paramUpdateCallback_(currentParams_);
+    }
+}
+
+void HillClimbingOptimizer::moveToNextParameter()
 {
     auto bounds = getParameterBounds();
-    if (paramIndex >= 0 && paramIndex < static_cast<int>(bounds.size())) {
-        currentSteps_[paramIndex] = std::min(bounds[paramIndex].step,
-                                             currentSteps_[paramIndex] * config_.stepGrowth);
-    }
+    currentParamIndex_ = (currentParamIndex_ + 1) % static_cast<int>(bounds.size());
+    
+    // 重置为尝试增加方向
+    testingIncrease_ = true;
+    currentDelta_ = currentSteps_[currentParamIndex_];
+    
+    // 尝试下一个参数
+    tryNextParameter();
 }

@@ -118,6 +118,14 @@ struct SamplePoint {
 // 参数更新回调类型
 using ParameterUpdateCallback = std::function<void(const std::vector<float>& params)>;
 
+// 优化器状态
+enum class OptimizerState {
+    IDLE,           // 空闲
+    COLLECTING,     // 收集数据中
+    EVALUATING,     // 评估中（决定下一步）
+    TESTING         // 测试新参数中
+};
+
 class HillClimbingOptimizer {
 public:
     HillClimbingOptimizer();
@@ -150,12 +158,13 @@ public:
     std::vector<float> getBestParameters() const;
     int getCurrentIteration() const;
     int getSampleCount() const;
+    OptimizerState getState() const;
     
     // 设置当前参数（从外部）
     void setCurrentParameters(const std::vector<float>& params);
     
-    // 手动触发优化步骤（用于测试）
-    bool step();
+    // 主更新函数（每帧调用）
+    void update();
     
 private:
     mutable std::mutex mutex_;
@@ -171,11 +180,18 @@ private:
     std::vector<float> currentSteps_;
     PerformanceMetrics currentMetrics_;
     PerformanceMetrics bestMetrics_;
+    PerformanceMetrics baselineMetrics_;  // 基线得分（用于比较）
     
     // 优化状态
     bool running_;
     int iteration_;
     int consecutiveNoImprovement_;
+    OptimizerState state_;
+    
+    // 当前测试的参数
+    int currentParamIndex_;
+    float currentDelta_;
+    bool testingIncrease_;
     
     // 回调
     ParameterUpdateCallback paramUpdateCallback_;
@@ -185,9 +201,10 @@ private:
     float calculateScore(const PerformanceMetrics& metrics);
     std::vector<ParameterBounds> getParameterBounds();
     void initializeParameters();
-    bool tryParameterUpdate(int paramIndex, float delta);
-    void decaySteps();
-    void growStep(int paramIndex);
+    void tryNextParameter();
+    void applyParameterChange(int index, float delta);
+    void revertParameterChange(int index, float delta);
+    void moveToNextParameter();
 };
 
 #endif // HILL_CLIMBING_OPTIMIZER_HPP
