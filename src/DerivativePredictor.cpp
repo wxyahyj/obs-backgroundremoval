@@ -9,8 +9,6 @@ DerivativePredictor::DerivativePredictor()
     , velocityY(0.0f)
     , accelerationX(0.0f)
     , accelerationY(0.0f)
-    , velocitySmoothFactor(0.15f)
-    , accelerationSmoothFactor(0.15f)
     , maxPredictionTime(0.1f)
     , previousErrorX(0.0f)
     , previousErrorY(0.0f)
@@ -24,11 +22,9 @@ void DerivativePredictor::update(float errorX, float errorY, float prevMoveX, fl
 {
     if (deltaTime <= 0.0f) return;
     
-    // 速度计算：考虑上次移动量（更准确的速度估计）
     float rawVelX = ((errorX - previousErrorX) + prevMoveX) / deltaTime;
     float rawVelY = ((errorY - previousErrorY) + prevMoveY) / deltaTime;
     
-    // 方向过滤：如果速度方向与误差方向相反，置零
     if ((rawVelX > 0 && errorX < 0) || (rawVelX < 0 && errorX > 0)) {
         rawVelX = 0.0f;
     }
@@ -36,15 +32,12 @@ void DerivativePredictor::update(float errorX, float errorY, float prevMoveX, fl
         rawVelY = 0.0f;
     }
     
-    // 指数平滑
-    velocityX = velocitySmoothFactor * rawVelX + (1.0f - velocitySmoothFactor) * velocityX;
-    velocityY = velocitySmoothFactor * rawVelY + (1.0f - velocitySmoothFactor) * velocityY;
+    velocityX = ALPHA_VEL * rawVelX + (1.0f - ALPHA_VEL) * velocityX;
+    velocityY = ALPHA_VEL * rawVelY + (1.0f - ALPHA_VEL) * velocityY;
     
-    // 加速度计算
     float rawAccX = (velocityX - previousVelocityX) / deltaTime;
     float rawAccY = (velocityY - previousVelocityY) / deltaTime;
     
-    // 方向过滤：如果加速度方向与误差方向相反，置零
     if ((rawAccX > 0 && errorX < 0) || (rawAccX < 0 && errorX > 0)) {
         rawAccX = 0.0f;
     }
@@ -52,11 +45,9 @@ void DerivativePredictor::update(float errorX, float errorY, float prevMoveX, fl
         rawAccY = 0.0f;
     }
     
-    // 指数平滑
-    accelerationX = accelerationSmoothFactor * rawAccX + (1.0f - accelerationSmoothFactor) * accelerationX;
-    accelerationY = accelerationSmoothFactor * rawAccY + (1.0f - accelerationSmoothFactor) * accelerationY;
+    accelerationX = ALPHA_ACC * rawAccX + (1.0f - ALPHA_ACC) * accelerationX;
+    accelerationY = ALPHA_ACC * rawAccY + (1.0f - ALPHA_ACC) * accelerationY;
     
-    // 保存状态
     previousErrorX = errorX;
     previousErrorY = errorY;
     previousVelocityX = velocityX;
@@ -85,12 +76,6 @@ void DerivativePredictor::reset()
     previousVelocityY = 0.0f;
     previousMoveX = 0.0f;
     previousMoveY = 0.0f;
-}
-
-void DerivativePredictor::setSmoothFactors(float velocitySmooth, float accelerationSmooth)
-{
-    velocitySmoothFactor = velocitySmooth;
-    accelerationSmoothFactor = accelerationSmooth;
 }
 
 void DerivativePredictor::setMaxPredictionTime(float maxTime)

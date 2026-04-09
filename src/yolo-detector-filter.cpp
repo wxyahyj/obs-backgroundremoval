@@ -245,10 +245,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::map<int, SmoothedDetection> smoothedDetections;
 	std::mutex smoothedDetectionsMutex;
 
-	bool showKalmanPredictionInFloatingWindow;
-	int kalmanPredictionSize;
-	int kalmanPredictionLineWidth;
-
 		// PID调试数据
 	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
 	struct PidDataPoint {
@@ -372,14 +368,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float stdIntegralDeadzone;
 		float stdIntegralThreshold;
 		float stdIntegralRate;
-		// 卡尔曼滤波器参数
-		bool useKalmanFilter;
-		float kalmanProcessNoise;
-		float kalmanMeasurementNoise;
-		float kalmanConfidenceScale;
-		// 卡尔曼预测权重（独立于DerivativePredictor权重）
-		float kalmanPredictionWeightX;
-		float kalmanPredictionWeightY;
 		// 贝塞尔曲线移动参数
 		bool enableBezierMovement;
 		float bezierCurvature;
@@ -441,8 +429,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			predictionWeightX = 0.5f;
 			predictionWeightY = 0.1f;
 			useDerivativePredictor = true;
-			velocitySmoothFactor = 0.15f;
-			accelerationSmoothFactor = 0.15f;
 			maxPredictionTime = 0.1f;
 			// 持续自瞄和自动压枪默认值
 			continuousAimEnabled = false;
@@ -462,13 +448,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			stdIntegralDeadzone = 1.0f;
 			stdIntegralThreshold = 50.0f;
 			stdIntegralRate = 0.015f;
-			// 卡尔曼滤波器参数默认值
-			useKalmanFilter = true;
-			kalmanProcessNoise = 0.01f;
-			kalmanMeasurementNoise = 1.0f;
-			kalmanConfidenceScale = 1.0f;
-			kalmanPredictionWeightX = 0.2f;
-			kalmanPredictionWeightY = 0.1f;
 			// 贝塞尔曲线移动参数默认值
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
@@ -563,7 +542,6 @@ const char *yolo_detector_filter_getname(void *unused)
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
-static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setPredictorPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 
@@ -700,15 +678,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(detectionSmoothingEnabledProp, "启用检测框平滑，减少检测框抖动");
 	obs_property_t *detectionSmoothingAlphaProp = obs_properties_add_float_slider(props, "detection_smoothing_alpha", "平滑系数", 0.01, 1.0, 0.01);
 	 obs_property_set_long_description(detectionSmoothingAlphaProp, "平滑系数，值越小越平滑但延迟越高，值越大响应越快但平滑效果减弱");
-
-    obs_property_t *showKalmanPredictionProp = obs_properties_add_bool(props, "show_kalman_prediction_in_floating_window", "显示卡尔曼预测位置");
-    obs_property_set_long_description(showKalmanPredictionProp, "在悬浮窗中显示卡尔曼滤波器预测的目标位置");
-    
-    obs_property_t *kalmanPredictionSizeProp = obs_properties_add_int_slider(props, "kalman_prediction_size", "预测标记大小", 3, 30, 1);
-    obs_property_set_long_description(kalmanPredictionSizeProp, "预测位置标记的大小（像素）");
-    
-    obs_property_t *kalmanPredictionLineWidthProp = obs_properties_add_int_slider(props, "kalman_prediction_line_width", "预测标记线宽", 1, 5, 1);
-    obs_property_set_long_description(kalmanPredictionLineWidthProp, "预测位置标记的线宽");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -900,42 +869,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_group(props, propName, "后坐力控制", OBS_GROUP_CHECKABLE, recoilProps);
 	}
 
-	// 卡尔曼滤波器独立配置组
-	for (int i = 0; i < 5; i++) {
-		char propName[64];
-		
-		// 卡尔曼滤波器分组（可折叠）
-		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
-		obs_properties_t *kalmanProps = obs_properties_create();
-		
-		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
-		obs_property_t *kalmanProcessNoiseProp = obs_properties_add_float_slider(kalmanProps, propName, "过程噪声", 0.001f, 0.1f, 0.001f);
-		obs_property_set_long_description(kalmanProcessNoiseProp, "卡尔曼滤波器的过程噪声Q。值越大表示对系统模型的信任度越低，滤波器会更依赖测量值。增大此值会使跟踪更敏感但可能引入更多噪声；减小此值会使跟踪更平滑但可能响应变慢。建议范围：0.001-0.05");
-		
-		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
-		obs_property_t *kalmanMeasurementNoiseProp = obs_properties_add_float_slider(kalmanProps, propName, "测量噪声", 0.1f, 10.0f, 0.1f);
-		obs_property_set_long_description(kalmanMeasurementNoiseProp, "卡尔曼滤波器的测量噪声R。值越大表示对检测结果的信任度越低，滤波器会更依赖预测值。增大此值会使预测更占主导，适合检测噪声大的场景；减小此值会使检测更占主导，适合检测精度高的场景。建议范围：0.5-5.0");
-		
-		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
-		obs_property_t *kalmanConfidenceScaleProp = obs_properties_add_float_slider(kalmanProps, propName, "置信度缩放", 0.1f, 5.0f, 0.1f);
-		obs_property_set_long_description(kalmanConfidenceScaleProp, "置信度缩放因子，用于根据检测置信度动态调整测量噪声。值越大，高置信度检测对滤波器的影响越大。建议范围：0.5-2.0");
-		
-		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
-		obs_properties_add_group(props, propName, "卡尔曼滤波器", OBS_GROUP_CHECKABLE, kalmanProps);
-	}
-
 	// 预测器配置组
 	for (int i = 0; i < 5; i++) {
 		char propName[64];
-		
-		// 卡尔曼预测权重（始终显示）
-		snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", i);
-		obs_property_t *kalmanPredWeightXProp = obs_properties_add_float_slider(props, propName, "卡尔曼预测权重X", 0.0f, 1.0f, 0.05f);
-		obs_property_set_long_description(kalmanPredWeightXProp, "卡尔曼预测在X轴的融合权重。值越大预测偏移影响越大，建议0.1-0.3");
-		
-		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
-		obs_property_t *kalmanPredWeightYProp = obs_properties_add_float_slider(props, propName, "卡尔曼预测权重Y", 0.0f, 1.0f, 0.05f);
-		obs_property_set_long_description(kalmanPredWeightYProp, "卡尔曼预测在Y轴的融合权重。值越大预测偏移影响越大，建议0.05-0.2");
 		
 		// 导数预测器分组（可折叠）
 		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
@@ -948,14 +884,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_property_t *predictionWeightYProp = obs_properties_add_float_slider(derivPredProps, propName, "导数预测权重Y", 0.0f, 1.0f, 0.1f);
 		obs_property_set_long_description(predictionWeightYProp, "导数预测器在Y轴的融合权重，值越大预测效果越强");
-		
-		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
-		obs_property_t *velSmoothProp = obs_properties_add_float_slider(derivPredProps, propName, "速度平滑系数", 0.01f, 0.5f, 0.01f);
-		obs_property_set_long_description(velSmoothProp, "速度的指数平滑系数，值越大响应越快但噪声越大，建议0.1-0.3");
-		
-		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
-		obs_property_t *accSmoothProp = obs_properties_add_float_slider(derivPredProps, propName, "加速度平滑系数", 0.01f, 0.5f, 0.01f);
-		obs_property_set_long_description(accSmoothProp, "加速度的指数平滑系数，值越大响应越快但噪声越大，建议0.1-0.3");
 		
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		obs_property_t *maxPredTimeProp = obs_properties_add_float_slider(derivPredProps, propName, "最大预测时间(秒)", 0.01f, 0.3f, 0.01f);
@@ -1234,15 +1162,6 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	// auto_recoil, recoil_strength, recoil_speed, recoil_pid_gain_scale -> 页面4（扳机）
 }
 
-// 设置卡尔曼滤波器页面的控件可见性
-static void setKalmanFilterPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
-{
-	char propName[64];
-	// 卡尔曼滤波器分组（CHECKABLE，勾选即启用）
-	snprintf(propName, sizeof(propName), "kalman_filter_group_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-}
-
 // 设置贝塞尔曲线移动页面的控件可见性
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
@@ -1256,11 +1175,6 @@ static void setBezierMovementPropertiesVisible(obs_properties_t *props, int conf
 static void setPredictorPropertiesVisible(obs_properties_t *props, int configIndex, bool visible)
 {
 	char propName[64];
-	// 卡尔曼预测权重（始终显示）
-	snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// 导数预测器分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
@@ -1291,7 +1205,7 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		// 高级PID参数只在algorithm == 0时显示
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
-		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
+		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 7);
 	}
 
@@ -1357,11 +1271,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 检测框平滑参数只在视觉与区域页面显示
 	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_enabled"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_alpha"), page == 1);
-	
-	// 卡尔曼预测显示参数只在视觉与区域页面显示
-	obs_property_set_visible(obs_properties_get(props, "show_kalman_prediction_in_floating_window"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_size"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_line_width"), page == 1);
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和预测与滤波页面(6)显示
@@ -1376,9 +1285,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		// 高级PID参数只在algorithm == 0时显示
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
-		setKalmanFilterPropertiesVisible(props, i, isCurrentConfig && page == 6);
-		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
+		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
 
 	// 测试连接按钮只在基础页面显示
@@ -1463,8 +1371,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 3);
 	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 3);
 
-	// 页面6: 预测与滤波（整合卡尔曼、预测器、贝塞尔）
-	obs_property_set_visible(obs_properties_get(props, "kalman_filter_group"), page == 6);
+	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
 	
@@ -1521,11 +1428,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     // 检测框平滑参数
     obs_data_set_default_bool(settings, "detection_smoothing_enabled", true);
     obs_data_set_default_double(settings, "detection_smoothing_alpha", 0.3);
-    
-    // 卡尔曼预测显示参数
-    obs_data_set_default_bool(settings, "show_kalman_prediction_in_floating_window", false);
-    obs_data_set_default_int(settings, "kalman_prediction_size", 10);
-    obs_data_set_default_int(settings, "kalman_prediction_line_width", 2);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -1658,19 +1560,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 16);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.3);
-		// 卡尔曼滤波器参数默认值
-		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
-		obs_data_set_default_bool(settings, propName, true);
-		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
-		obs_data_set_default_double(settings, propName, 0.01);
-		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
-		obs_data_set_default_double(settings, propName, 1.0);
-		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
-		obs_data_set_default_double(settings, propName, 1.0);
-		snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", i);
-		obs_data_set_default_double(settings, propName, 0.2);
-		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
-		obs_data_set_default_double(settings, propName, 0.1);
 		// DerivativePredictor参数默认值
 		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 		obs_data_set_default_bool(settings, propName, true);
@@ -1678,10 +1567,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.5);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
-		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
-		obs_data_set_default_double(settings, propName, 0.15);
-		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
-		obs_data_set_default_double(settings, propName, 0.15);
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 		// 贝塞尔曲线移动参数默认值
@@ -1881,11 +1766,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->detectionSmoothingEnabled = obs_data_get_bool(settings, "detection_smoothing_enabled");
 	tf->detectionSmoothingAlpha = (float)obs_data_get_double(settings, "detection_smoothing_alpha");
 
-	// 卡尔曼预测显示参数
-	tf->showKalmanPredictionInFloatingWindow = obs_data_get_bool(settings, "show_kalman_prediction_in_floating_window");
-	tf->kalmanPredictionSize = (int)obs_data_get_int(settings, "kalman_prediction_size");
-	tf->kalmanPredictionLineWidth = (int)obs_data_get_int(settings, "kalman_prediction_line_width");
-
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
 	tf->useRegion = obs_data_get_bool(settings, "use_region");
@@ -2042,20 +1922,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].recoilSpeed = (int)obs_data_get_int(settings, propName);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		tf->mouseConfigs[i].recoilPidGainScale = (float)obs_data_get_double(settings, propName);
-		// 卡尔曼滤波器参数
-		snprintf(propName, sizeof(propName), "kalman_filter_group_%d", i);
-		tf->mouseConfigs[i].useKalmanFilter = obs_data_get_bool(settings, propName);
-		snprintf(propName, sizeof(propName), "kalman_process_noise_%d", i);
-		tf->mouseConfigs[i].kalmanProcessNoise = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "kalman_measurement_noise_%d", i);
-		tf->mouseConfigs[i].kalmanMeasurementNoise = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "kalman_confidence_scale_%d", i);
-		tf->mouseConfigs[i].kalmanConfidenceScale = (float)obs_data_get_double(settings, propName);
-		// 卡尔曼预测权重参数
-		snprintf(propName, sizeof(propName), "kalman_prediction_weight_x_%d", i);
-		tf->mouseConfigs[i].kalmanPredictionWeightX = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "kalman_prediction_weight_y_%d", i);
-		tf->mouseConfigs[i].kalmanPredictionWeightY = (float)obs_data_get_double(settings, propName);
 		// DerivativePredictor参数
 		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 		tf->mouseConfigs[i].useDerivativePredictor = obs_data_get_bool(settings, propName);
@@ -2063,10 +1929,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].predictionWeightX = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "velocity_smooth_factor_%d", i);
-		tf->mouseConfigs[i].velocitySmoothFactor = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "acceleration_smooth_factor_%d", i);
-		tf->mouseConfigs[i].accelerationSmoothFactor = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		tf->mouseConfigs[i].maxPredictionTime = (float)obs_data_get_double(settings, propName);
 		// 贝塞尔曲线移动参数
@@ -2871,45 +2733,6 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 	int frameHeight = filter->floatingWindowFrame.rows;
 
 	// 检测框和trackId已在主渲染中绘制，这里不再重复绘制
-
-	// 绘制卡尔曼预测位置
-	if (filter->showKalmanPredictionInFloatingWindow && filter->mouseController) {
-		float predX, predY;
-		if (filter->mouseController->getKalmanPrediction(predX, predY)) {
-			// 获取推理帧尺寸
-			int infWidth, infHeight;
-			{
-				std::lock_guard<std::mutex> lock(filter->inferenceFrameSizeMutex);
-				infWidth = filter->inferenceFrameWidth;
-				infHeight = filter->inferenceFrameHeight;
-			}
-			
-			if (infWidth > 0 && infHeight > 0) {
-				// 坐标转换：推理帧像素坐标 -> 归一化坐标 -> 悬浮窗像素坐标
-				float normX = predX / infWidth;
-				float normY = predY / infHeight;
-				float windowX = normX * frameWidth;
-				float windowY = normY * frameHeight;
-				
-				// 确保坐标在有效范围内
-				if (windowX >= 0 && windowX < frameWidth && windowY >= 0 && windowY < frameHeight) {
-					int size = filter->kalmanPredictionSize;
-					int lineWidth = filter->kalmanPredictionLineWidth;
-					cv::Scalar color(0, 255, 0);
-
-					// 绘制X形标记
-					cv::line(filter->floatingWindowFrame,
-						cv::Point(static_cast<int>(windowX) - size, static_cast<int>(windowY) - size),
-						cv::Point(static_cast<int>(windowX) + size, static_cast<int>(windowY) + size),
-						color, lineWidth);
-					cv::line(filter->floatingWindowFrame,
-						cv::Point(static_cast<int>(windowX) + size, static_cast<int>(windowY) - size),
-						cv::Point(static_cast<int>(windowX) - size, static_cast<int>(windowY) + size),
-						color, lineWidth);
-				}
-			}
-		}
-	}
 
 	// 在底部绘制统计信息面板（透明背景）
 	{
@@ -4220,13 +4043,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.recoilStrength = cfg.recoilStrength;
 		mcConfig.recoilSpeed = cfg.recoilSpeed;
 		mcConfig.recoilPidGainScale = cfg.recoilPidGainScale;
-		// 卡尔曼滤波器参数
-		mcConfig.useKalmanFilter = cfg.useKalmanFilter;
-		mcConfig.kalmanProcessNoise = cfg.kalmanProcessNoise;
-		mcConfig.kalmanMeasurementNoise = cfg.kalmanMeasurementNoise;
-		mcConfig.kalmanConfidenceScale = cfg.kalmanConfidenceScale;
-		mcConfig.kalmanPredictionWeightX = cfg.kalmanPredictionWeightX;
-		mcConfig.kalmanPredictionWeightY = cfg.kalmanPredictionWeightY;
 		// DerivativePredictor参数
 		mcConfig.useDerivativePredictor = cfg.useDerivativePredictor;
 		mcConfig.predictionWeightX = cfg.predictionWeightX;

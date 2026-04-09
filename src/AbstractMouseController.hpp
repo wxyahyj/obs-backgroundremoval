@@ -11,7 +11,6 @@
 #include <string>
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
-#include "KalmanFilter.hpp"
 #include "DopaPIDController.hpp"
 #include "ChrisPIDController.hpp"
 #include "HillClimbingOptimizer.hpp"
@@ -71,9 +70,7 @@ protected:
     bool isFiring;
     
     DerivativePredictor predictor;
-    KalmanFilter kalmanFilter;
-    bool kalmanFilterInitialized;
-    
+
     DopaDualAxisPID dopaController_;
     ChrisAimController chrisController_;
 
@@ -146,7 +143,6 @@ public:
     void tick() override;
     void setCurrentWeapon(const std::string& weaponName) override;
     std::string getCurrentWeapon() const override;
-    bool getKalmanPrediction(float& predX, float& predY) const override;
     void setPidDataCallback(PidDataCallback callback) override;
 };
 

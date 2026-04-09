@@ -61,7 +61,6 @@ AbstractMouseController::AbstractMouseController()
     , pendingTargetStartTime(std::chrono::steady_clock::now())
     , pendingTargetScore(0.0f)
     , currentTargetScore(0.0f)
-    , kalmanFilterInitialized(false)
     , bezierPhase(0.0f)
     , pidDataCallback_(nullptr)
 {
@@ -90,28 +89,22 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         float savedPidD = config.pidD;
         float savedPidI = config.pidI;
         float savedDerivativeFilterAlpha = config.derivativeFilterAlpha;
-        float savedKalmanPredX = config.kalmanPredictionWeightX;
-        float savedKalmanPredY = config.kalmanPredictionWeightY;
         float savedPredX = config.predictionWeightX;
         float savedPredY = config.predictionWeightY;
         float savedSmoothX = config.aimSmoothingX;
         float savedSmoothY = config.aimSmoothingY;
-        float savedVelSmooth = config.velocitySmoothFactor;
-        float savedAccSmooth = config.accelerationSmoothFactor;
         float savedMaxPredTime = config.maxPredictionTime;
         
-        // StandardPID 参数 (9个)
+        // StandardPID 参数 (7个)
         float savedStdKp = config.stdKp;
         float savedStdKi = config.stdKi;
         float savedStdKd = config.stdKd;
         float savedStdDerivativeFilterAlpha = config.stdDerivativeFilterAlpha;
         float savedStdSmoothingX = config.stdSmoothingX;
         float savedStdSmoothingY = config.stdSmoothingY;
-        float savedStdVelSmooth = config.velocitySmoothFactor;
-        float savedStdAccSmooth = config.accelerationSmoothFactor;
         float savedStdMaxPredTime = config.maxPredictionTime;
         
-        // DopaPID 参数 (12个)
+        // DopaPID 参数 (10个)
         float savedDopaKpX = config.dopaKpX;
         float savedDopaKpY = config.dopaKpY;
         float savedDopaKiX = config.dopaKiX;
@@ -122,10 +115,8 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         float savedDopaDFilterAlpha = config.dopaDFilterAlpha;
         float savedDopaSmoothX = config.aimSmoothingX;
         float savedDopaSmoothY = config.aimSmoothingY;
-        float savedDopaVelSmooth = config.velocitySmoothFactor;
-        float savedDopaAccSmooth = config.accelerationSmoothFactor;
         
-        // ChrisPID 参数 (10个)
+        // ChrisPID 参数 (8个)
         float savedChrisKp = config.chrisKp;
         float savedChrisKi = config.chrisKi;
         float savedChrisKd = config.chrisKd;
@@ -134,8 +125,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         float savedChrisDFilterAlpha = config.chrisDFilterAlpha;
         float savedChrisSmoothX = config.aimSmoothingX;
         float savedChrisSmoothY = config.aimSmoothingY;
-        float savedChrisVelSmooth = config.velocitySmoothFactor;
-        float savedChrisAccSmooth = config.accelerationSmoothFactor;
         
         // 应用新配置
         config = newConfig;
@@ -148,14 +137,10 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                 config.pidD = savedPidD;
                 config.pidI = savedPidI;
                 config.derivativeFilterAlpha = savedDerivativeFilterAlpha;
-                config.kalmanPredictionWeightX = savedKalmanPredX;
-                config.kalmanPredictionWeightY = savedKalmanPredY;
                 config.predictionWeightX = savedPredX;
                 config.predictionWeightY = savedPredY;
                 config.aimSmoothingX = savedSmoothX;
                 config.aimSmoothingY = savedSmoothY;
-                config.velocitySmoothFactor = savedVelSmooth;
-                config.accelerationSmoothFactor = savedAccSmooth;
                 config.maxPredictionTime = savedMaxPredTime;
                 break;
             case AlgorithmType::StandardPID:
@@ -165,8 +150,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                 config.stdDerivativeFilterAlpha = savedStdDerivativeFilterAlpha;
                 config.stdSmoothingX = savedStdSmoothingX;
                 config.stdSmoothingY = savedStdSmoothingY;
-                config.velocitySmoothFactor = savedStdVelSmooth;
-                config.accelerationSmoothFactor = savedStdAccSmooth;
                 config.maxPredictionTime = savedStdMaxPredTime;
                 break;
             case AlgorithmType::DopaPID:
@@ -180,8 +163,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                 config.dopaDFilterAlpha = savedDopaDFilterAlpha;
                 config.aimSmoothingX = savedDopaSmoothX;
                 config.aimSmoothingY = savedDopaSmoothY;
-                config.velocitySmoothFactor = savedDopaVelSmooth;
-                config.accelerationSmoothFactor = savedDopaAccSmooth;
                 break;
             case AlgorithmType::ChrisPID:
                 config.chrisKp = savedChrisKp;
@@ -192,8 +173,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                 config.chrisDFilterAlpha = savedChrisDFilterAlpha;
                 config.aimSmoothingX = savedChrisSmoothX;
                 config.aimSmoothingY = savedChrisSmoothY;
-                config.velocitySmoothFactor = savedChrisVelSmooth;
-                config.accelerationSmoothFactor = savedChrisAccSmooth;
                 break;
         }
     } else {
@@ -202,11 +181,8 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     config.bezierCurvature = std::clamp(config.bezierCurvature, 0.0f, 1.0f);
     config.bezierRandomness = std::clamp(config.bezierRandomness, 0.0f, 0.5f);
-    config.kalmanPredictionWeightX = std::clamp(config.kalmanPredictionWeightX, 0.0f, 1.0f);
-    config.kalmanPredictionWeightY = std::clamp(config.kalmanPredictionWeightY, 0.0f, 1.0f);
     
     // 更新DerivativePredictor参数
-    predictor.setSmoothFactors(config.velocitySmoothFactor, config.accelerationSmoothFactor);
     predictor.setMaxPredictionTime(config.maxPredictionTime);
     
     // 更新优化器配置
@@ -342,8 +318,6 @@ void AbstractMouseController::tick()
             // 目标丢失时只重置预测器，不重置积分项
             // 这样积分可以继续累积，PI控制才能真正发挥作用
             predictor.reset();
-            kalmanFilter.reset();
-            kalmanFilterInitialized = false;
             dopaController_.resetPredictor();
             chrisController_.resetPredictor();
             resetMotionState();
@@ -428,7 +402,6 @@ void AbstractMouseController::tick()
     isMoving = true;
 
     float moveX, moveY;
-    float predictedX = 0.0f, predictedY = 0.0f;
 
     if (config.algorithmType == AlgorithmType::StandardPID) {
         float rawMoveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, 
@@ -582,49 +555,20 @@ void AbstractMouseController::tick()
         stdIntegralGainX = 0.0f;
         stdIntegralGainY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
-        predictedX = 0.0f;
-        predictedY = 0.0f;
-
-        if (config.useKalmanFilter) {
-            if (!kalmanFilterInitialized) {
-                kalmanFilter.init(targetPixelX, targetPixelY);
-                kalmanFilter.setProcessNoise(config.kalmanProcessNoise);
-                kalmanFilter.setMeasurementNoise(config.kalmanMeasurementNoise);
-                kalmanFilter.setConfidenceScale(config.kalmanConfidenceScale);
-                kalmanFilterInitialized = true;
-            }
-
-            kalmanFilter.setProcessNoise(config.kalmanProcessNoise);
-            kalmanFilter.setMeasurementNoise(config.kalmanMeasurementNoise);
-            kalmanFilter.setConfidenceScale(config.kalmanConfidenceScale);
-
-            kalmanFilter.predict(deltaTime);
-            kalmanFilter.update(targetPixelX, targetPixelY, target->confidence);
-            kalmanFilter.getPredictionOffset(deltaTime, targetPixelX, targetPixelY, predictedX, predictedY);
-        } 
-        
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
         }
 
-        // 卡尔曼预测：预测目标位置偏移，加到误差上（瞄准预测位置）
-        float fusedErrorX = errorX;
-        float fusedErrorY = errorY;
-        
-        if (config.useKalmanFilter) {
-            fusedErrorX += config.kalmanPredictionWeightX * predictedX;
-            fusedErrorY += config.kalmanPredictionWeightY * predictedY;
-        }
-
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
+        // 方案B：D项基于原始误差计算，不响应预测器引起的误差变化
         float dTermX = 0.0f;
         float dTermY = 0.0f;
         if (deltaTime > 1e-6f) {
-            float deltaErrorX = fusedErrorX - pidPreviousErrorX;
-            float deltaErrorY = fusedErrorY - pidPreviousErrorY;
+            float deltaErrorX = errorX - pidPreviousErrorX;
+            float deltaErrorY = errorY - pidPreviousErrorY;
             dTermX = deltaErrorX / deltaTime * config.pidD;
             dTermY = deltaErrorY / deltaTime * config.pidD;
         }
@@ -636,30 +580,30 @@ void AbstractMouseController::tick()
         filteredDeltaErrorY = alpha * dTermY + (1.0f - alpha) * filteredDeltaErrorY;
 
         // 自适应积分增益控制
-        bool shouldIntegrateX = adjustIntegralGain(fusedErrorX, pidPreviousErrorX, integralGainX);
-        bool shouldIntegrateY = adjustIntegralGain(fusedErrorY, pidPreviousErrorY, integralGainY);
+        bool shouldIntegrateX = adjustIntegralGain(errorX, pidPreviousErrorX, integralGainX);
+        bool shouldIntegrateY = adjustIntegralGain(errorY, pidPreviousErrorY, integralGainY);
 
-        if (std::abs(fusedErrorX) >= config.integralDeadZone && shouldIntegrateX) {
-            integralX += fusedErrorX;
+        if (std::abs(errorX) >= config.integralDeadZone && shouldIntegrateX) {
+            integralX += errorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
-            integralX *= 0.9f;  // 衰减而非完全清零
+            integralX *= 0.9f;
         }
-        if (std::abs(fusedErrorY) >= config.integralDeadZone && shouldIntegrateY) {
-            integralY += fusedErrorY;
+        if (std::abs(errorY) >= config.integralDeadZone && shouldIntegrateY) {
+            integralY += errorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
-            integralY *= 0.9f;  // 衰减而非完全清零
+            integralY *= 0.9f;
         }
 
         float integralTermX = config.pidI * integralX;
         float integralTermY = config.pidI * integralY;
 
-        float pidOutputX = dynamicP * fusedErrorX + filteredDeltaErrorX + integralTermX;
-        float pidOutputY = dynamicP * fusedErrorY + filteredDeltaErrorY + integralTermY;
+        // PID输出基于原始误差
+        float pidOutputX = dynamicP * errorX + filteredDeltaErrorX + integralTermX;
+        float pidOutputY = dynamicP * errorY + filteredDeltaErrorY + integralTermY;
 
         // 导数预测作为前馈项：预测目标移动方向，提前移动
-        // 注意：前馈项直接加到输出上，不经过PID计算
         if (config.useDerivativePredictor) {
             pidOutputX += config.predictionWeightX * derivPredictedX;
             pidOutputY += config.predictionWeightY * derivPredictedY;
@@ -671,8 +615,8 @@ void AbstractMouseController::tick()
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusedX=%.1f fusedY=%.1f | dynamicP=%.3f",
-                 getLogPrefix(), deltaTime, errorX, errorY, fusedErrorX, fusedErrorY, dynamicP);
+            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | dynamicP=%.3f",
+                 getLogPrefix(), deltaTime, errorX, errorY, dynamicP);
             blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
             blog(LOG_INFO, "[%s高级PID] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
@@ -695,8 +639,9 @@ void AbstractMouseController::tick()
             pidDataCallback_(data);
         }
 
-        pidPreviousErrorX = fusedErrorX;
-        pidPreviousErrorY = fusedErrorY;
+        // 方案B：保存原始误差用于D项计算
+        pidPreviousErrorX = errorX;
+        pidPreviousErrorY = errorY;
         previousErrorX = errorX;
         previousErrorY = errorY;
         
@@ -761,8 +706,6 @@ void AbstractMouseController::tick()
     
     // 收集优化器数据（增强版）
     if (config.optimizationEnabled && optimizer_.isRunning()) {
-        float predX = predictedX;
-        float predY = predictedY;
         bool saturated = (std::abs(finalMoveX) >= config.maxPixelMove || 
                          std::abs(finalMoveY) >= config.maxPixelMove);
         
@@ -773,7 +716,7 @@ void AbstractMouseController::tick()
         
         optimizer_.addSample(errorX, errorY, finalMoveX, finalMoveY,
                             targetVelocityX, targetVelocityY,
-                            predX, predY, saturated, sampleType);
+                            0.0f, 0.0f, saturated, sampleType);
         
         // 每帧调用优化器更新
         optimizer_.update();
@@ -1057,8 +1000,6 @@ void AbstractMouseController::resetPidState()
     integralGainX = 0.0f;
     integralGainY = 0.0f;
     predictor.reset();
-    kalmanFilter.reset();
-    kalmanFilterInitialized = false;
     stdIntegralX = 0.0f;
     stdIntegralY = 0.0f;
     stdIntegralGainX = 0.0f;
@@ -1142,16 +1083,6 @@ std::string AbstractMouseController::getCurrentWeapon() const
     return currentWeapon;
 }
 
-bool AbstractMouseController::getKalmanPrediction(float& predX, float& predY) const
-{
-    std::lock_guard<std::mutex> lock(mutex);
-    if (!kalmanFilterInitialized || !config.useKalmanFilter) {
-        return false;
-    }
-    kalmanFilter.getPrediction(deltaTime, predX, predY);
-    return true;
-}
-
 void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 {
     pidDataCallback_ = callback;
@@ -1168,30 +1099,25 @@ std::vector<float> AbstractMouseController::extractCurrentParameters()
     
     switch (config.algorithmType) {
         case AlgorithmType::AdvancedPID:
-            // 14个参数：PID核心(4) + D滤波(1) + 卡尔曼预测(2) + 导数预测(2) + 平滑(2) + 预测平滑(2) + 最大预测时间(1)
+            // 9个参数：PID核心(4) + D滤波(1) + 导数预测(2) + 平滑(2)
             params = {
                 config.pidPMin,           // 0
                 config.pidPMax,           // 1
                 config.pidD,              // 2
                 config.pidI,              // 3
                 config.derivativeFilterAlpha,  // 4
-                config.kalmanPredictionWeightX, // 5
-                config.kalmanPredictionWeightY, // 6
-                config.predictionWeightX,   // 7
-                config.predictionWeightY,   // 8
-                config.aimSmoothingX,      // 9
-                config.aimSmoothingY,      // 10
-                config.velocitySmoothFactor, // 11
-                config.accelerationSmoothFactor, // 12
-                config.maxPredictionTime    // 13
+                config.predictionWeightX,   // 5
+                config.predictionWeightY,   // 6
+                config.aimSmoothingX,      // 7
+                config.aimSmoothingY       // 8
             };
-            obs_log(LOG_INFO, "[AutoTune] 提取AdvancedPID参数: PMin=%.3f PMax=%.3f D=%.4f I=%.4f KPredX=%.2f KPredY=%.2f",
+            obs_log(LOG_INFO, "[AutoTune] 提取AdvancedPID参数: PMin=%.3f PMax=%.3f D=%.4f I=%.4f PredX=%.2f PredY=%.2f",
                     config.pidPMin, config.pidPMax, config.pidD, config.pidI,
-                    config.kalmanPredictionWeightX, config.kalmanPredictionWeightY);
+                    config.predictionWeightX, config.predictionWeightY);
             break;
             
         case AlgorithmType::StandardPID:
-            // 9个参数
+            // 7个参数
             params = {
                 config.stdKp,             // 0
                 config.stdKi,             // 1
@@ -1199,16 +1125,14 @@ std::vector<float> AbstractMouseController::extractCurrentParameters()
                 config.stdDerivativeFilterAlpha, // 3
                 config.stdSmoothingX,     // 4
                 config.stdSmoothingY,     // 5
-                config.velocitySmoothFactor,  // 6
-                config.accelerationSmoothFactor, // 7
-                config.maxPredictionTime   // 8
+                config.maxPredictionTime   // 6
             };
             obs_log(LOG_INFO, "[AutoTune] 提取StandardPID参数: Kp=%.3f Ki=%.4f Kd=%.4f",
                     config.stdKp, config.stdKi, config.stdKd);
             break;
             
         case AlgorithmType::DopaPID:
-            // 12个参数
+            // 10个参数
             params = {
                 config.dopaKpX,           // 0
                 config.dopaKpY,           // 1
@@ -1219,16 +1143,14 @@ std::vector<float> AbstractMouseController::extractCurrentParameters()
                 config.dopaPredWeight,    // 6
                 config.dopaDFilterAlpha,  // 7
                 config.aimSmoothingX,     // 8
-                config.aimSmoothingY,     // 9
-                config.velocitySmoothFactor,  // 10
-                config.accelerationSmoothFactor  // 11
+                config.aimSmoothingY      // 9
             };
             obs_log(LOG_INFO, "[AutoTune] 提取DopaPID参数: KpX=%.3f KpY=%.3f PredW=%.3f",
                     config.dopaKpX, config.dopaKpY, config.dopaPredWeight);
             break;
             
         case AlgorithmType::ChrisPID:
-            // 10个参数
+            // 8个参数
             params = {
                 config.chrisKp,           // 0
                 config.chrisKi,           // 1
@@ -1237,9 +1159,7 @@ std::vector<float> AbstractMouseController::extractCurrentParameters()
                 config.chrisPredWeightY,  // 4
                 config.chrisDFilterAlpha, // 5
                 config.aimSmoothingX,      // 6
-                config.aimSmoothingY,      // 7
-                config.velocitySmoothFactor,  // 8
-                config.accelerationSmoothFactor  // 9
+                config.aimSmoothingY       // 7
             };
             obs_log(LOG_INFO, "[AutoTune] 提取ChrisPID参数: Kp=%.3f Ki=%.4f Kd=%.4f PredWX=%.2f PredWY=%.2f",
                     config.chrisKp, config.chrisKi, config.chrisKd,
@@ -1256,39 +1176,32 @@ void AbstractMouseController::applyOptimizedParameters(const std::vector<float>&
     
     switch (config.algorithmType) {
         case AlgorithmType::AdvancedPID:
-            if (params.size() >= 14) {
+            if (params.size() >= 9) {
                 config.pidPMin = params[0];
                 config.pidPMax = params[1];
                 config.pidD = params[2];
                 config.pidI = params[3];
                 config.derivativeFilterAlpha = params[4];
-                config.kalmanPredictionWeightX = params[5];
-                config.kalmanPredictionWeightY = params[6];
-                config.predictionWeightX = params[7];
-                config.predictionWeightY = params[8];
-                config.aimSmoothingX = params[9];
-                config.aimSmoothingY = params[10];
-                config.velocitySmoothFactor = params[11];
-                config.accelerationSmoothFactor = params[12];
-                config.maxPredictionTime = params[13];
+                config.predictionWeightX = params[5];
+                config.predictionWeightY = params[6];
+                config.aimSmoothingX = params[7];
+                config.aimSmoothingY = params[8];
                 
-                obs_log(LOG_INFO, "[AutoTune] AdvancedPID更新: PMin=%.3f PMax=%.3f D=%.4f I=%.4f KPredX=%.2f SmoothX=%.2f VelSmooth=%.2f",
+                obs_log(LOG_INFO, "[AutoTune] AdvancedPID更新: PMin=%.3f PMax=%.3f D=%.4f I=%.4f PredX=%.2f SmoothX=%.2f",
                         config.pidPMin, config.pidPMax, config.pidD, config.pidI,
-                        config.kalmanPredictionWeightX, config.aimSmoothingX, config.velocitySmoothFactor);
+                        config.predictionWeightX, config.aimSmoothingX);
             }
             break;
             
         case AlgorithmType::StandardPID:
-            if (params.size() >= 9) {
+            if (params.size() >= 7) {
                 config.stdKp = params[0];
                 config.stdKi = params[1];
                 config.stdKd = params[2];
                 config.stdDerivativeFilterAlpha = params[3];
                 config.stdSmoothingX = params[4];
                 config.stdSmoothingY = params[5];
-                config.velocitySmoothFactor = params[6];
-                config.accelerationSmoothFactor = params[7];
-                config.maxPredictionTime = params[8];
+                config.maxPredictionTime = params[6];
                 
                 obs_log(LOG_INFO, "[AutoTune] StandardPID更新: Kp=%.3f Ki=%.4f Kd=%.4f SmoothX=%.2f",
                         config.stdKp, config.stdKi, config.stdKd, config.stdSmoothingX);
@@ -1296,7 +1209,7 @@ void AbstractMouseController::applyOptimizedParameters(const std::vector<float>&
             break;
             
         case AlgorithmType::DopaPID:
-            if (params.size() >= 12) {
+            if (params.size() >= 10) {
                 config.dopaKpX = params[0];
                 config.dopaKpY = params[1];
                 config.dopaKiX = params[2];
@@ -1307,8 +1220,6 @@ void AbstractMouseController::applyOptimizedParameters(const std::vector<float>&
                 config.dopaDFilterAlpha = params[7];
                 config.aimSmoothingX = params[8];
                 config.aimSmoothingY = params[9];
-                config.velocitySmoothFactor = params[10];
-                config.accelerationSmoothFactor = params[11];
                 
                 obs_log(LOG_INFO, "[AutoTune] DopaPID更新: KpX=%.3f KpY=%.3f PredW=%.3f SmoothX=%.2f",
                         config.dopaKpX, config.dopaKpY, config.dopaPredWeight, config.aimSmoothingX);
@@ -1316,7 +1227,7 @@ void AbstractMouseController::applyOptimizedParameters(const std::vector<float>&
             break;
             
         case AlgorithmType::ChrisPID:
-            if (params.size() >= 10) {
+            if (params.size() >= 8) {
                 config.chrisKp = params[0];
                 config.chrisKi = params[1];
                 config.chrisKd = params[2];
@@ -1325,8 +1236,6 @@ void AbstractMouseController::applyOptimizedParameters(const std::vector<float>&
                 config.chrisDFilterAlpha = params[5];
                 config.aimSmoothingX = params[6];
                 config.aimSmoothingY = params[7];
-                config.velocitySmoothFactor = params[8];
-                config.accelerationSmoothFactor = params[9];
                 
                 obs_log(LOG_INFO, "[AutoTune] ChrisPID更新: Kp=%.3f Ki=%.4f Kd=%.4f PredWX=%.2f SmoothX=%.2f",
                         config.chrisKp, config.chrisKi, config.chrisKd,

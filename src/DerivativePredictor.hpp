@@ -7,8 +7,6 @@ private:
     float velocityY;
     float accelerationX;
     float accelerationY;
-    float velocitySmoothFactor;
-    float accelerationSmoothFactor;
     float maxPredictionTime;
     float previousErrorX;
     float previousErrorY;
@@ -17,12 +15,14 @@ private:
     float previousMoveX;
     float previousMoveY;
 
+    static constexpr float ALPHA_VEL = 0.15f;
+    static constexpr float ALPHA_ACC = 0.15f;
+
 public:
     DerivativePredictor();
     void update(float errorX, float errorY, float previousMoveX, float previousMoveY, float deltaTime);
     void predict(float predictionTime, float& predictedX, float& predictedY);
     void reset();
-    void setSmoothFactors(float velocitySmooth, float accelerationSmooth);
     void setMaxPredictionTime(float maxTime);
 };
 
