@@ -404,9 +404,23 @@ void AbstractMouseController::tick()
     float moveX, moveY;
 
     if (config.algorithmType == AlgorithmType::StandardPID) {
-        float rawMoveX = calculateStandardPID(errorX, stdIntegralX, stdIntegralGainX, 
+        float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+        if (config.useDerivativePredictor) {
+            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
+        }
+
+        // ChrisPID方式：预测值融合到误差，PID追预测位置
+        float fusionErrorX = errorX;
+        float fusionErrorY = errorY;
+        if (config.useDerivativePredictor) {
+            fusionErrorX += config.predictionWeightX * derivPredictedX;
+            fusionErrorY += config.predictionWeightY * derivPredictedY;
+        }
+
+        float rawMoveX = calculateStandardPID(fusionErrorX, stdIntegralX, stdIntegralGainX, 
                                       stdLastErrorX, stdFilteredDeltaErrorX, deltaTime);
-        float rawMoveY = calculateStandardPID(errorY, stdIntegralY, stdIntegralGainY, 
+        float rawMoveY = calculateStandardPID(fusionErrorY, stdIntegralY, stdIntegralGainY, 
                                       stdLastErrorY, stdFilteredDeltaErrorY, deltaTime);
         
         moveX = stdPreviousMoveX * (1.0f - config.stdSmoothingX) + rawMoveX * config.stdSmoothingX;
@@ -417,8 +431,13 @@ void AbstractMouseController::tick()
         static int stdLogCounter = 0;
         if (++stdLogCounter >= 30) {
             stdLogCounter = 0;
-            blog(LOG_INFO, "[%s标准PID] errorX=%.1f errorY=%.1f | rawMoveX=%.1f rawMoveY=%.1f | moveX=%.1f moveY=%.1f | stdKp=%.2f stdKd=%.3f",
-                 getLogPrefix(), errorX, errorY, rawMoveX, rawMoveY, moveX, moveY, config.stdKp, config.stdKd);
+            blog(LOG_INFO, "[%s标准PID] errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | rawMoveX=%.1f rawMoveY=%.1f | moveX=%.1f moveY=%.1f",
+                 getLogPrefix(), errorX, errorY, fusionErrorX, fusionErrorY, rawMoveX, rawMoveY, moveX, moveY);
+            if (config.useDerivativePredictor) {
+                blog(LOG_INFO, "[%s标准PID] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
+                     getLogPrefix(), derivPredictedX, derivPredictedY, config.predictionWeightX, config.predictionWeightY,
+                     config.predictionWeightX * derivPredictedX, config.predictionWeightY * derivPredictedY);
+            }
         }
         
         if (pidDataCallback_) {
@@ -439,8 +458,8 @@ void AbstractMouseController::tick()
         
         pidPreviousErrorX = 0.0f;
         pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
+        previousErrorX = errorX;
+        previousErrorY = errorY;
         filteredDeltaErrorX = 0.0f;
         filteredDeltaErrorY = 0.0f;
         integralX = 0.0f;
@@ -561,14 +580,22 @@ void AbstractMouseController::tick()
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
         }
 
+        // ChrisPID方式：预测值融合到误差，PID追预测位置
+        float fusionErrorX = errorX;
+        float fusionErrorY = errorY;
+        if (config.useDerivativePredictor) {
+            fusionErrorX += config.predictionWeightX * derivPredictedX;
+            fusionErrorY += config.predictionWeightY * derivPredictedY;
+        }
+
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
-        // 方案B：D项基于原始误差计算，不响应预测器引起的误差变化
+        // D项基于融合误差计算（ChrisPID方式）
         float dTermX = 0.0f;
         float dTermY = 0.0f;
         if (deltaTime > 1e-6f) {
-            float deltaErrorX = errorX - pidPreviousErrorX;
-            float deltaErrorY = errorY - pidPreviousErrorY;
+            float deltaErrorX = fusionErrorX - pidPreviousErrorX;
+            float deltaErrorY = fusionErrorY - pidPreviousErrorY;
             dTermX = deltaErrorX / deltaTime * config.pidD;
             dTermY = deltaErrorY / deltaTime * config.pidD;
         }
@@ -579,18 +606,18 @@ void AbstractMouseController::tick()
         filteredDeltaErrorX = alpha * dTermX + (1.0f - alpha) * filteredDeltaErrorX;
         filteredDeltaErrorY = alpha * dTermY + (1.0f - alpha) * filteredDeltaErrorY;
 
-        // 自适应积分增益控制
-        bool shouldIntegrateX = adjustIntegralGain(errorX, pidPreviousErrorX, integralGainX);
-        bool shouldIntegrateY = adjustIntegralGain(errorY, pidPreviousErrorY, integralGainY);
+        // 自适应积分增益控制（基于融合误差）
+        bool shouldIntegrateX = adjustIntegralGain(fusionErrorX, pidPreviousErrorX, integralGainX);
+        bool shouldIntegrateY = adjustIntegralGain(fusionErrorY, pidPreviousErrorY, integralGainY);
 
-        if (std::abs(errorX) >= config.integralDeadZone && shouldIntegrateX) {
-            integralX += errorX;
+        if (std::abs(fusionErrorX) >= config.integralDeadZone && shouldIntegrateX) {
+            integralX += fusionErrorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
             integralX *= 0.9f;
         }
-        if (std::abs(errorY) >= config.integralDeadZone && shouldIntegrateY) {
-            integralY += errorY;
+        if (std::abs(fusionErrorY) >= config.integralDeadZone && shouldIntegrateY) {
+            integralY += fusionErrorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
             integralY *= 0.9f;
@@ -599,15 +626,9 @@ void AbstractMouseController::tick()
         float integralTermX = config.pidI * integralX;
         float integralTermY = config.pidI * integralY;
 
-        // PID输出基于原始误差
-        float pidOutputX = dynamicP * errorX + filteredDeltaErrorX + integralTermX;
-        float pidOutputY = dynamicP * errorY + filteredDeltaErrorY + integralTermY;
-
-        // 导数预测作为前馈项：预测目标移动方向，提前移动
-        if (config.useDerivativePredictor) {
-            pidOutputX += config.predictionWeightX * derivPredictedX;
-            pidOutputY += config.predictionWeightY * derivPredictedY;
-        }
+        // PID输出基于融合误差（追预测位置）
+        float pidOutputX = dynamicP * fusionErrorX + filteredDeltaErrorX + integralTermX;
+        float pidOutputY = dynamicP * fusionErrorY + filteredDeltaErrorY + integralTermY;
 
         moveX = pidOutputX;
         moveY = pidOutputY;
@@ -615,12 +636,17 @@ void AbstractMouseController::tick()
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | dynamicP=%.3f",
-                 getLogPrefix(), deltaTime, errorX, errorY, dynamicP);
+            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
+                 getLogPrefix(), deltaTime, errorX, errorY, fusionErrorX, fusionErrorY, dynamicP);
             blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
             blog(LOG_INFO, "[%s高级PID] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
                  getLogPrefix(), integralX, integralY, integralTermX, integralTermY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
+            if (config.useDerivativePredictor) {
+                blog(LOG_INFO, "[%s高级PID] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
+                     getLogPrefix(), derivPredictedX, derivPredictedY, config.predictionWeightX, config.predictionWeightY,
+                     config.predictionWeightX * derivPredictedX, config.predictionWeightY * derivPredictedY);
+            }
         }
 
         if (pidDataCallback_) {
@@ -639,9 +665,9 @@ void AbstractMouseController::tick()
             pidDataCallback_(data);
         }
 
-        // 方案B：保存原始误差用于D项计算
-        pidPreviousErrorX = errorX;
-        pidPreviousErrorY = errorY;
+        // 保存融合误差用于D项计算
+        pidPreviousErrorX = fusionErrorX;
+        pidPreviousErrorY = fusionErrorY;
         previousErrorX = errorX;
         previousErrorY = errorY;
         

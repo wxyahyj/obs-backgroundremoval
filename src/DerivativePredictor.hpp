@@ -15,8 +15,10 @@ private:
     float previousMoveX;
     float previousMoveY;
 
-    static constexpr float ALPHA_VEL = 0.15f;
+    static constexpr float ALPHA_VEL = 0.25f;
     static constexpr float ALPHA_ACC = 0.15f;
+    static constexpr float MAX_VEL = 3000.0f;
+    static constexpr float MAX_ACC = 5000.0f;
 
 public:
     DerivativePredictor();

@@ -20,33 +20,56 @@ DerivativePredictor::DerivativePredictor()
 
 void DerivativePredictor::update(float errorX, float errorY, float prevMoveX, float prevMoveY, float deltaTime)
 {
-    if (deltaTime <= 0.0f) return;
+    if (deltaTime <= 1e-6f) return;
     
     float rawVelX = ((errorX - previousErrorX) + prevMoveX) / deltaTime;
     float rawVelY = ((errorY - previousErrorY) + prevMoveY) / deltaTime;
     
-    if ((rawVelX > 0 && errorX < 0) || (rawVelX < 0 && errorX > 0)) {
-        rawVelX = 0.0f;
-    }
-    if ((rawVelY > 0 && errorY < 0) || (rawVelY < 0 && errorY > 0)) {
-        rawVelY = 0.0f;
-    }
+    rawVelX = std::clamp(rawVelX, -MAX_VEL, MAX_VEL);
+    rawVelY = std::clamp(rawVelY, -MAX_VEL, MAX_VEL);
     
-    velocityX = ALPHA_VEL * rawVelX + (1.0f - ALPHA_VEL) * velocityX;
-    velocityY = ALPHA_VEL * rawVelY + (1.0f - ALPHA_VEL) * velocityY;
-    
-    float rawAccX = (velocityX - previousVelocityX) / deltaTime;
-    float rawAccY = (velocityY - previousVelocityY) / deltaTime;
-    
-    if ((rawAccX > 0 && errorX < 0) || (rawAccX < 0 && errorX > 0)) {
-        rawAccX = 0.0f;
-    }
-    if ((rawAccY > 0 && errorY < 0) || (rawAccY < 0 && errorY > 0)) {
-        rawAccY = 0.0f;
+    for (int axis = 0; axis < 2; ++axis) {
+        float& vel = (axis == 0) ? rawVelX : rawVelY;
+        float err = (axis == 0) ? errorX : errorY;
+        
+        if (std::abs(err) > 5.0f) {
+            if (std::signbit(vel) != std::signbit(err)) {
+                vel *= 0.1f;
+            }
+        }
     }
     
-    accelerationX = ALPHA_ACC * rawAccX + (1.0f - ALPHA_ACC) * accelerationX;
-    accelerationY = ALPHA_ACC * rawAccY + (1.0f - ALPHA_ACC) * accelerationY;
+    float adjAlphaVel = 1.0f - static_cast<float>(std::pow(1.0 - ALPHA_VEL, deltaTime / 0.01));
+    adjAlphaVel = std::clamp(adjAlphaVel, 0.05f, 0.8f);
+    
+    float prevVelX = velocityX;
+    float prevVelY = velocityY;
+    
+    velocityX = adjAlphaVel * rawVelX + (1.0f - adjAlphaVel) * velocityX;
+    velocityY = adjAlphaVel * rawVelY + (1.0f - adjAlphaVel) * velocityY;
+    
+    float rawAccX = (velocityX - prevVelX) / deltaTime;
+    float rawAccY = (velocityY - prevVelY) / deltaTime;
+    
+    rawAccX = std::clamp(rawAccX, -MAX_ACC, MAX_ACC);
+    rawAccY = std::clamp(rawAccY, -MAX_ACC, MAX_ACC);
+    
+    for (int axis = 0; axis < 2; ++axis) {
+        float& acc = (axis == 0) ? rawAccX : rawAccY;
+        float err = (axis == 0) ? errorX : errorY;
+        
+        if (std::abs(err) > 5.0f) {
+            if (std::signbit(acc) != std::signbit(err)) {
+                acc *= 0.1f;
+            }
+        }
+    }
+    
+    float adjAlphaAcc = 1.0f - static_cast<float>(std::pow(1.0 - ALPHA_ACC, deltaTime / 0.01));
+    adjAlphaAcc = std::clamp(adjAlphaAcc, 0.05f, 0.8f);
+    
+    accelerationX = adjAlphaAcc * rawAccX + (1.0f - adjAlphaAcc) * accelerationX;
+    accelerationY = adjAlphaAcc * rawAccY + (1.0f - adjAlphaAcc) * accelerationY;
     
     previousErrorX = errorX;
     previousErrorY = errorY;
