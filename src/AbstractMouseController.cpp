@@ -405,15 +405,12 @@ void AbstractMouseController::tick()
 
     if (config.algorithmType == AlgorithmType::StandardPID) {
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+        float fusionErrorX = errorX;
+        float fusionErrorY = errorY;
+        
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-        }
-
-        // ChrisPID方式：预测值融合到误差，PID追预测位置
-        float fusionErrorX = errorX;
-        float fusionErrorY = errorY;
-        if (config.useDerivativePredictor) {
             fusionErrorX += config.predictionWeightX * derivPredictedX;
             fusionErrorY += config.predictionWeightY * derivPredictedY;
         }
@@ -575,15 +572,12 @@ void AbstractMouseController::tick()
         stdIntegralGainY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+        float fusionErrorX = errorX;
+        float fusionErrorY = errorY;
+        
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-        }
-
-        // ChrisPID方式：预测值融合到误差，PID追预测位置
-        float fusionErrorX = errorX;
-        float fusionErrorY = errorY;
-        if (config.useDerivativePredictor) {
             fusionErrorX += config.predictionWeightX * derivPredictedX;
             fusionErrorY += config.predictionWeightY * derivPredictedY;
         }

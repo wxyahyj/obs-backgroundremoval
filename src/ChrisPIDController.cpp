@@ -39,7 +39,7 @@ std::array<float, 2> ChrisDerivativePredictor::predict(
         }
     }
     
-    float adj_alpha_vel = 1.0f - static_cast<float>(std::pow(1.0 - ALPHA_VEL, dt / 0.01));
+    float adj_alpha_vel = 1.0f - static_cast<float>(std::exp(-dt / 0.01));
     adj_alpha_vel = std::clamp(adj_alpha_vel, 0.05f, 0.8f);
     
     prev_smoothed_vel_ = smoothed_vel_;
@@ -64,7 +64,7 @@ std::array<float, 2> ChrisDerivativePredictor::predict(
         }
     }
     
-    float adj_alpha_acc = 1.0f - static_cast<float>(std::pow(1.0 - ALPHA_ACC, dt / 0.01));
+    float adj_alpha_acc = 1.0f - static_cast<float>(std::exp(-dt / 0.01));
     adj_alpha_acc = std::clamp(adj_alpha_acc, 0.05f, 0.8f);
     
     for (int axis = 0; axis < 2; ++axis) {

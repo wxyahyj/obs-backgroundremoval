@@ -39,7 +39,7 @@ void DerivativePredictor::update(float errorX, float errorY, float prevMoveX, fl
         }
     }
     
-    float adjAlphaVel = 1.0f - static_cast<float>(std::pow(1.0 - ALPHA_VEL, deltaTime / 0.01));
+    float adjAlphaVel = 1.0f - static_cast<float>(std::exp(-deltaTime / 0.01));
     adjAlphaVel = std::clamp(adjAlphaVel, 0.05f, 0.8f);
     
     float prevVelX = velocityX;
@@ -65,7 +65,7 @@ void DerivativePredictor::update(float errorX, float errorY, float prevMoveX, fl
         }
     }
     
-    float adjAlphaAcc = 1.0f - static_cast<float>(std::pow(1.0 - ALPHA_ACC, deltaTime / 0.01));
+    float adjAlphaAcc = 1.0f - static_cast<float>(std::exp(-deltaTime / 0.01));
     adjAlphaAcc = std::clamp(adjAlphaAcc, 0.05f, 0.8f);
     
     accelerationX = adjAlphaAcc * rawAccX + (1.0f - adjAlphaAcc) * accelerationX;
