@@ -74,7 +74,7 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.pGainRampInitialScale = 0.6f;
     config.pGainRampDuration = 0.5f;
     config.useDerivativePredictor = true;
-    config.predictionWeightX = 0.5f;
+    config.predictionWeightX = 0.3f;
     config.predictionWeightY = 0.1f;
     config.stdKp = 0.3f;
     config.stdKi = 0.01f;

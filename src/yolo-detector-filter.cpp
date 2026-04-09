@@ -426,8 +426,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			integralRate = 0.015f;
 			pGainRampInitialScale = 0.6f;
 			pGainRampDuration = 0.5f;
-			predictionWeightX = 0.5f;
-			predictionWeightY = 0.1f;
+			predictionWeightX = 0.3f;
+		predictionWeightY = 0.1f;
 			useDerivativePredictor = true;
 			maxPredictionTime = 0.1f;
 			// 持续自瞄和自动压枪默认值
@@ -1545,7 +1545,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
 		obs_data_set_default_double(settings, propName, 0.5);
 		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
-		obs_data_set_default_double(settings, propName, 0.5);
+		obs_data_set_default_double(settings, propName, 0.3);
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 
