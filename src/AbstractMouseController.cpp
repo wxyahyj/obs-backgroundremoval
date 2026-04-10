@@ -503,21 +503,16 @@ void AbstractMouseController::tick()
 
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
-        // D项基于融合误差计算（ChrisPID方式）
-        float dTermX = 0.0f;
-        float dTermY = 0.0f;
-        if (deltaTime > 1e-6f) {
-            float deltaErrorX = fusionErrorX - pidPreviousErrorX;
-            float deltaErrorY = fusionErrorY - pidPreviousErrorY;
-            dTermX = deltaErrorX / deltaTime * config.pidD;
-            dTermY = deltaErrorY / deltaTime * config.pidD;
-        }
-        dTermX = std::clamp(dTermX, -50.0f, 50.0f);
-        dTermY = std::clamp(dTermY, -50.0f, 50.0f);
+        // D项基于融合误差计算（原来的方式）
+        float deltaErrorX = fusionErrorX - pidPreviousErrorX;
+        float deltaErrorY = fusionErrorY - pidPreviousErrorY;
 
         float alpha = config.derivativeFilterAlpha;
-        filteredDeltaErrorX = alpha * dTermX + (1.0f - alpha) * filteredDeltaErrorX;
-        filteredDeltaErrorY = alpha * dTermY + (1.0f - alpha) * filteredDeltaErrorY;
+        filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
+        filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
+
+        float dTermX = config.pidD * filteredDeltaErrorX;
+        float dTermY = config.pidD * filteredDeltaErrorY;
 
         // 自适应积分增益控制（基于融合误差）
         bool shouldIntegrateX = adjustIntegralGain(fusionErrorX, pidPreviousErrorX, integralGainX);
