@@ -11,6 +11,7 @@
 #include "MouseController.hpp"
 #include "MouseControllerFactory.hpp"
 #include "ConfigManager.hpp"
+#include "WebServer/WebServer.hpp"
 #endif
 
 #include <opencv2/imgproc.hpp>
@@ -486,6 +487,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisOutputMax;
 	float chrisIMax;
 	float chrisDFilterAlpha;
+	
+	// WebServer相关
+	bool webServerEnabled;
+	int webServerPort;
+	std::unique_ptr<WebServer> webServer;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -964,6 +970,13 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_group(props, "config_management_group", "配置管理", OBS_GROUP_NORMAL, nullptr);
 	obs_properties_add_button(props, "save_config", "保存配置", saveConfigCallback);
 	obs_properties_add_button(props, "load_config", "加载配置", loadConfigCallback);
+	
+	// WebServer设置
+	obs_properties_add_group(props, "webserver_group", "Web参数页面", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *webServerEnabledProp = obs_properties_add_bool(props, "webserver_enabled", "启用Web服务器");
+	obs_property_set_long_description(webServerEnabledProp, "启用后可通过浏览器调整参数");
+	obs_property_t *webServerPortProp = obs_properties_add_int(props, "webserver_port", "端口", 1024, 65535, 1);
+	obs_property_set_long_description(webServerPortProp, "Web服务器监听端口（默认8080）");
 #endif
 
 	obs_properties_add_text(props, "avg_inference_time", obs_module_text("AvgInferenceTime"), OBS_TEXT_INFO);
@@ -1374,6 +1387,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "floating_window_height", 480);
 	obs_data_set_default_bool(settings, "show_pid_debug_window", false);
 	obs_data_set_default_bool(settings, "show_track_id_in_floating_window", false);
+	
+	obs_data_set_default_bool(settings, "webserver_enabled", false);
+	obs_data_set_default_int(settings, "webserver_port", 8080);
 #endif
 
 #ifdef _WIN32
@@ -1750,6 +1766,31 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	}
 
 	tf->showTrackIdInFloatingWindow = obs_data_get_bool(settings, "show_track_id_in_floating_window");
+
+	// WebServer参数读取
+	bool newWebServerEnabled = obs_data_get_bool(settings, "webserver_enabled");
+	int newWebServerPort = (int)obs_data_get_int(settings, "webserver_port");
+	
+	if (newWebServerEnabled != tf->webServerEnabled || newWebServerPort != tf->webServerPort) {
+		tf->webServerEnabled = newWebServerEnabled;
+		tf->webServerPort = newWebServerPort;
+		
+		if (tf->webServerEnabled) {
+			if (!tf->webServer) {
+				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
+				tf->webServer->start();
+			} else if (newWebServerPort != tf->webServerPort) {
+				tf->webServer->stop();
+				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
+				tf->webServer->start();
+			}
+		} else {
+			if (tf->webServer) {
+				tf->webServer->stop();
+				tf->webServer.reset();
+			}
+		}
+	}
 
 	tf->currentConfigIndex = (int)obs_data_get_int(settings, "mouse_config_select");
 
@@ -3677,6 +3718,11 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisOutputMax = 150.0f;
 		instance->chrisIMax = 100.0f;
 		instance->chrisDFilterAlpha = 0.3f;
+		
+		// WebServer初始化
+		instance->webServerEnabled = false;
+		instance->webServerPort = 8080;
+		instance->webServer = nullptr;
 #endif
 
 		// 强制关闭悬浮窗（每次启动OBS时）
@@ -3739,6 +3785,12 @@ void yolo_detector_filter_destroy(void *data)
 #ifdef _WIN32
 	// Destroy floating window
 	destroyFloatingWindow(tf.get());
+	
+	// 停止WebServer
+	if (tf->webServer) {
+		tf->webServer->stop();
+		tf->webServer.reset();
+	}
 	
 	// 保存悬浮窗关闭状态
 	obs_data_t *settings = obs_source_get_settings(tf->source);
