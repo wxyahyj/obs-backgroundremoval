@@ -152,6 +152,8 @@ public:
     virtual ~MouseControllerInterface() = default;
 
     virtual void updateConfig(const MouseControllerConfig& config) = 0;
+    
+    virtual MouseControllerConfig getConfig() const = 0;
 
     virtual void setDetections(const std::vector<Detection>& detections) = 0;
 

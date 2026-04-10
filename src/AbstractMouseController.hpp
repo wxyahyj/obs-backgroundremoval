@@ -129,6 +129,7 @@ public:
     virtual ~AbstractMouseController() = default;
 
     void updateConfig(const MouseControllerConfig& config) override;
+    MouseControllerConfig getConfig() const override;
     void setDetections(const std::vector<Detection>& detections) override;
     void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY) override;
     void tick() override;

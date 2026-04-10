@@ -93,6 +93,12 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     }
 }
 
+MouseControllerConfig AbstractMouseController::getConfig() const
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    return config;
+}
+
 void AbstractMouseController::setDetections(const std::vector<Detection>& detections)
 {
     std::lock_guard<std::mutex> lock(mutex);

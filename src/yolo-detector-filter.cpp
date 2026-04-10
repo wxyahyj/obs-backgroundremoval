@@ -1728,12 +1728,12 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			if (!tf->webServer) {
 				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
 				tf->webServer->start();
-				setupWebServerCallbacks(tf);
+				setupWebServerCallbacks(tf.get());
 			} else if (newWebServerPort != tf->webServerPort) {
 				tf->webServer->stop();
 				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
 				tf->webServer->start();
-				setupWebServerCallbacks(tf);
+				setupWebServerCallbacks(tf.get());
 			}
 		} else {
 			if (tf->webServer) {
