@@ -116,7 +116,7 @@ struct OptimizerConfig {
     std::vector<ParameterBounds> advancedPidBounds;
     std::vector<ParameterBounds> standardPidBounds;
     std::vector<ParameterBounds> chrisPidBounds;
-    std::vector<ParameterBounds> gaussianGravityBounds;
+
     
     OptimizerConfig() {
         initDefaultBounds();

@@ -486,13 +486,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisOutputMax;
 	float chrisIMax;
 	float chrisDFilterAlpha;
-	
-	// 高斯引力参数
-	float gravityStrength;
-	float gravityMaxDistance;
-	float gravitySoftEpsilon;
-	float gravityMaxForce;
-	float gravitySmoothingFactor;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -982,8 +975,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "高级PID (自适应)", 0);
 	obs_property_list_add_int(algorithmTypeList, "标准PID (经典)", 1);
 	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 2);
-	obs_property_list_add_int(algorithmTypeList, "高斯引力控制器", 3);
-	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；高斯引力控制器使用引力场模型");
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 标准PID配置分组
@@ -1014,19 +1006,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(stdSmoothingXProp, "标准PID输出X轴平滑系数，值越大响应越快，值越小越平滑");
 	obs_property_t *stdSmoothingYProp = obs_properties_add_float_slider(props, "std_smoothing_y_global", "Y轴平滑度", 0.0, 1.0, 0.01);
 	obs_property_set_long_description(stdSmoothingYProp, "标准PID输出Y轴平滑系数，值越大响应越快，值越小越平滑");
-
-	// 高斯引力控制器参数
-	obs_properties_add_group(props, "gaussian_gravity_group", "高斯引力配置", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *gravityStrengthProp = obs_properties_add_float_slider(props, "gravity_strength", "引力强度", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(gravityStrengthProp, "高斯引力强度系数，控制引力场强度");
-	obs_property_t *gravityMaxDistanceProp = obs_properties_add_float_slider(props, "gravity_max_distance", "最大作用距离", 10.0, 1000.0, 10.0);
-	obs_property_set_long_description(gravityMaxDistanceProp, "引力场的最大作用距离(像素)");
-	obs_property_t *gravitySoftEpsilonProp = obs_properties_add_float_slider(props, "gravity_soft_epsilon", "软化系数", 10.0, 500.0, 10.0);
-	obs_property_set_long_description(gravitySoftEpsilonProp, "高斯函数的软化系数，控制引力衰减速度");
-	obs_property_t *gravityMaxForceProp = obs_properties_add_float_slider(props, "gravity_max_force", "最大输出力", 10.0, 300.0, 10.0);
-	obs_property_set_long_description(gravityMaxForceProp, "引力控制器的最大输出力限制");
-	obs_property_t *gravitySmoothingProp = obs_properties_add_float_slider(props, "gravity_smoothing_factor", "输出平滑因子", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(gravitySmoothingProp, "输出平滑系数，值越大越平滑");
 
 	// ChrisPID参数
 	obs_properties_add_group(props, "chris_pid_group", "ChrisPID配置", OBS_GROUP_NORMAL, nullptr);

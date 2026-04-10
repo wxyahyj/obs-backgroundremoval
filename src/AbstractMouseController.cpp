@@ -489,59 +489,6 @@ void AbstractMouseController::tick()
         stdIntegralY = 0.0f;
         stdIntegralGainX = 0.0f;
         stdIntegralGainY = 0.0f;
-    } else if (config.algorithmType == AlgorithmType::GaussianGravity) {
-        GaussianGravityConfig ggConfig;
-        ggConfig.gravityStrength = config.gravityStrength;
-        ggConfig.maxDistance = config.gravityMaxDistance;
-        ggConfig.softEpsilon = config.gravitySoftEpsilon;
-        ggConfig.maxForce = config.gravityMaxForce;
-        ggConfig.smoothingFactor = config.gravitySmoothingFactor;
-        ggConfig.confidenceScale = true;
-        ggConfig.predictionWeight = config.predictionWeightX;
-        
-        gravityController_.setConfig(ggConfig);
-        
-        float outX = 0.0f, outY = 0.0f;
-        // 计算准星在画面中的位置 (FOV中心 + 偏移)
-        float crosshairX = fovCenterX - config.screenOffsetX;
-        float crosshairY = fovCenterY - config.screenOffsetY;
-        gravityController_.compute(targetPixelX, targetPixelY, 
-                                   crosshairX, crosshairY,
-                                   target ? target->confidence : 1.0f,
-                                   targetVelocityX, targetVelocityY,
-                                   outX, outY);
-        
-        moveX = outX;
-        moveY = outY;
-        
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.gravityStrength;
-            data.currentKi = 0.0f;
-            data.currentKd = 0.0f;
-            pidDataCallback_(data);
-        }
-        
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
         float fusionErrorX = errorX;

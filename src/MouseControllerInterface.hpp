@@ -14,8 +14,7 @@ enum class ControllerType {
 enum class AlgorithmType {
     AdvancedPID,      // 高级PID（当前使用的自适应PID）
     StandardPID,      // 标准PID（经典PID）
-    ChrisPID,         // ChrisPID（克里斯控制器）
-    GaussianGravity   // 高斯引力控制器
+    ChrisPID          // ChrisPID（克里斯控制器）
 };
 
 // PID数据回调函数类型
@@ -137,13 +136,6 @@ struct MouseControllerConfig {
     float chrisOutputMax = 150.0f;
     float chrisIMax = 100.0f;
     float chrisDFilterAlpha = 0.3f;  // D项滤波系数
-    
-    // 高斯引力控制器参数
-    float gravityStrength = 0.5f;      // 引力强度
-    float gravityMaxDistance = 500.0f;  // 最大作用距离
-    float gravitySoftEpsilon = 100.0f;  // 软化系数
-    float gravityMaxForce = 100.0f;     // 最大输出力
-    float gravitySmoothingFactor = 0.3f; // 输出平滑因子
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重
