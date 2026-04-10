@@ -501,6 +501,7 @@ static void destroyFloatingWindow(yolo_detector_filter *filter);
 static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame);
 static void renderFloatingWindow(yolo_detector_filter *filter);
 static void setupPidDataCallback(yolo_detector_filter *filter);
+static void setupWebServerCallbacks(yolo_detector_filter *filter);
 static void createPidDebugWindow(yolo_detector_filter *filter);
 static void destroyPidDebugWindow(yolo_detector_filter *filter);
 static void updatePidDebugWindow(yolo_detector_filter *filter);
@@ -1727,10 +1728,12 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			if (!tf->webServer) {
 				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
 				tf->webServer->start();
+				setupWebServerCallbacks(tf);
 			} else if (newWebServerPort != tf->webServerPort) {
 				tf->webServer->stop();
 				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
 				tf->webServer->start();
+				setupWebServerCallbacks(tf);
 			}
 		} else {
 			if (tf->webServer) {
@@ -2674,6 +2677,7 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 				cv::Point(10, textY), cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 100, 255), thickness);
 		}
 	}
+
 #endif
 }
 
@@ -2884,6 +2888,29 @@ static LRESULT CALLBACK PidDebugWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 		return DefWindowProc(hwnd, msg, wParam, lParam);
 	}
 	return 0;
+}
+
+static void setupWebServerCallbacks(yolo_detector_filter *filter)
+{
+	if (!filter || !filter->webServer) {
+		return;
+	}
+	
+	// 设置配置回调：网页修改参数后同步到控制器
+	filter->webServer->setConfigCallback([filter](const MouseControllerConfig& config) {
+		if (filter->mouseController) {
+			filter->mouseController->updateConfig(config);
+		}
+	});
+	
+	// 设置状态提供者：返回当前控制器配置
+	filter->webServer->setStatusProvider([filter]() {
+		MouseControllerConfig config;
+		if (filter->mouseController) {
+			config = filter->mouseController->getConfig();
+		}
+		return config;
+	});
 }
 
 static void createPidDebugWindow(yolo_detector_filter *filter)
@@ -4123,6 +4150,14 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				tf->mouseController->tick();
 			}
 		}
+	}
+
+	// 更新WebServer实时状态
+	if (tf->webServer && tf->mouseController) {
+		WebServerStatus status;
+		status.isRunning = tf->mouseController->getConfig().enableMouseControl;
+		status.fps = static_cast<int>(tf->currentFps);
+		tf->webServer->updateStatus(status);
 	}
 #endif
 }
