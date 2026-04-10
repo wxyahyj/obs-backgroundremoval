@@ -12,6 +12,10 @@
 #include <queue>
 #include <unordered_set>
 
+// 前向声明CUDA类型
+struct cudaGraphicsResource;
+typedef struct cudaGraphicsResource* cudaGraphicsResource_t;
+
 class ModelYOLO : public ModelBCHW {
 public:
     enum class Version {
@@ -29,6 +33,10 @@ public:
 
     std::vector<Detection> inference(const cv::Mat& input);
     std::future<std::vector<Detection>> asyncInference(const cv::Mat& input);
+
+    // GPU纹理直接推理（阶段2）
+    bool inferenceFromTexture(void* d3d11Texture, int width, int height);
+    bool isGpuTextureSupported() const { return cudaInteropInitialized_; }
 
     void setConfidenceThreshold(float threshold);
     void setNMSThreshold(float threshold);
@@ -91,6 +99,14 @@ private:
 
     LetterboxInfo letterbox(const cv::Mat& input, cv::Mat& output);
     std::vector<Detection> doInference(const cv::Mat& input);
+    
+    // GPU内存初始化
+    bool initializeGpuMemory();
+    void releaseGpuMemory();
+    
+    // CUDA互操作初始化（阶段2）
+    bool initializeCudaInterop();
+    void releaseCudaInterop();
 
     Version version_;
     float confidenceThreshold_;
@@ -118,12 +134,26 @@ private:
     
     size_t inputBufferSize_;
     std::vector<float> inputBuffer_;
-    std::vector<float> outputBuffer_;  // 预分配输出缓冲区
-    bool useIOBinding_;  // 是否使用IOBinding
+    std::vector<float> outputBuffer_;
+    bool useIOBinding_;
     
-    // 预分配letterbox缓冲区，避免每帧分配
+    // 预分配letterbox缓冲区
     cv::Mat letterboxBuffer_;
     cv::Mat resizedBuffer_;
+    
+    // === 阶段1：GPU持久内存 ===
+    bool useGpuMemory_;
+    std::string currentDevice_;
+    Ort::Allocator* gpuAllocator_;
+    Ort::Value gpuInputTensor_;
+    Ort::Value gpuOutputTensor_;
+    Ort::MemoryInfo gpuMemInfo_;
+    
+    // === 阶段2：CUDA纹理共享 ===
+    bool cudaInteropInitialized_;
+    void* cudaStream_;
+    cudaGraphicsResource_t cudaResource_;
+    void* cudaInputBuffer_;
     
     std::thread inferenceThread_;
     std::atomic<bool> inferenceThreadRunning_;

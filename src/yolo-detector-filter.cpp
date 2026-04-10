@@ -11,6 +11,9 @@
 #include "MouseController.hpp"
 #include "MouseControllerFactory.hpp"
 #include "ConfigManager.hpp"
+#ifdef HAVE_CUDA
+#include <d3d11.h>
+#endif
 #endif
 
 #include <opencv2/imgproc.hpp>
@@ -177,6 +180,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	// 线程池相关成员
 	std::vector<std::thread> threadPool;
+	
+	// GPU纹理推理支持（阶段2）
+	bool useGpuTextureInference;
+	ID3D11Texture2D* cachedD3D11Texture;
+	int gpuTextureWidth;
+	int gpuTextureHeight;
 	std::queue<std::function<void()>> taskQueue;
 	std::mutex taskQueueMutex;
 	std::condition_variable taskCondition;
@@ -469,7 +478,15 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	
 #endif
 
-	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
+	~yolo_detector_filter() {
+		obs_log(LOG_INFO, "YOLO detector filter destructor called");
+#ifdef HAVE_CUDA
+		if (cachedD3D11Texture) {
+			cachedD3D11Texture->Release();
+			cachedD3D11Texture = nullptr;
+		}
+#endif
+	}
 };
 
 void inferenceThreadWorker(yolo_detector_filter *filter);
@@ -552,6 +569,12 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_string(useGPUList, "DirectML", USEGPU_DML);
 #endif
 	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/CPU）");
+	
+#ifdef HAVE_CUDA
+	obs_property_t *useGpuTextureProp = obs_properties_add_bool(props, "use_gpu_texture_inference", "启用GPU纹理推理(实验性)");
+	obs_property_set_long_description(useGpuTextureProp, "直接在GPU上处理纹理，避免GPU-CPU数据传输（需要CUDA设备）");
+#endif
+	
 	obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", obs_module_text("InputResolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(resolutionList, "320x320", 320);
 	obs_property_list_add_int(resolutionList, "416x416", 416);
@@ -1133,6 +1156,9 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "model_path"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "model_version"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "use_gpu"), page == 0);
+#ifdef HAVE_CUDA
+	obs_property_set_visible(obs_properties_get(props, "use_gpu_texture_inference"), page == 0);
+#endif
 	obs_property_set_visible(obs_properties_get(props, "input_resolution"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "num_threads"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "confidence_threshold"), page == 0);
@@ -1275,6 +1301,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "model_path", "");
 	obs_data_set_default_int(settings, "model_version", static_cast<int>(ModelYOLO::Version::YOLOv8));
 	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
+#ifdef HAVE_CUDA
+	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
+#endif
 	obs_data_set_default_int(settings, "input_resolution", 640);
 	obs_data_set_default_int(settings, "num_threads", 4);
 	obs_data_set_default_double(settings, "confidence_threshold", 0.5);
@@ -1564,6 +1593,15 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	}
 	
 	tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
+	
+#ifdef HAVE_CUDA
+	tf->useGpuTextureInference = obs_data_get_bool(settings, "use_gpu_texture_inference");
+	// 只有在使用CUDA或TensorRT时才启用GPU纹理推理
+	if (tf->useGpuTextureInference && tf->useGPU != "cuda" && tf->useGPU != "tensorrt") {
+		obs_log(LOG_WARNING, "[YOLO Filter] GPU纹理推理需要CUDA或TensorRT设备，已禁用");
+		tf->useGpuTextureInference = false;
+	}
+#endif
 	tf->nmsThreshold = (float)obs_data_get_double(settings, "nms_threshold");
 	tf->targetClassId = (int)obs_data_get_int(settings, "target_class");
 	tf->inferenceIntervalFrames = (int)obs_data_get_int(settings, "inference_interval_frames");
@@ -3078,7 +3116,31 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (filter->yoloModel) {
+#ifdef HAVE_CUDA
+				// GPU纹理推理路径（阶段2）
+				if (filter->useGpuTextureInference && 
+					filter->yoloModel->isGpuTextureSupported() &&
+					filter->cachedD3D11Texture &&
+					filter->gpuTextureWidth > 0 && 
+					filter->gpuTextureHeight > 0) {
+					
+					bool success = filter->yoloModel->inferenceFromTexture(
+						filter->cachedD3D11Texture,
+						filter->gpuTextureWidth,
+						filter->gpuTextureHeight
+					);
+					
+					if (!success) {
+						// GPU推理失败，回退到CPU路径
+						newDetections = filter->yoloModel->inference(inferenceFrame);
+					}
+				} else {
+					// CPU推理路径
+					newDetections = filter->yoloModel->inference(inferenceFrame);
+				}
+#else
 				newDetections = filter->yoloModel->inference(inferenceFrame);
+#endif
 			}
 		}
 
@@ -3587,6 +3649,12 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisOutputMax = 150.0f;
 		instance->chrisIMax = 100.0f;
 		instance->chrisDFilterAlpha = 0.3f;
+		
+		// GPU纹理推理初始化（阶段2）
+		instance->useGpuTextureInference = false;
+		instance->cachedD3D11Texture = nullptr;
+		instance->gpuTextureWidth = 0;
+		instance->gpuTextureHeight = 0;
 		
 #endif
 
@@ -4121,6 +4189,24 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 			gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 			if (tex) {
+#ifdef HAVE_CUDA
+				// GPU纹理推理路径（阶段2）
+				if (tf->useGpuTextureInference && tf->yoloModel && tf->yoloModel->isGpuTextureSupported()) {
+					void* d3d11Texture = gs_texture_get_obj(tex);
+					if (d3d11Texture) {
+						ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
+						d3dTex->AddRef();
+						
+						if (tf->cachedD3D11Texture) {
+							tf->cachedD3D11Texture->Release();
+						}
+						tf->cachedD3D11Texture = d3dTex;
+						tf->gpuTextureWidth = width;
+						tf->gpuTextureHeight = height;
+					}
+				}
+#endif
+				
 				if (!tf->stagesurface || 
 				    gs_stagesurface_get_width(tf->stagesurface) != width || 
 				    gs_stagesurface_get_height(tf->stagesurface) != height) {

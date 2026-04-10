@@ -6,6 +6,7 @@ project(${_name} VERSION ${_version})
 
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
 option(ENABLE_QT "Use Qt functionality" OFF)
+option(ENABLE_CUDA "Enable CUDA support for GPU texture preprocessing" ON)
 
 set(VCPKG_TARGET_TRIPLET "" CACHE STRING "Vcpkg target triplet to use")
 option(USE_PKGCONFIG "Use pkg-config to find dependencies" ON)
@@ -140,6 +141,33 @@ elseif(MSVC)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/DelayLoad.cpp)
   file(GLOB ONNXRUNTIME_DLL_PDB_FILES "${ONNXRUNTIME_DIR}/lib/*.dll" "${ONNXRUNTIME_DIR}/lib/*.pdb")
   install(FILES ${ONNXRUNTIME_DLL_PDB_FILES} DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit/obs-backgroundremoval")
+
+  if(ENABLE_CUDA)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+      enable_language(CUDA)
+      find_package(CUDAToolkit REQUIRED)
+      
+      set(CUDA_SOURCES
+        src/models/CudaPreprocessor.cu
+      )
+      
+      set_source_files_properties(${CUDA_SOURCES} PROPERTIES LANGUAGE CUDA)
+      set_source_files_properties(${CUDA_SOURCES} PROPERTIES CUDA_ARCHITECTURES "75;86;89")
+      
+      target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CUDA_SOURCES})
+      target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+      target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CUDA::cudart)
+      
+      target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_CUDA)
+      target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+      
+      message(STATUS "CUDA support enabled - CUDA version: ${CUDAToolkit_VERSION}")
+    else()
+      message(WARNING "CUDA compiler not found, CUDA support disabled")
+    endif()
+  endif()
 else()
   if(NOT USE_SYSTEM_ONNXRUNTIME)
     set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")

@@ -14,6 +14,13 @@
 #include <sys/stat.h>
 #endif
 
+// CUDA头文件（阶段2）
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#include <cuda_d3d11_interop.h>
+#include "CudaPreprocessor.cuh"
+#endif
+
 ModelYOLO::LetterboxInfo ModelYOLO::letterbox(const cv::Mat& input, cv::Mat& output) {
     LetterboxInfo info;
     
@@ -59,6 +66,12 @@ ModelYOLO::ModelYOLO(Version version)
       numClasses_(80),
       inputBufferSize_(0),
       useIOBinding_(false),
+      useGpuMemory_(false),
+      gpuAllocator_(nullptr),
+      cudaInteropInitialized_(false),
+      cudaStream_(nullptr),
+      cudaResource_(nullptr),
+      cudaInputBuffer_(nullptr),
       inferenceThreadRunning_(false)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
@@ -110,6 +123,13 @@ ModelYOLO::~ModelYOLO() {
     if (inferenceThread_.joinable()) {
         inferenceThread_.join();
     }
+    
+    // 释放CUDA互操作资源
+    releaseCudaInterop();
+    
+    // 释放GPU内存
+    releaseGpuMemory();
+    
     obs_log(LOG_INFO, "[ModelYOLO] Destroyed");
 }
 
@@ -311,6 +331,24 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                 outputBuffer_.resize(outputSize);
                 
                 useIOBinding_ = true;
+                
+                // 阶段1：初始化GPU持久内存
+                currentDevice_ = currentUseGPU;
+                if (initializeGpuMemory()) {
+                    obs_log(LOG_INFO, "[ModelYOLO] GPU persistent memory initialized successfully");
+                    
+                    // 阶段2：初始化CUDA纹理共享（仅CUDA模式）
+                    if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
+                        if (initializeCudaInterop()) {
+                            obs_log(LOG_INFO, "[ModelYOLO] CUDA texture interop initialized");
+                        } else {
+                            obs_log(LOG_WARNING, "[ModelYOLO] CUDA interop init failed, texture sharing disabled");
+                        }
+                    }
+                } else {
+                    obs_log(LOG_WARNING, "[ModelYOLO] GPU memory init failed, using CPU fallback");
+                }
+                
                 obs_log(LOG_INFO, "[ModelYOLO] IOBinding enabled for GPU optimization");
             } catch (const std::exception& e) {
                 obs_log(LOG_WARNING, "[ModelYOLO] Failed to initialize IOBinding: %s, using standard inference", e.what());
@@ -885,4 +923,264 @@ void ModelYOLO::setInputResolution(int resolution) {
     obs_log(LOG_WARNING, "[ModelYOLO] setInputResolution is disabled. Input resolution is determined by model.");
     obs_log(LOG_WARNING, "[ModelYOLO] Current model input size: %dx%d", inputWidth_, inputHeight_);
     // 不执行任何修改
+}
+
+// ============================================================================
+// 阶段1：GPU持久内存管理
+// ============================================================================
+
+bool ModelYOLO::initializeGpuMemory() {
+    if (!session_ || !ioBinding_) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Cannot init GPU memory: session or IOBinding not ready");
+        return false;
+    }
+    
+    try {
+        // 创建GPU内存信息
+        if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
+#ifdef HAVE_ONNXRUNTIME_CUDA_EP
+            gpuMemInfo_ = Ort::MemoryInfo::CreateCpu(
+                OrtDeviceAllocator, OrtMemTypeDefault
+            );
+            
+            // 创建CUDA分配器
+            gpuAllocator_ = new Ort::Allocator(*session_, gpuMemInfo_);
+            
+            // 预分配GPU输入张量
+            std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
+            gpuInputTensor_ = Ort::Value::CreateTensor<float>(
+                *gpuAllocator_, inputShape.data(), inputShape.size()
+            );
+            
+            // 预分配GPU输出张量
+            if (!outputDims_.empty()) {
+                gpuOutputTensor_ = Ort::Value::CreateTensor<float>(
+                    *gpuAllocator_, outputDims_[0].data(), outputDims_[0].size()
+                );
+            }
+            
+            useGpuMemory_ = true;
+            obs_log(LOG_INFO, "[ModelYOLO] CUDA persistent memory allocated: input %dx%d", 
+                    inputWidth_, inputHeight_);
+            return true;
+#else
+            obs_log(LOG_WARNING, "[ModelYOLO] CUDA EP not available, using CPU memory");
+            return false;
+#endif
+        } else if (currentDevice_ == "dml") {
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+            // DirectML使用CPU内存作为暂存，但IOBinding仍然有效
+            gpuMemInfo_ = Ort::MemoryInfo::CreateCpu(
+                OrtArenaAllocator, OrtMemTypeDefault
+            );
+            
+            useGpuMemory_ = false;  // DML不使用真正的GPU内存分配
+            obs_log(LOG_INFO, "[ModelYOLO] DirectML mode: using IOBinding with CPU memory");
+            return true;
+#else
+            return false;
+#endif
+        }
+        
+        return false;
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize GPU memory: %s", e.what());
+        useGpuMemory_ = false;
+        return false;
+    }
+}
+
+void ModelYOLO::releaseGpuMemory() {
+    if (gpuAllocator_) {
+        delete gpuAllocator_;
+        gpuAllocator_ = nullptr;
+    }
+    
+    // Ort::Value会自动释放
+    gpuInputTensor_ = Ort::Value(nullptr);
+    gpuOutputTensor_ = Ort::Value(nullptr);
+    
+    useGpuMemory_ = false;
+    obs_log(LOG_INFO, "[ModelYOLO] GPU memory released");
+}
+
+// ============================================================================
+// 阶段2：CUDA纹理共享
+// ============================================================================
+
+bool ModelYOLO::initializeCudaInterop() {
+#ifdef HAVE_CUDA
+    if (!useGpuMemory_) {
+        obs_log(LOG_WARNING, "[ModelYOLO] Cannot init CUDA interop: GPU memory not initialized");
+        return false;
+    }
+    
+    try {
+        // 创建CUDA流
+        cudaStream_t stream;
+        cudaError_t err = cudaStreamCreate(&stream);
+        if (err != cudaSuccess) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create CUDA stream: %s", 
+                    cudaGetErrorString(err));
+            return false;
+        }
+        cudaStream_ = stream;
+        
+        cudaInteropInitialized_ = true;
+        obs_log(LOG_INFO, "[ModelYOLO] CUDA interop initialized");
+        return true;
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] CUDA interop init failed: %s", e.what());
+        return false;
+    }
+#else
+    obs_log(LOG_WARNING, "[ModelYOLO] CUDA not available for texture interop");
+    return false;
+#endif
+}
+
+void ModelYOLO::releaseCudaInterop() {
+#ifdef HAVE_CUDA
+    if (cudaResource_) {
+        cudaGraphicsUnregisterResource(cudaResource_);
+        cudaResource_ = nullptr;
+    }
+    
+    if (cudaStream_) {
+        cudaStreamDestroy(static_cast<cudaStream_t>(cudaStream_));
+        cudaStream_ = nullptr;
+    }
+    
+    if (cudaInputBuffer_) {
+        cudaFree(cudaInputBuffer_);
+        cudaInputBuffer_ = nullptr;
+    }
+    
+    cudaInteropInitialized_ = false;
+    obs_log(LOG_INFO, "[ModelYOLO] CUDA interop released");
+#endif
+}
+
+bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) {
+#ifdef HAVE_CUDA
+    if (!cudaInteropInitialized_ || !session_) {
+        return false;
+    }
+    
+    try {
+        ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
+        if (!d3dTex) return false;
+        
+        cudaStream_t stream = static_cast<cudaStream_t>(cudaStream_);
+        
+        if (!cudaResource_) {
+            cudaError_t err = cudaGraphicsD3D11RegisterResource(
+                &cudaResource_, d3dTex, cudaGraphicsRegisterFlagsNone);
+            if (err != cudaSuccess) {
+                obs_log(LOG_ERROR, "[ModelYOLO] Failed to register D3D11 texture: %s",
+                        cudaGetErrorString(err));
+                return false;
+            }
+        }
+        
+        cudaError_t err = cudaGraphicsMapResources(1, &cudaResource_, stream);
+        if (err != cudaSuccess) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to map texture: %s", 
+                    cudaGetErrorString(err));
+            return false;
+        }
+        
+        cudaArray_t cudaArray;
+        err = cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource_, 0, 0);
+        if (err != cudaSuccess) {
+            cudaGraphicsUnmapResources(1, &cudaResource_, stream);
+            return false;
+        }
+        
+        size_t requiredSize = 3 * inputHeight_ * inputWidth_ * sizeof(float);
+        if (!cudaInputBuffer_) {
+            err = cudaMalloc(&cudaInputBuffer_, requiredSize);
+            if (err != cudaSuccess) {
+                obs_log(LOG_ERROR, "[ModelYOLO] Failed to allocate CUDA input buffer: %s",
+                        cudaGetErrorString(err));
+                cudaGraphicsUnmapResources(1, &cudaResource_, stream);
+                return false;
+            }
+        }
+        
+        bool preprocessSuccess = cudaLetterboxAndPreprocess(
+            cudaArray,
+            static_cast<float*>(cudaInputBuffer_),
+            inputWidth_,
+            inputHeight_,
+            stream
+        );
+        
+        cudaGraphicsUnmapResources(1, &cudaResource_, stream);
+        
+        if (!preprocessSuccess) {
+            obs_log(LOG_ERROR, "[ModelYOLO] CUDA letterbox preprocessing failed");
+            return false;
+        }
+        
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            obs_log(LOG_ERROR, "[ModelYOLO] CUDA stream sync failed: %s", 
+                    cudaGetErrorString(err));
+            return false;
+        }
+        
+        cudaMemcpy(inputBuffer_.data(), cudaInputBuffer_, requiredSize, cudaMemcpyDeviceToHost);
+        
+        std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
+        Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+            OrtArenaAllocator, OrtMemTypeDefault
+        );
+        
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo,
+            inputBuffer_.data(),
+            inputBufferSize_,
+            inputShape.data(),
+            inputShape.size()
+        );
+        
+        std::vector<Ort::Value> inputTensors;
+        inputTensors.push_back(std::move(inputTensor));
+        
+        std::vector<const char*> inputNamesChar;
+        for (const auto& name : inputNames_) {
+            inputNamesChar.push_back(name.get());
+        }
+        
+        std::vector<const char*> outputNamesChar;
+        for (const auto& name : outputNames_) {
+            outputNamesChar.push_back(name.get());
+        }
+        
+        Ort::RunOptions runOptions;
+        std::vector<Ort::Value> outputTensors = session_->Run(
+            runOptions,
+            inputNamesChar.data(),
+            inputTensors.data(),
+            inputTensors.size(),
+            outputNamesChar.data(),
+            outputNamesChar.size()
+        );
+        
+        if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
+            return false;
+        }
+        
+        return true;
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] Texture inference failed: %s", e.what());
+        return false;
+    }
+#else
+    (void)d3d11Texture;
+    (void)width;
+    (void)height;
+    return false;
+#endif
 }
