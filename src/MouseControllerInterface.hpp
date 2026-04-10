@@ -12,10 +12,10 @@ enum class ControllerType {
 };
 
 enum class AlgorithmType {
-    AdvancedPID,  // 高级PID（当前使用的自适应PID）
-    StandardPID,  // 标准PID（经典PID）
-    DopaPID,      // DopaPID（开源PID+预测）
-    ChrisPID      // ChrisPID（克里斯控制器）
+    AdvancedPID,      // 高级PID（当前使用的自适应PID）
+    StandardPID,      // 标准PID（经典PID）
+    ChrisPID,         // ChrisPID（克里斯控制器）
+    GaussianGravity   // 高斯引力控制器
 };
 
 // PID数据回调函数类型
@@ -126,22 +126,6 @@ struct MouseControllerConfig {
     float bezierCurvature = 0.3f;
     float bezierRandomness = 0.2f;
     
-    // DopaPID参数（完全复刻dopa开源pid）
-    float dopaKpX = 0.8f;
-    float dopaKpY = 0.6f;
-    float dopaKiX = 0.005f;
-    float dopaKiY = 0.004f;
-    float dopaKdX = 0.025f;
-    float dopaKdY = 0.03f;
-    float dopaWindupGuardX = 50.0f;
-    float dopaWindupGuardY = 50.0f;
-    float dopaOutputLimitMinX = -50.0f;
-    float dopaOutputLimitMaxX = 50.0f;
-    float dopaOutputLimitMinY = -50.0f;
-    float dopaOutputLimitMaxY = 50.0f;
-    float dopaPredWeight = 0.8f;
-    int dopaGameFps = 60;
-    
     // ChrisPID参数（完全复刻克里斯控制器）
     float chrisKp = 0.45f;
     float chrisKi = 0.02f;
@@ -154,8 +138,12 @@ struct MouseControllerConfig {
     float chrisIMax = 100.0f;
     float chrisDFilterAlpha = 0.3f;  // D项滤波系数
     
-    // DopaPID D项滤波
-    float dopaDFilterAlpha = 0.3f;  // D项滤波系数
+    // 高斯引力控制器参数
+    float gravityStrength = 0.5f;      // 引力强度
+    float gravityMaxDistance = 500.0f;  // 最大作用距离
+    float gravitySoftEpsilon = 100.0f;  // 软化系数
+    float gravityMaxForce = 100.0f;     // 最大输出力
+    float gravitySmoothingFactor = 0.3f; // 输出平滑因子
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重

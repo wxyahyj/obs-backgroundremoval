@@ -245,8 +245,8 @@ if(WIN32)
       src/HungarianAlgorithm.cpp
       src/LogitechMacroConverter.cpp
       src/RecoilPatternManager.cpp
-      src/DopaPIDController.cpp
       src/ChrisPIDController.cpp
+      src/GaussianGravityController.cpp
       src/HillClimbingOptimizer.cpp
   )
 endif()

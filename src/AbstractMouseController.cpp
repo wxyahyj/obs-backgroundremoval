@@ -104,18 +104,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         float savedStdSmoothingY = config.stdSmoothingY;
         float savedStdMaxPredTime = config.maxPredictionTime;
         
-        // DopaPID 参数 (10个)
-        float savedDopaKpX = config.dopaKpX;
-        float savedDopaKpY = config.dopaKpY;
-        float savedDopaKiX = config.dopaKiX;
-        float savedDopaKiY = config.dopaKiY;
-        float savedDopaKdX = config.dopaKdX;
-        float savedDopaKdY = config.dopaKdY;
-        float savedDopaPredWeight = config.dopaPredWeight;
-        float savedDopaDFilterAlpha = config.dopaDFilterAlpha;
-        float savedDopaSmoothX = config.aimSmoothingX;
-        float savedDopaSmoothY = config.aimSmoothingY;
-        
         // ChrisPID 参数 (8个)
         float savedChrisKp = config.chrisKp;
         float savedChrisKi = config.chrisKi;
@@ -151,18 +139,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                 config.stdSmoothingX = savedStdSmoothingX;
                 config.stdSmoothingY = savedStdSmoothingY;
                 config.maxPredictionTime = savedStdMaxPredTime;
-                break;
-            case AlgorithmType::DopaPID:
-                config.dopaKpX = savedDopaKpX;
-                config.dopaKpY = savedDopaKpY;
-                config.dopaKiX = savedDopaKiX;
-                config.dopaKiY = savedDopaKiY;
-                config.dopaKdX = savedDopaKdX;
-                config.dopaKdY = savedDopaKdY;
-                config.dopaPredWeight = savedDopaPredWeight;
-                config.dopaDFilterAlpha = savedDopaDFilterAlpha;
-                config.aimSmoothingX = savedDopaSmoothX;
-                config.aimSmoothingY = savedDopaSmoothY;
                 break;
             case AlgorithmType::ChrisPID:
                 config.chrisKp = savedChrisKp;
@@ -318,7 +294,6 @@ void AbstractMouseController::tick()
             // 目标丢失时只重置预测器，不重置积分项
             // 这样积分可以继续累积，PI控制才能真正发挥作用
             predictor.reset();
-            dopaController_.resetPredictor();
             chrisController_.resetPredictor();
             resetMotionState();
         }
@@ -461,62 +436,6 @@ void AbstractMouseController::tick()
         filteredDeltaErrorY = 0.0f;
         integralX = 0.0f;
         integralY = 0.0f;
-    } else if (config.algorithmType == AlgorithmType::DopaPID) {
-        DopaPIDConfig dopaConfig;
-        dopaConfig.kpX = config.dopaKpX;
-        dopaConfig.kpY = config.dopaKpY;
-        dopaConfig.kiX = config.dopaKiX;
-        dopaConfig.kiY = config.dopaKiY;
-        dopaConfig.kdX = config.dopaKdX;
-        dopaConfig.kdY = config.dopaKdY;
-        dopaConfig.windupGuardX = config.dopaWindupGuardX;
-        dopaConfig.windupGuardY = config.dopaWindupGuardY;
-        dopaConfig.outputLimitMinX = config.dopaOutputLimitMinX;
-        dopaConfig.outputLimitMaxX = config.dopaOutputLimitMaxX;
-        dopaConfig.outputLimitMinY = config.dopaOutputLimitMinY;
-        dopaConfig.outputLimitMaxY = config.dopaOutputLimitMaxY;
-        dopaConfig.predWeight = config.dopaPredWeight;
-        dopaConfig.gameFps = config.dopaGameFps;
-        dopaConfig.dFilterAlpha = config.dopaDFilterAlpha;
-        
-        dopaController_.setConfig(dopaConfig);
-        dopaController_.compute(targetPixelX, targetPixelY, fovCenterX, fovCenterY, moveX, moveY);
-        
-        static int dopaLogCounter = 0;
-        if (++dopaLogCounter >= 30) {
-            dopaLogCounter = 0;
-            blog(LOG_INFO, "[DopaPID] errorX=%.1f errorY=%.1f | moveX=%.1f moveY=%.1f | kpX=%.2f kpY=%.2f",
-                 errorX, errorY, moveX, moveY, config.dopaKpX, config.dopaKpY);
-        }
-        
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.dopaKpX;
-            data.currentKi = config.dopaKiX;
-            data.currentKd = config.dopaKdX;
-            pidDataCallback_(data);
-        }
-        
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::ChrisPID) {
         ChrisPIDConfig chrisConfig;
         chrisConfig.kp = config.chrisKp;
@@ -555,6 +474,56 @@ void AbstractMouseController::tick()
             data.currentKp = config.chrisKp;
             data.currentKi = config.chrisKi;
             data.currentKd = config.chrisKd;
+            pidDataCallback_(data);
+        }
+        
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 0.0f;
+    } else if (config.algorithmType == AlgorithmType::GaussianGravity) {
+        GaussianGravityConfig ggConfig;
+        ggConfig.gravityStrength = config.gravityStrength;
+        ggConfig.maxDistance = config.gravityMaxDistance;
+        ggConfig.softEpsilon = config.gravitySoftEpsilon;
+        ggConfig.maxForce = config.gravityMaxForce;
+        ggConfig.smoothingFactor = config.gravitySmoothingFactor;
+        ggConfig.confidenceScale = true;
+        ggConfig.predictionWeight = config.predictionWeightX;
+        
+        gravityController_.setConfig(ggConfig);
+        
+        float outX = 0.0f, outY = 0.0f;
+        gravityController_.compute(targetPixelX, targetPixelY, 
+                                   targetPixelX - errorX, targetPixelY - errorY,
+                                   target ? target->confidence : 1.0f,
+                                   targetVelocityX, targetVelocityY,
+                                   outX, outY);
+        
+        moveX = outX;
+        moveY = outY;
+        
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.gravityStrength;
+            data.currentKi = 0.0f;
+            data.currentKd = 0.0f;
             pidDataCallback_(data);
         }
         
@@ -1034,7 +1003,6 @@ void AbstractMouseController::resetPidState()
     pendingTargetTrackId = -1;
     pendingTargetScore = 0.0f;
     currentTargetScore = 0.0f;
-    dopaController_.reset();
     chrisController_.reset();
 }
 
@@ -1151,24 +1119,6 @@ std::vector<float> AbstractMouseController::extractCurrentParameters()
                     config.stdKp, config.stdKi, config.stdKd);
             break;
             
-        case AlgorithmType::DopaPID:
-            // 10个参数
-            params = {
-                config.dopaKpX,           // 0
-                config.dopaKpY,           // 1
-                config.dopaKiX,           // 2
-                config.dopaKiY,           // 3
-                config.dopaKdX,           // 4
-                config.dopaKdY,           // 5
-                config.dopaPredWeight,    // 6
-                config.dopaDFilterAlpha,  // 7
-                config.aimSmoothingX,     // 8
-                config.aimSmoothingY      // 9
-            };
-            obs_log(LOG_INFO, "[AutoTune] 提取DopaPID参数: KpX=%.3f KpY=%.3f PredW=%.3f",
-                    config.dopaKpX, config.dopaKpY, config.dopaPredWeight);
-            break;
-            
         case AlgorithmType::ChrisPID:
             // 8个参数
             params = {
@@ -1225,24 +1175,6 @@ void AbstractMouseController::applyOptimizedParameters(const std::vector<float>&
                 
                 obs_log(LOG_INFO, "[AutoTune] StandardPID更新: Kp=%.3f Ki=%.4f Kd=%.4f SmoothX=%.2f",
                         config.stdKp, config.stdKi, config.stdKd, config.stdSmoothingX);
-            }
-            break;
-            
-        case AlgorithmType::DopaPID:
-            if (params.size() >= 10) {
-                config.dopaKpX = params[0];
-                config.dopaKpY = params[1];
-                config.dopaKiX = params[2];
-                config.dopaKiY = params[3];
-                config.dopaKdX = params[4];
-                config.dopaKdY = params[5];
-                config.dopaPredWeight = params[6];
-                config.dopaDFilterAlpha = params[7];
-                config.aimSmoothingX = params[8];
-                config.aimSmoothingY = params[9];
-                
-                obs_log(LOG_INFO, "[AutoTune] DopaPID更新: KpX=%.3f KpY=%.3f PredW=%.3f SmoothX=%.2f",
-                        config.dopaKpX, config.dopaKpY, config.dopaPredWeight, config.aimSmoothingX);
             }
             break;
             

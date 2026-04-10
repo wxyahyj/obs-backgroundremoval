@@ -11,8 +11,8 @@
 #include <string>
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
-#include "DopaPIDController.hpp"
 #include "ChrisPIDController.hpp"
+#include "GaussianGravityController.hpp"
 #include "HillClimbingOptimizer.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
@@ -71,8 +71,8 @@ protected:
     
     DerivativePredictor predictor;
 
-    DopaDualAxisPID dopaController_;
     ChrisAimController chrisController_;
+    GaussianGravityController gravityController_;
 
     std::chrono::steady_clock::time_point lastTickTime;
     float deltaTime;

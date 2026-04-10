@@ -234,6 +234,23 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["bezierCurvature"] = config.bezierCurvature;
     j["bezierRandomness"] = config.bezierRandomness;
     
+    j["chrisKp"] = config.chrisKp;
+    j["chrisKi"] = config.chrisKi;
+    j["chrisKd"] = config.chrisKd;
+    j["chrisPredWeightX"] = config.chrisPredWeightX;
+    j["chrisPredWeightY"] = config.chrisPredWeightY;
+    j["chrisInitScale"] = config.chrisInitScale;
+    j["chrisRampTime"] = config.chrisRampTime;
+    j["chrisOutputMax"] = config.chrisOutputMax;
+    j["chrisIMax"] = config.chrisIMax;
+    j["chrisDFilterAlpha"] = config.chrisDFilterAlpha;
+    
+    j["gravityStrength"] = config.gravityStrength;
+    j["gravityMaxDistance"] = config.gravityMaxDistance;
+    j["gravitySoftEpsilon"] = config.gravitySoftEpsilon;
+    j["gravityMaxForce"] = config.gravityMaxForce;
+    j["gravitySmoothingFactor"] = config.gravitySmoothingFactor;
+    
     return j;
 }
 
@@ -320,6 +337,23 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("enableBezierMovement")) config.enableBezierMovement = j["enableBezierMovement"].get<bool>();
         if (j.contains("bezierCurvature")) config.bezierCurvature = j["bezierCurvature"].get<float>();
         if (j.contains("bezierRandomness")) config.bezierRandomness = j["bezierRandomness"].get<float>();
+        
+        if (j.contains("chrisKp")) config.chrisKp = j["chrisKp"].get<float>();
+        if (j.contains("chrisKi")) config.chrisKi = j["chrisKi"].get<float>();
+        if (j.contains("chrisKd")) config.chrisKd = j["chrisKd"].get<float>();
+        if (j.contains("chrisPredWeightX")) config.chrisPredWeightX = j["chrisPredWeightX"].get<float>();
+        if (j.contains("chrisPredWeightY")) config.chrisPredWeightY = j["chrisPredWeightY"].get<float>();
+        if (j.contains("chrisInitScale")) config.chrisInitScale = j["chrisInitScale"].get<float>();
+        if (j.contains("chrisRampTime")) config.chrisRampTime = j["chrisRampTime"].get<float>();
+        if (j.contains("chrisOutputMax")) config.chrisOutputMax = j["chrisOutputMax"].get<float>();
+        if (j.contains("chrisIMax")) config.chrisIMax = j["chrisIMax"].get<float>();
+        if (j.contains("chrisDFilterAlpha")) config.chrisDFilterAlpha = j["chrisDFilterAlpha"].get<float>();
+        
+        if (j.contains("gravityStrength")) config.gravityStrength = j["gravityStrength"].get<float>();
+        if (j.contains("gravityMaxDistance")) config.gravityMaxDistance = j["gravityMaxDistance"].get<float>();
+        if (j.contains("gravitySoftEpsilon")) config.gravitySoftEpsilon = j["gravitySoftEpsilon"].get<float>();
+        if (j.contains("gravityMaxForce")) config.gravityMaxForce = j["gravityMaxForce"].get<float>();
+        if (j.contains("gravitySmoothingFactor")) config.gravitySmoothingFactor = j["gravitySmoothingFactor"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {

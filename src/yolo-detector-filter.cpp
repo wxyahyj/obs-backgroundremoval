@@ -475,22 +475,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::string configName;
 	std::string configList;
 
-	// DopaPID参数
-	float dopaKpX;
-	float dopaKpY;
-	float dopaKiX;
-	float dopaKiY;
-	float dopaKdX;
-	float dopaKdY;
-	float dopaWindupGuardX;
-	float dopaWindupGuardY;
-	float dopaOutputLimitMinX;
-	float dopaOutputLimitMaxX;
-	float dopaOutputLimitMinY;
-	float dopaOutputLimitMaxY;
-	float dopaPredWeight;
-	int dopaGameFps;
-
 	// ChrisPID参数
 	float chrisKp;
 	float chrisKi;
@@ -502,7 +486,13 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisOutputMax;
 	float chrisIMax;
 	float chrisDFilterAlpha;
-	float dopaDFilterAlpha;
+	
+	// 高斯引力参数
+	float gravityStrength;
+	float gravityMaxDistance;
+	float gravitySoftEpsilon;
+	float gravityMaxForce;
+	float gravitySmoothingFactor;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -991,9 +981,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *algorithmTypeList = obs_properties_add_list(props, "algorithm_type_global", "控制算法", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(algorithmTypeList, "高级PID (自适应)", 0);
 	obs_property_list_add_int(algorithmTypeList, "标准PID (经典)", 1);
-	obs_property_list_add_int(algorithmTypeList, "DopaPID (开源PID+预测)", 2);
-	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 3);
-	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；DopaPID是开源PID实现；ChrisPID是克里斯控制器");
+	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 2);
+	obs_property_list_add_int(algorithmTypeList, "高斯引力控制器", 3);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；高斯引力控制器使用引力场模型");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 标准PID配置分组
@@ -1025,38 +1015,18 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *stdSmoothingYProp = obs_properties_add_float_slider(props, "std_smoothing_y_global", "Y轴平滑度", 0.0, 1.0, 0.01);
 	obs_property_set_long_description(stdSmoothingYProp, "标准PID输出Y轴平滑系数，值越大响应越快，值越小越平滑");
 
-	// DopaPID参数
-	obs_properties_add_group(props, "dopa_pid_group", "DopaPID配置", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *dopaKpXProp = obs_properties_add_float_slider(props, "dopa_kp_x", "DopaPID-KpX", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(dopaKpXProp, "DopaPID X轴比例系数");
-	obs_property_t *dopaKpYProp = obs_properties_add_float_slider(props, "dopa_kp_y", "DopaPID-KpY", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(dopaKpYProp, "DopaPID Y轴比例系数");
-	obs_property_t *dopaKiXProp = obs_properties_add_float_slider(props, "dopa_ki_x", "DopaPID-KiX", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(dopaKiXProp, "DopaPID X轴积分系数");
-	obs_property_t *dopaKiYProp = obs_properties_add_float_slider(props, "dopa_ki_y", "DopaPID-KiY", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(dopaKiYProp, "DopaPID Y轴积分系数");
-	obs_property_t *dopaKdXProp = obs_properties_add_float_slider(props, "dopa_kd_x", "DopaPID-KdX", 0.0, 0.1, 0.001);
-	obs_property_set_long_description(dopaKdXProp, "DopaPID X轴微分系数");
-	obs_property_t *dopaKdYProp = obs_properties_add_float_slider(props, "dopa_kd_y", "DopaPID-KdY", 0.0, 0.1, 0.001);
-	obs_property_set_long_description(dopaKdYProp, "DopaPID Y轴微分系数");
-	obs_property_t *dopaWindupGuardXProp = obs_properties_add_float_slider(props, "dopa_windup_guard_x", "抗饱和限制X", 0.0, 200.0, 1.0);
-	obs_property_set_long_description(dopaWindupGuardXProp, "DopaPID X轴积分抗饱和限制");
-	obs_property_t *dopaWindupGuardYProp = obs_properties_add_float_slider(props, "dopa_windup_guard_y", "抗饱和限制Y", 0.0, 200.0, 1.0);
-	obs_property_set_long_description(dopaWindupGuardYProp, "DopaPID Y轴积分抗饱和限制");
-	obs_property_t *dopaOutputLimitMinXProp = obs_properties_add_float_slider(props, "dopa_output_limit_min_x", "输出下限X", -500.0, 0.0, 1.0);
-	obs_property_set_long_description(dopaOutputLimitMinXProp, "DopaPID X轴输出最小值");
-	obs_property_t *dopaOutputLimitMaxXProp = obs_properties_add_float_slider(props, "dopa_output_limit_max_x", "输出上限X", 0.0, 500.0, 1.0);
-	obs_property_set_long_description(dopaOutputLimitMaxXProp, "DopaPID X轴输出最大值");
-	obs_property_t *dopaOutputLimitMinYProp = obs_properties_add_float_slider(props, "dopa_output_limit_min_y", "输出下限Y", -500.0, 0.0, 1.0);
-	obs_property_set_long_description(dopaOutputLimitMinYProp, "DopaPID Y轴输出最小值");
-	obs_property_t *dopaOutputLimitMaxYProp = obs_properties_add_float_slider(props, "dopa_output_limit_max_y", "输出上限Y", 0.0, 500.0, 1.0);
-	obs_property_set_long_description(dopaOutputLimitMaxYProp, "DopaPID Y轴输出最大值");
-	obs_property_t *dopaPredWeightProp = obs_properties_add_float_slider(props, "dopa_pred_weight", "预测权重", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(dopaPredWeightProp, "DopaPID预测权重，越大预测影响越大");
-	obs_property_t *dopaGameFpsProp = obs_properties_add_int_slider(props, "dopa_game_fps", "游戏帧率", 30, 240, 1);
-	obs_property_set_long_description(dopaGameFpsProp, "游戏帧率，用于计算预测时间步长");
-	obs_property_t *dopaDFilterAlphaProp = obs_properties_add_float_slider(props, "dopa_d_filter_alpha", "D项滤波系数", 0.1, 1.0, 0.05);
-	obs_property_set_long_description(dopaDFilterAlphaProp, "DopaPID D项滤波系数，1.0=无滤波，0.1=强滤波");
+	// 高斯引力控制器参数
+	obs_properties_add_group(props, "gaussian_gravity_group", "高斯引力配置", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *gravityStrengthProp = obs_properties_add_float_slider(props, "gravity_strength", "引力强度", 0.0, 2.0, 0.01);
+	obs_property_set_long_description(gravityStrengthProp, "高斯引力强度系数，控制引力场强度");
+	obs_property_t *gravityMaxDistanceProp = obs_properties_add_float_slider(props, "gravity_max_distance", "最大作用距离", 10.0, 1000.0, 10.0);
+	obs_property_set_long_description(gravityMaxDistanceProp, "引力场的最大作用距离(像素)");
+	obs_property_t *gravitySoftEpsilonProp = obs_properties_add_float_slider(props, "gravity_soft_epsilon", "软化系数", 10.0, 500.0, 10.0);
+	obs_property_set_long_description(gravitySoftEpsilonProp, "高斯函数的软化系数，控制引力衰减速度");
+	obs_property_t *gravityMaxForceProp = obs_properties_add_float_slider(props, "gravity_max_force", "最大输出力", 10.0, 300.0, 10.0);
+	obs_property_set_long_description(gravityMaxForceProp, "引力控制器的最大输出力限制");
+	obs_property_t *gravitySmoothingProp = obs_properties_add_float_slider(props, "gravity_smoothing_factor", "输出平滑因子", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(gravitySmoothingProp, "输出平滑系数，值越大越平滑");
 
 	// ChrisPID参数
 	obs_properties_add_group(props, "chris_pid_group", "ChrisPID配置", OBS_GROUP_NORMAL, nullptr);
@@ -1340,36 +1310,26 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "std_smoothing_x_global"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "std_smoothing_y_global"), page == 3 && algorithm == 1);
 
-	// DopaPID参数组（选择2时显示）
-	obs_property_set_visible(obs_properties_get(props, "dopa_pid_group"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_kp_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_kp_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_ki_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_ki_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_kd_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_kd_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_windup_guard_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_windup_guard_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_output_limit_min_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_output_limit_max_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_output_limit_min_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_output_limit_max_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_pred_weight"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_game_fps"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "dopa_d_filter_alpha"), page == 3 && algorithm == 2);
+	// ChrisPID参数组（选择2时显示）
+	obs_property_set_visible(obs_properties_get(props, "chris_pid_group"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_kp"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_ki"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_kd"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_pred_weight_x"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_pred_weight_y"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_init_scale"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_ramp_time"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_output_max"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 2);
+	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 2);
 
-	// ChrisPID参数组（选择3时显示）
-	obs_property_set_visible(obs_properties_get(props, "chris_pid_group"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_kp"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_ki"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_kd"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_pred_weight_x"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_pred_weight_y"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_init_scale"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_ramp_time"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_output_max"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 3);
+	// 高斯引力参数组（选择3时显示）
+	obs_property_set_visible(obs_properties_get(props, "gaussian_gravity_group"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "gravity_strength"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "gravity_max_distance"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "gravity_soft_epsilon"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "gravity_max_force"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "gravity_smoothing_factor"), page == 3 && algorithm == 3);
 
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
@@ -1622,6 +1582,25 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "std_derivative_filter_alpha_global", 0.2);
     obs_data_set_default_double(settings, "std_smoothing_x_global", 0.7);
     obs_data_set_default_double(settings, "std_smoothing_y_global", 0.5);
+    
+    // 高斯引力参数默认值
+    obs_data_set_default_double(settings, "gravity_strength", 0.5);
+    obs_data_set_default_double(settings, "gravity_max_distance", 500.0);
+    obs_data_set_default_double(settings, "gravity_soft_epsilon", 100.0);
+    obs_data_set_default_double(settings, "gravity_max_force", 100.0);
+    obs_data_set_default_double(settings, "gravity_smoothing_factor", 0.3);
+    
+    // ChrisPID参数默认值
+    obs_data_set_default_double(settings, "chris_kp", 0.45);
+    obs_data_set_default_double(settings, "chris_ki", 0.02);
+    obs_data_set_default_double(settings, "chris_kd", 0.04);
+    obs_data_set_default_double(settings, "chris_pred_weight_x", 0.5);
+    obs_data_set_default_double(settings, "chris_pred_weight_y", 0.1);
+    obs_data_set_default_double(settings, "chris_init_scale", 0.6);
+    obs_data_set_default_double(settings, "chris_ramp_time", 0.5);
+    obs_data_set_default_double(settings, "chris_output_max", 150.0);
+    obs_data_set_default_double(settings, "chris_i_max", 100.0);
+    obs_data_set_default_double(settings, "chris_d_filter_alpha", 0.3);
 #endif
 }
 
@@ -1958,22 +1937,12 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->stdSmoothingXGlobal = (float)obs_data_get_double(settings, "std_smoothing_x_global");
 	tf->stdSmoothingYGlobal = (float)obs_data_get_double(settings, "std_smoothing_y_global");
 
-	// 读取DopaPID参数
-	tf->dopaKpX = (float)obs_data_get_double(settings, "dopa_kp_x");
-	tf->dopaKpY = (float)obs_data_get_double(settings, "dopa_kp_y");
-	tf->dopaKiX = (float)obs_data_get_double(settings, "dopa_ki_x");
-	tf->dopaKiY = (float)obs_data_get_double(settings, "dopa_ki_y");
-	tf->dopaKdX = (float)obs_data_get_double(settings, "dopa_kd_x");
-	tf->dopaKdY = (float)obs_data_get_double(settings, "dopa_kd_y");
-	tf->dopaWindupGuardX = (float)obs_data_get_double(settings, "dopa_windup_guard_x");
-	tf->dopaWindupGuardY = (float)obs_data_get_double(settings, "dopa_windup_guard_y");
-	tf->dopaOutputLimitMinX = (float)obs_data_get_double(settings, "dopa_output_limit_min_x");
-	tf->dopaOutputLimitMaxX = (float)obs_data_get_double(settings, "dopa_output_limit_max_x");
-	tf->dopaOutputLimitMinY = (float)obs_data_get_double(settings, "dopa_output_limit_min_y");
-	tf->dopaOutputLimitMaxY = (float)obs_data_get_double(settings, "dopa_output_limit_max_y");
-	tf->dopaPredWeight = (float)obs_data_get_double(settings, "dopa_pred_weight");
-	tf->dopaGameFps = (int)obs_data_get_int(settings, "dopa_game_fps");
-	tf->dopaDFilterAlpha = (float)obs_data_get_double(settings, "dopa_d_filter_alpha");
+	// 读取高斯引力参数
+	tf->gravityStrength = (float)obs_data_get_double(settings, "gravity_strength");
+	tf->gravityMaxDistance = (float)obs_data_get_double(settings, "gravity_max_distance");
+	tf->gravitySoftEpsilon = (float)obs_data_get_double(settings, "gravity_soft_epsilon");
+	tf->gravityMaxForce = (float)obs_data_get_double(settings, "gravity_max_force");
+	tf->gravitySmoothingFactor = (float)obs_data_get_double(settings, "gravity_smoothing_factor");
 
 	// 读取ChrisPID参数
 	tf->chrisKp = (float)obs_data_get_double(settings, "chris_kp");
@@ -3740,22 +3709,12 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->configName = "";
 		instance->configList = "";
 
-		// DopaPID参数初始化
-		instance->dopaKpX = 0.8f;
-		instance->dopaKpY = 0.6f;
-		instance->dopaKiX = 0.005f;
-		instance->dopaKiY = 0.004f;
-		instance->dopaKdX = 0.025f;
-		instance->dopaKdY = 0.03f;
-		instance->dopaWindupGuardX = 50.0f;
-		instance->dopaWindupGuardY = 50.0f;
-		instance->dopaOutputLimitMinX = -200.0f;
-		instance->dopaOutputLimitMaxX = 200.0f;
-		instance->dopaOutputLimitMinY = -200.0f;
-		instance->dopaOutputLimitMaxY = 200.0f;
-		instance->dopaPredWeight = 0.8f;
-		instance->dopaGameFps = 60;
-		instance->dopaDFilterAlpha = 0.3f;
+		// 高斯引力参数初始化
+		instance->gravityStrength = 0.5f;
+		instance->gravityMaxDistance = 500.0f;
+		instance->gravitySoftEpsilon = 100.0f;
+		instance->gravityMaxForce = 100.0f;
+		instance->gravitySmoothingFactor = 0.3f;
 
 		// ChrisPID参数初始化
 		instance->chrisKp = 0.45f;
@@ -4066,22 +4025,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.stdDerivativeFilterAlpha = tf->stdDerivativeFilterAlphaGlobal;
 		mcConfig.stdSmoothingX = tf->stdSmoothingXGlobal;
 		mcConfig.stdSmoothingY = tf->stdSmoothingYGlobal;
-		// DopaPID参数（使用全局设置）
-		mcConfig.dopaKpX = tf->dopaKpX;
-		mcConfig.dopaKpY = tf->dopaKpY;
-		mcConfig.dopaKiX = tf->dopaKiX;
-		mcConfig.dopaKiY = tf->dopaKiY;
-		mcConfig.dopaKdX = tf->dopaKdX;
-		mcConfig.dopaKdY = tf->dopaKdY;
-		mcConfig.dopaWindupGuardX = tf->dopaWindupGuardX;
-		mcConfig.dopaWindupGuardY = tf->dopaWindupGuardY;
-		mcConfig.dopaOutputLimitMinX = tf->dopaOutputLimitMinX;
-		mcConfig.dopaOutputLimitMaxX = tf->dopaOutputLimitMaxX;
-		mcConfig.dopaOutputLimitMinY = tf->dopaOutputLimitMinY;
-		mcConfig.dopaOutputLimitMaxY = tf->dopaOutputLimitMaxY;
-		mcConfig.dopaPredWeight = tf->dopaPredWeight;
-		mcConfig.dopaGameFps = tf->dopaGameFps;
-		mcConfig.dopaDFilterAlpha = tf->dopaDFilterAlpha;
 		// ChrisPID参数（使用全局设置）
 		mcConfig.chrisKp = tf->chrisKp;
 		mcConfig.chrisKi = tf->chrisKi;
@@ -4093,6 +4036,12 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
 		mcConfig.chrisIMax = tf->chrisIMax;
 		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
+		// 高斯引力参数（使用全局设置）
+		mcConfig.gravityStrength = tf->gravityStrength;
+		mcConfig.gravityMaxDistance = tf->gravityMaxDistance;
+		mcConfig.gravitySoftEpsilon = tf->gravitySoftEpsilon;
+		mcConfig.gravityMaxForce = tf->gravityMaxForce;
+		mcConfig.gravitySmoothingFactor = tf->gravitySmoothingFactor;
 		// 自动调参系统参数
 		mcConfig.optimizationEnabled = cfg.optimizationEnabled;
 		mcConfig.optimizationMode = cfg.optimizationMode;
