@@ -11,6 +11,7 @@ public:
     ~MouseController();
 
     ControllerType getControllerType() const override { return ControllerType::WindowsAPI; }
+    void updateConfig(const MouseControllerConfig& config) override;
 
 protected:
     void moveMouse(int dx, int dy) override;
@@ -19,6 +20,11 @@ protected:
     bool checkFiring() override;
     
     const char* getLogPrefix() const override { return ""; }
+
+private:
+    bool useAbsoluteMove_ = false;
+    int screenWidth_ = 1920;
+    int screenHeight_ = 1080;
 };
 
 #endif

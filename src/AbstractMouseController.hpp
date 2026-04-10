@@ -12,7 +12,6 @@
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
 #include "ChrisPIDController.hpp"
-#include "HillClimbingOptimizer.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -100,9 +99,6 @@ protected:
     float bezierPhase;
     
     PidDataCallback pidDataCallback_;
-    
-    // 爬山算法优化器
-    HillClimbingOptimizer optimizer_;
 
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;
@@ -125,9 +121,6 @@ protected:
     int getRandomDelay();
     int getRandomDuration();
     float getCurrentPGain();
-    
-    void applyOptimizedParameters(const std::vector<float>& params);
-    std::vector<float> extractCurrentParameters();
     
     virtual const char* getLogPrefix() const;
 

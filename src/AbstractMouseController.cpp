@@ -78,130 +78,13 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                           config.autoTriggerFireDuration != newConfig.autoTriggerFireDuration ||
                           config.autoTriggerInterval != newConfig.autoTriggerInterval);
     
-    // 如果优化器正在运行，保留优化后的参数
-    if (optimizer_.isRunning()) {
-        // 根据算法类型保存优化器调整的参数
-        AlgorithmType algoType = config.algorithmType;
-        
-        // AdvancedPID 参数 (14个)
-        float savedPidPMin = config.pidPMin;
-        float savedPidPMax = config.pidPMax;
-        float savedPidD = config.pidD;
-        float savedPidI = config.pidI;
-        float savedDerivativeFilterAlpha = config.derivativeFilterAlpha;
-        float savedPredX = config.predictionWeightX;
-        float savedPredY = config.predictionWeightY;
-        float savedSmoothX = config.aimSmoothingX;
-        float savedSmoothY = config.aimSmoothingY;
-        float savedMaxPredTime = config.maxPredictionTime;
-        
-        // StandardPID 参数 (7个)
-        float savedStdKp = config.stdKp;
-        float savedStdKi = config.stdKi;
-        float savedStdKd = config.stdKd;
-        float savedStdDerivativeFilterAlpha = config.stdDerivativeFilterAlpha;
-        float savedStdSmoothingX = config.stdSmoothingX;
-        float savedStdSmoothingY = config.stdSmoothingY;
-        float savedStdMaxPredTime = config.maxPredictionTime;
-        
-        // ChrisPID 参数 (8个)
-        float savedChrisKp = config.chrisKp;
-        float savedChrisKi = config.chrisKi;
-        float savedChrisKd = config.chrisKd;
-        float savedChrisPredWeightX = config.chrisPredWeightX;
-        float savedChrisPredWeightY = config.chrisPredWeightY;
-        float savedChrisDFilterAlpha = config.chrisDFilterAlpha;
-        float savedChrisSmoothX = config.aimSmoothingX;
-        float savedChrisSmoothY = config.aimSmoothingY;
-        
-        // 应用新配置
-        config = newConfig;
-        
-        // 根据算法类型恢复优化器调整的参数
-        switch (algoType) {
-            case AlgorithmType::AdvancedPID:
-                config.pidPMin = savedPidPMin;
-                config.pidPMax = savedPidPMax;
-                config.pidD = savedPidD;
-                config.pidI = savedPidI;
-                config.derivativeFilterAlpha = savedDerivativeFilterAlpha;
-                config.predictionWeightX = savedPredX;
-                config.predictionWeightY = savedPredY;
-                config.aimSmoothingX = savedSmoothX;
-                config.aimSmoothingY = savedSmoothY;
-                config.maxPredictionTime = savedMaxPredTime;
-                break;
-            case AlgorithmType::StandardPID:
-                config.stdKp = savedStdKp;
-                config.stdKi = savedStdKi;
-                config.stdKd = savedStdKd;
-                config.stdDerivativeFilterAlpha = savedStdDerivativeFilterAlpha;
-                config.stdSmoothingX = savedStdSmoothingX;
-                config.stdSmoothingY = savedStdSmoothingY;
-                config.maxPredictionTime = savedStdMaxPredTime;
-                break;
-            case AlgorithmType::ChrisPID:
-                config.chrisKp = savedChrisKp;
-                config.chrisKi = savedChrisKi;
-                config.chrisKd = savedChrisKd;
-                config.chrisPredWeightX = savedChrisPredWeightX;
-                config.chrisPredWeightY = savedChrisPredWeightY;
-                config.chrisDFilterAlpha = savedChrisDFilterAlpha;
-                config.aimSmoothingX = savedChrisSmoothX;
-                config.aimSmoothingY = savedChrisSmoothY;
-                break;
-        }
-    } else {
-        config = newConfig;
-    }
+    config = newConfig;
     
     config.bezierCurvature = std::clamp(config.bezierCurvature, 0.0f, 1.0f);
     config.bezierRandomness = std::clamp(config.bezierRandomness, 0.0f, 0.5f);
     
     // 更新DerivativePredictor参数
     predictor.setMaxPredictionTime(config.maxPredictionTime);
-    
-    // 更新优化器配置
-    optimizer_.setAlgorithmType(config.algorithmType);
-    OptimizerConfig optConfig = optimizer_.getConfig();
-    optConfig.enabled = config.optimizationEnabled;
-    
-    // 设置模式和策略
-    optConfig.mode = (config.optimizationMode == 0) ? OptimizationMode::TUNING : OptimizationMode::INDEPENDENT;
-    switch (config.optimizationStrategy) {
-        case 0: optConfig.strategy = OptimizationStrategy::STABLE_FIRST; break;
-        case 1: optConfig.strategy = OptimizationStrategy::BALANCED; break;
-        case 2: optConfig.strategy = OptimizationStrategy::AGGRESSIVE; break;
-        default: optConfig.strategy = OptimizationStrategy::BALANCED; break;
-    }
-    
-    // 设置采样和迭代参数
-    optConfig.sampleFrames = config.optimizationSampleFrames;
-    optConfig.maxIterations = config.optimizationMaxIterations;
-    optConfig.targetError = config.optimizationTargetError;
-    optConfig.allowSpeedOptimization = config.optimizationAllowSpeedOpt;
-    optConfig.stepDecayFactor = config.optimizationStepDecayFactor;
-    optConfig.minValidSampleRatio = config.optimizationMinValidRatio;
-    
-    optimizer_.setConfig(optConfig);
-    
-    // 设置参数更新回调
-    if (config.optimizationEnabled && !optimizer_.isRunning()) {
-        // 将当前参数值设置到优化器
-        std::vector<float> currentParams = extractCurrentParameters();
-        optimizer_.setCurrentParameters(currentParams);
-        
-        optimizer_.setParameterUpdateCallback([this](const std::vector<float>& params) {
-            this->applyOptimizedParameters(params);
-        });
-        optimizer_.start();
-        obs_log(LOG_INFO, "[%s] 优化器已启动: algorithmType=%d, sampleFrames=%d, maxIterations=%d",
-                getLogPrefix(), static_cast<int>(config.algorithmType), 
-                config.optimizationSampleFrames, config.optimizationMaxIterations);
-    } else if (!config.optimizationEnabled && optimizer_.isRunning()) {
-        optimizer_.stop();
-        obs_log(LOG_INFO, "[%s] 优化器已停止", getLogPrefix());
-    }
     
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
@@ -490,22 +373,21 @@ void AbstractMouseController::tick()
         stdIntegralGainX = 0.0f;
         stdIntegralGainY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
-        float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
-        float fusionErrorX = errorX;
-        float fusionErrorY = errorY;
-        
+        float feedforwardX = 0.0f, feedforwardY = 0.0f;
+
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+            float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            fusionErrorX += config.predictionWeightX * derivPredictedX;
-            fusionErrorY += config.predictionWeightY * derivPredictedY;
+            feedforwardX = config.predictionWeightX * derivPredictedX;
+            feedforwardY = config.predictionWeightY * derivPredictedY;
         }
 
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
-        // D项基于融合误差计算（原来的方式）
-        float deltaErrorX = fusionErrorX - pidPreviousErrorX;
-        float deltaErrorY = fusionErrorY - pidPreviousErrorY;
+        // D项基于原始误差计算（前馈模式：D项与预测器分离，无双重滤波）
+        float deltaErrorX = errorX - pidPreviousErrorX;
+        float deltaErrorY = errorY - pidPreviousErrorY;
 
         float alpha = config.derivativeFilterAlpha;
         filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
@@ -513,23 +395,19 @@ void AbstractMouseController::tick()
 
         float dTermX = config.pidD * filteredDeltaErrorX;
         float dTermY = config.pidD * filteredDeltaErrorY;
-        
-        // 钳位限制D项输出，防止完全抵消预测器效果
-        dTermX = std::clamp(dTermX, -50.0f, 50.0f);
-        dTermY = std::clamp(dTermY, -50.0f, 50.0f);
 
-        // 自适应积分增益控制（基于融合误差）
-        bool shouldIntegrateX = adjustIntegralGain(fusionErrorX, pidPreviousErrorX, integralGainX);
-        bool shouldIntegrateY = adjustIntegralGain(fusionErrorY, pidPreviousErrorY, integralGainY);
+        // 自适应积分基于原始误差
+        bool shouldIntegrateX = adjustIntegralGain(errorX, pidPreviousErrorX, integralGainX);
+        bool shouldIntegrateY = adjustIntegralGain(errorY, pidPreviousErrorY, integralGainY);
 
-        if (std::abs(fusionErrorX) >= config.integralDeadZone && shouldIntegrateX) {
-            integralX += fusionErrorX;
+        if (std::abs(errorX) >= config.integralDeadZone && shouldIntegrateX) {
+            integralX += errorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
             integralX *= 0.9f;
         }
-        if (std::abs(fusionErrorY) >= config.integralDeadZone && shouldIntegrateY) {
-            integralY += fusionErrorY;
+        if (std::abs(errorY) >= config.integralDeadZone && shouldIntegrateY) {
+            integralY += errorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
             integralY *= 0.9f;
@@ -538,9 +416,9 @@ void AbstractMouseController::tick()
         float integralTermX = config.pidI * integralX;
         float integralTermY = config.pidI * integralY;
 
-        // PID输出基于融合误差（追预测位置）
-        float pidOutputX = dynamicP * fusionErrorX + filteredDeltaErrorX + integralTermX;
-        float pidOutputY = dynamicP * fusionErrorY + filteredDeltaErrorY + integralTermY;
+        // PID输出基于原始误差 + 前馈叠加
+        float pidOutputX = dynamicP * errorX + dTermX + integralTermX + feedforwardX;
+        float pidOutputY = dynamicP * errorY + dTermY + integralTermY + feedforwardY;
 
         moveX = pidOutputX;
         moveY = pidOutputY;
@@ -548,17 +426,12 @@ void AbstractMouseController::tick()
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
-                 getLogPrefix(), deltaTime, errorX, errorY, fusionErrorX, fusionErrorY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
+            blog(LOG_INFO, "[%s高级PID-前馈] dt=%.4f | errorX=%.1f errorY=%.1f | ffX=%.2f ffY=%.2f | dynamicP=%.3f",
+                 getLogPrefix(), deltaTime, errorX, errorY, feedforwardX, feedforwardY, dynamicP);
+            blog(LOG_INFO, "[%s高级PID-前馈] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
+            blog(LOG_INFO, "[%s高级PID-前馈] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
                  getLogPrefix(), integralX, integralY, integralTermX, integralTermY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
-            if (config.useDerivativePredictor) {
-                blog(LOG_INFO, "[%s高级PID] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
-                     getLogPrefix(), derivPredictedX, derivPredictedY, config.predictionWeightX, config.predictionWeightY,
-                     config.predictionWeightX * derivPredictedX, config.predictionWeightY * derivPredictedY);
-            }
         }
 
         if (pidDataCallback_) {
@@ -577,9 +450,9 @@ void AbstractMouseController::tick()
             pidDataCallback_(data);
         }
 
-        // 保存融合误差用于D项计算
-        pidPreviousErrorX = fusionErrorX;
-        pidPreviousErrorY = fusionErrorY;
+        // 保存原始误差用于D项计算
+        pidPreviousErrorX = errorX;
+        pidPreviousErrorY = errorY;
         previousErrorX = errorX;
         previousErrorY = errorY;
         
@@ -641,24 +514,6 @@ void AbstractMouseController::tick()
     
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
-    
-    // 收集优化器数据（增强版）
-    if (config.optimizationEnabled && optimizer_.isRunning()) {
-        bool saturated = (std::abs(finalMoveX) >= config.maxPixelMove || 
-                         std::abs(finalMoveY) >= config.maxPixelMove);
-        
-        SampleType sampleType = SampleType::STICKY;
-        if (lockedTrackId < 0 && pendingTargetTrackId >= 0) {
-            sampleType = SampleType::REACQ;
-        }
-        
-        optimizer_.addSample(errorX, errorY, finalMoveX, finalMoveY,
-                            targetVelocityX, targetVelocityY,
-                            0.0f, 0.0f, saturated, sampleType);
-        
-        // 每帧调用优化器更新
-        optimizer_.update();
-    }
     
     moveMouse(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
 }
@@ -1028,122 +883,6 @@ void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 const char* AbstractMouseController::getLogPrefix() const
 {
     return "";
-}
-
-std::vector<float> AbstractMouseController::extractCurrentParameters()
-{
-    std::vector<float> params;
-    
-    switch (config.algorithmType) {
-        case AlgorithmType::AdvancedPID:
-            // 9个参数：PID核心(4) + D滤波(1) + 导数预测(2) + 平滑(2)
-            params = {
-                config.pidPMin,           // 0
-                config.pidPMax,           // 1
-                config.pidD,              // 2
-                config.pidI,              // 3
-                config.derivativeFilterAlpha,  // 4
-                config.predictionWeightX,   // 5
-                config.predictionWeightY,   // 6
-                config.aimSmoothingX,      // 7
-                config.aimSmoothingY       // 8
-            };
-            obs_log(LOG_INFO, "[AutoTune] 提取AdvancedPID参数: PMin=%.3f PMax=%.3f D=%.4f I=%.4f PredX=%.2f PredY=%.2f",
-                    config.pidPMin, config.pidPMax, config.pidD, config.pidI,
-                    config.predictionWeightX, config.predictionWeightY);
-            break;
-            
-        case AlgorithmType::StandardPID:
-            // 7个参数
-            params = {
-                config.stdKp,             // 0
-                config.stdKi,             // 1
-                config.stdKd,             // 2
-                config.stdDerivativeFilterAlpha, // 3
-                config.stdSmoothingX,     // 4
-                config.stdSmoothingY,     // 5
-                config.maxPredictionTime   // 6
-            };
-            obs_log(LOG_INFO, "[AutoTune] 提取StandardPID参数: Kp=%.3f Ki=%.4f Kd=%.4f",
-                    config.stdKp, config.stdKi, config.stdKd);
-            break;
-            
-        case AlgorithmType::ChrisPID:
-            // 8个参数
-            params = {
-                config.chrisKp,           // 0
-                config.chrisKi,           // 1
-                config.chrisKd,           // 2
-                config.chrisPredWeightX,  // 3
-                config.chrisPredWeightY,  // 4
-                config.chrisDFilterAlpha, // 5
-                config.aimSmoothingX,      // 6
-                config.aimSmoothingY       // 7
-            };
-            obs_log(LOG_INFO, "[AutoTune] 提取ChrisPID参数: Kp=%.3f Ki=%.4f Kd=%.4f PredWX=%.2f PredWY=%.2f",
-                    config.chrisKp, config.chrisKi, config.chrisKd,
-                    config.chrisPredWeightX, config.chrisPredWeightY);
-            break;
-    }
-    
-    return params;
-}
-
-void AbstractMouseController::applyOptimizedParameters(const std::vector<float>& params)
-{
-    if (params.empty()) return;
-    
-    switch (config.algorithmType) {
-        case AlgorithmType::AdvancedPID:
-            if (params.size() >= 9) {
-                config.pidPMin = params[0];
-                config.pidPMax = params[1];
-                config.pidD = params[2];
-                config.pidI = params[3];
-                config.derivativeFilterAlpha = params[4];
-                config.predictionWeightX = params[5];
-                config.predictionWeightY = params[6];
-                config.aimSmoothingX = params[7];
-                config.aimSmoothingY = params[8];
-                
-                obs_log(LOG_INFO, "[AutoTune] AdvancedPID更新: PMin=%.3f PMax=%.3f D=%.4f I=%.4f PredX=%.2f SmoothX=%.2f",
-                        config.pidPMin, config.pidPMax, config.pidD, config.pidI,
-                        config.predictionWeightX, config.aimSmoothingX);
-            }
-            break;
-            
-        case AlgorithmType::StandardPID:
-            if (params.size() >= 7) {
-                config.stdKp = params[0];
-                config.stdKi = params[1];
-                config.stdKd = params[2];
-                config.stdDerivativeFilterAlpha = params[3];
-                config.stdSmoothingX = params[4];
-                config.stdSmoothingY = params[5];
-                config.maxPredictionTime = params[6];
-                
-                obs_log(LOG_INFO, "[AutoTune] StandardPID更新: Kp=%.3f Ki=%.4f Kd=%.4f SmoothX=%.2f",
-                        config.stdKp, config.stdKi, config.stdKd, config.stdSmoothingX);
-            }
-            break;
-            
-        case AlgorithmType::ChrisPID:
-            if (params.size() >= 8) {
-                config.chrisKp = params[0];
-                config.chrisKi = params[1];
-                config.chrisKd = params[2];
-                config.chrisPredWeightX = params[3];
-                config.chrisPredWeightY = params[4];
-                config.chrisDFilterAlpha = params[5];
-                config.aimSmoothingX = params[6];
-                config.aimSmoothingY = params[7];
-                
-                obs_log(LOG_INFO, "[AutoTune] ChrisPID更新: Kp=%.3f Ki=%.4f Kd=%.4f PredWX=%.2f SmoothX=%.2f",
-                        config.chrisKp, config.chrisKi, config.chrisKd,
-                        config.chrisPredWeightX, config.aimSmoothingX);
-            }
-            break;
-    }
 }
 
 #endif

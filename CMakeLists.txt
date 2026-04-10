@@ -246,7 +246,6 @@ if(WIN32)
       src/LogitechMacroConverter.cpp
       src/RecoilPatternManager.cpp
       src/ChrisPIDController.cpp
-      src/HillClimbingOptimizer.cpp
       src/WebServer/WebServer.cpp
       src/WebServer/mongoose.c
   )
