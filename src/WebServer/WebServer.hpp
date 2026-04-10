@@ -46,8 +46,9 @@ public:
     int getPort() const { return port_; }
     std::string getUrl() const;
 
-private:
     void eventHandler(struct mg_connection* c, int ev, void* ev_data);
+
+private:
     
     void handleGetConfig(struct mg_connection* c);
     void handlePostConfig(struct mg_connection* c, struct mg_http_message* hm);

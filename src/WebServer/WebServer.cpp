@@ -6,7 +6,7 @@
 
 static WebServer* g_webServer = nullptr;
 
-static void mongooseEventHandler(struct mg_connection* c, int ev, void* ev_data, void* fn_data)
+static void mongooseEventHandler(struct mg_connection* c, int ev, void* ev_data)
 {
     if (g_webServer) {
         g_webServer->eventHandler(c, ev, ev_data);
