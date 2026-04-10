@@ -250,6 +250,11 @@ if(WIN32)
       src/WebServer/WebServer.cpp
       src/WebServer/mongoose.c
   )
+  set_source_files_properties(
+    src/WebServer/mongoose.c
+    PROPERTIES
+      COMPILE_FLAGS "/wd4267"
+  )
 endif()
 target_compile_options(
   ${CMAKE_PROJECT_NAME}

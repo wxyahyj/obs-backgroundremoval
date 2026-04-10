@@ -513,6 +513,10 @@ void AbstractMouseController::tick()
 
         float dTermX = config.pidD * filteredDeltaErrorX;
         float dTermY = config.pidD * filteredDeltaErrorY;
+        
+        // 钳位限制D项输出，防止完全抵消预测器效果
+        dTermX = std::clamp(dTermX, -50.0f, 50.0f);
+        dTermY = std::clamp(dTermY, -50.0f, 50.0f);
 
         // 自适应积分增益控制（基于融合误差）
         bool shouldIntegrateX = adjustIntegralGain(fusionErrorX, pidPreviousErrorX, integralGainX);
