@@ -502,8 +502,11 @@ void AbstractMouseController::tick()
         gravityController_.setConfig(ggConfig);
         
         float outX = 0.0f, outY = 0.0f;
+        // 计算准星在画面中的位置 (FOV中心 + 偏移)
+        float crosshairX = fovCenterX - config.screenOffsetX;
+        float crosshairY = fovCenterY - config.screenOffsetY;
         gravityController_.compute(targetPixelX, targetPixelY, 
-                                   targetPixelX - errorX, targetPixelY - errorY,
+                                   crosshairX, crosshairY,
                                    target ? target->confidence : 1.0f,
                                    targetVelocityX, targetVelocityY,
                                    outX, outY);
