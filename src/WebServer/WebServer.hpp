@@ -7,13 +7,15 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <algorithm>
 #include "MouseControllerInterface.hpp"
 
 struct mg_mgr;
 struct mg_connection;
 struct mg_http_message;
+struct mg_ws_message;
 
-using ConfigCallback = std::function<void(const MouseControllerConfig& config)>;
+using ConfigCallback = std::function<void(const MouseControllerConfig&)>;
 using StatusProvider = std::function<MouseControllerConfig()>;
 
 struct WebServerStatus {
@@ -30,12 +32,12 @@ struct WebServerStatus {
 
 class WebServer {
 public:
-    WebServer(int port = 8080, const std::string& host = "127.0.0.1");
+    WebServer(int port = 8080);
     ~WebServer();
 
     void start();
     void stop();
-    bool isRunning() const;
+    bool isRunning() const { return running_; }
 
     void setConfigCallback(ConfigCallback callback);
     void setStatusProvider(StatusProvider provider);
@@ -45,38 +47,27 @@ public:
     std::string getUrl() const;
 
 private:
-    void serverLoop();
-    static void eventHandler(struct mg_connection* c, int ev, void* ev_data, void* fn_data);
-
-    void handleHttpRequest(struct mg_connection* c, struct mg_http_message* hm);
+    void eventHandler(struct mg_connection* c, int ev, void* ev_data);
+    
     void handleGetConfig(struct mg_connection* c);
     void handlePostConfig(struct mg_connection* c, struct mg_http_message* hm);
     void handleGetStatus(struct mg_connection* c);
-    void handleGetConfigs(struct mg_connection* c);
-    void handleSaveConfig(struct mg_connection* c, struct mg_http_message* hm);
-    void handleLoadConfig(struct mg_connection* c, struct mg_http_message* hm);
     void handleGetAlgorithms(struct mg_connection* c);
-    void handleSetAlgorithm(struct mg_connection* c, struct mg_http_message* hm);
-    void handleWebSocket(struct mg_connection* c, int ev, void* ev_data);
-    void serveStaticFile(struct mg_connection* c, struct mg_http_message* hm);
+    void handleWebSocket(struct mg_connection* c, struct mg_ws_message* wm);
+    void handleStaticFile(struct mg_connection* c, const char* filename);
 
-    void sendJsonResponse(struct mg_connection* c, int status, const std::string& json);
-    void sendErrorResponse(struct mg_connection* c, int status, const std::string& message);
-
+    std::string statusToJson(const WebServerStatus& s);
     std::string configToJson(const MouseControllerConfig& config);
-    bool jsonToConfig(const std::string& json, MouseControllerConfig& config);
 
-    mg_mgr* mgr_;
+    void* mgr_;
     int port_;
-    std::string host_;
     std::atomic<bool> running_;
     std::thread serverThread_;
     std::mutex mutex_;
 
     ConfigCallback configCallback_;
     StatusProvider statusProvider_;
-    WebServerStatus currentStatus_;
-    MouseControllerConfig currentConfig_;
+    WebServerStatus status_;
 
     std::vector<struct mg_connection*> wsConnections_;
 };
