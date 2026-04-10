@@ -86,15 +86,6 @@ void OptimizerConfig::initDefaultBounds() {
         {0.05f, 0.4f, 0.02f, 0.002f}       // accelerationSmoothFactor
     };
     
-    // 高斯引力控制器参数边界
-    gaussianGravityBounds = {
-        {0.1f, 2.0f, 0.05f, 0.005f},      // gravityStrength
-        {100.0f, 1000.0f, 50.0f, 5.0f},   // maxDistance
-        {50.0f, 300.0f, 20.0f, 2.0f},     // softEpsilon
-        {50.0f, 200.0f, 10.0f, 1.0f},     // maxForce
-        {0.1f, 0.8f, 0.05f, 0.005f}       // smoothingFactor
-    };
-    
     weights.setForStrategy(strategy);
 }
 
@@ -278,8 +269,6 @@ std::vector<std::string> HillClimbingOptimizer::getParameterNames() const {
         case AlgorithmType::ChrisPID:
             return {"Kp", "Ki", "Kd", "PredWeightX", "PredWeightY", "DFilterAlpha",
                     "SmoothX", "SmoothY"};
-        case AlgorithmType::GaussianGravity:
-            return {"GravityStrength", "MaxDistance", "SoftEpsilon", "MaxForce", "SmoothingFactor"};
         default:
             return {};
     }
@@ -542,7 +531,6 @@ std::vector<ParameterBounds> HillClimbingOptimizer::getParameterBounds() {
         case AlgorithmType::AdvancedPID: return config_.advancedPidBounds;
         case AlgorithmType::StandardPID: return config_.standardPidBounds;
         case AlgorithmType::ChrisPID: return config_.chrisPidBounds;
-        case AlgorithmType::GaussianGravity: return config_.gaussianGravityBounds;
         default: return config_.advancedPidBounds;
     }
 }

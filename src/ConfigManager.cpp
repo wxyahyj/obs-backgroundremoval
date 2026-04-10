@@ -245,12 +245,6 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["chrisIMax"] = config.chrisIMax;
     j["chrisDFilterAlpha"] = config.chrisDFilterAlpha;
     
-    j["gravityStrength"] = config.gravityStrength;
-    j["gravityMaxDistance"] = config.gravityMaxDistance;
-    j["gravitySoftEpsilon"] = config.gravitySoftEpsilon;
-    j["gravityMaxForce"] = config.gravityMaxForce;
-    j["gravitySmoothingFactor"] = config.gravitySmoothingFactor;
-    
     return j;
 }
 
@@ -348,12 +342,6 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("chrisOutputMax")) config.chrisOutputMax = j["chrisOutputMax"].get<float>();
         if (j.contains("chrisIMax")) config.chrisIMax = j["chrisIMax"].get<float>();
         if (j.contains("chrisDFilterAlpha")) config.chrisDFilterAlpha = j["chrisDFilterAlpha"].get<float>();
-        
-        if (j.contains("gravityStrength")) config.gravityStrength = j["gravityStrength"].get<float>();
-        if (j.contains("gravityMaxDistance")) config.gravityMaxDistance = j["gravityMaxDistance"].get<float>();
-        if (j.contains("gravitySoftEpsilon")) config.gravitySoftEpsilon = j["gravitySoftEpsilon"].get<float>();
-        if (j.contains("gravityMaxForce")) config.gravityMaxForce = j["gravityMaxForce"].get<float>();
-        if (j.contains("gravitySmoothingFactor")) config.gravitySmoothingFactor = j["gravitySmoothingFactor"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {

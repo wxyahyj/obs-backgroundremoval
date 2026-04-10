@@ -1302,14 +1302,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 2);
 	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 2);
 
-	// 高斯引力参数组（选择3时显示）
-	obs_property_set_visible(obs_properties_get(props, "gaussian_gravity_group"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "gravity_strength"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "gravity_max_distance"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "gravity_soft_epsilon"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "gravity_max_force"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "gravity_smoothing_factor"), page == 3 && algorithm == 3);
-
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
@@ -1561,13 +1553,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "std_derivative_filter_alpha_global", 0.2);
     obs_data_set_default_double(settings, "std_smoothing_x_global", 0.7);
     obs_data_set_default_double(settings, "std_smoothing_y_global", 0.5);
-    
-    // 高斯引力参数默认值
-    obs_data_set_default_double(settings, "gravity_strength", 0.5);
-    obs_data_set_default_double(settings, "gravity_max_distance", 500.0);
-    obs_data_set_default_double(settings, "gravity_soft_epsilon", 100.0);
-    obs_data_set_default_double(settings, "gravity_max_force", 100.0);
-    obs_data_set_default_double(settings, "gravity_smoothing_factor", 0.3);
     
     // ChrisPID参数默认值
     obs_data_set_default_double(settings, "chris_kp", 0.45);
@@ -1915,13 +1900,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->stdDerivativeFilterAlphaGlobal = (float)obs_data_get_double(settings, "std_derivative_filter_alpha_global");
 	tf->stdSmoothingXGlobal = (float)obs_data_get_double(settings, "std_smoothing_x_global");
 	tf->stdSmoothingYGlobal = (float)obs_data_get_double(settings, "std_smoothing_y_global");
-
-	// 读取高斯引力参数
-	tf->gravityStrength = (float)obs_data_get_double(settings, "gravity_strength");
-	tf->gravityMaxDistance = (float)obs_data_get_double(settings, "gravity_max_distance");
-	tf->gravitySoftEpsilon = (float)obs_data_get_double(settings, "gravity_soft_epsilon");
-	tf->gravityMaxForce = (float)obs_data_get_double(settings, "gravity_max_force");
-	tf->gravitySmoothingFactor = (float)obs_data_get_double(settings, "gravity_smoothing_factor");
 
 	// 读取ChrisPID参数
 	tf->chrisKp = (float)obs_data_get_double(settings, "chris_kp");
@@ -3688,13 +3666,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->configName = "";
 		instance->configList = "";
 
-		// 高斯引力参数初始化
-		instance->gravityStrength = 0.5f;
-		instance->gravityMaxDistance = 500.0f;
-		instance->gravitySoftEpsilon = 100.0f;
-		instance->gravityMaxForce = 100.0f;
-		instance->gravitySmoothingFactor = 0.3f;
-
 		// ChrisPID参数初始化
 		instance->chrisKp = 0.45f;
 		instance->chrisKi = 0.02f;
@@ -4015,12 +3986,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
 		mcConfig.chrisIMax = tf->chrisIMax;
 		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
-		// 高斯引力参数（使用全局设置）
-		mcConfig.gravityStrength = tf->gravityStrength;
-		mcConfig.gravityMaxDistance = tf->gravityMaxDistance;
-		mcConfig.gravitySoftEpsilon = tf->gravitySoftEpsilon;
-		mcConfig.gravityMaxForce = tf->gravityMaxForce;
-		mcConfig.gravitySmoothingFactor = tf->gravitySmoothingFactor;
 		// 自动调参系统参数
 		mcConfig.optimizationEnabled = cfg.optimizationEnabled;
 		mcConfig.optimizationMode = cfg.optimizationMode;
