@@ -11,7 +11,6 @@
 #include "MouseController.hpp"
 #include "MouseControllerFactory.hpp"
 #include "ConfigManager.hpp"
-#include "WebServer/WebServer.hpp"
 #endif
 
 #include <opencv2/imgproc.hpp>
@@ -373,8 +372,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool enableBezierMovement;
 		float bezierCurvature;
 		float bezierRandomness;
-		// 鼠标移动模式
-		bool useAbsoluteMove;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -445,8 +442,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
 			bezierRandomness = 0.2f;
-			// 鼠标移动模式默认值
-			useAbsoluteMove = false;
 		}
 	};
 
@@ -472,10 +467,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisIMax;
 	float chrisDFilterAlpha;
 	
-	// WebServer相关
-	bool webServerEnabled;
-	int webServerPort;
-	std::unique_ptr<WebServer> webServer;
 #endif
 
 	~yolo_detector_filter() { obs_log(LOG_INFO, "YOLO detector filter destructor called"); }
@@ -501,7 +492,6 @@ static void destroyFloatingWindow(yolo_detector_filter *filter);
 static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame);
 static void renderFloatingWindow(yolo_detector_filter *filter);
 static void setupPidDataCallback(yolo_detector_filter *filter);
-static void setupWebServerCallbacks(yolo_detector_filter *filter);
 static void createPidDebugWindow(yolo_detector_filter *filter);
 static void destroyPidDebugWindow(yolo_detector_filter *filter);
 static void updatePidDebugWindow(yolo_detector_filter *filter);
@@ -885,10 +875,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		obs_properties_add_group(props, propName, "贝塞尔曲线移动", OBS_GROUP_CHECKABLE, bezierProps);
 		
-		// 绝对移动模式
-		snprintf(propName, sizeof(propName), "use_absolute_move_%d", i);
-		obs_property_t *absoluteMoveProp = obs_properties_add_bool(props, propName, "使用绝对移动模式");
-		obs_property_set_long_description(absoluteMoveProp, "勾选后使用绝对坐标移动鼠标，不勾选则使用相对移动（默认）。某些游戏可能需要绝对移动模式");
 	}
 
 	obs_properties_add_button(props, "test_makcu_connection", "测试MAKCU连接", testMAKCUConnection);
@@ -935,12 +921,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_properties_add_button(props, "save_config", "保存配置", saveConfigCallback);
 	obs_properties_add_button(props, "load_config", "加载配置", loadConfigCallback);
 	
-	// WebServer设置
-	obs_properties_add_group(props, "webserver_group", "Web参数页面", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *webServerEnabledProp = obs_properties_add_bool(props, "webserver_enabled", "启用Web服务器");
-	obs_property_set_long_description(webServerEnabledProp, "启用后可通过浏览器调整参数");
-	obs_property_t *webServerPortProp = obs_properties_add_int(props, "webserver_port", "端口", 1024, 65535, 1);
-	obs_property_set_long_description(webServerPortProp, "Web服务器监听端口（默认8080）");
 #endif
 
 	obs_properties_add_text(props, "avg_inference_time", obs_module_text("AvgInferenceTime"), OBS_TEXT_INFO);
@@ -1094,9 +1074,6 @@ static void setBezierMovementPropertiesVisible(obs_properties_t *props, int conf
 	char propName[64];
 	// 贝塞尔曲线移动分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "bezier_movement_group_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	// 绝对移动模式
-	snprintf(propName, sizeof(propName), "use_absolute_move_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1344,9 +1321,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "floating_window_height", 480);
 	obs_data_set_default_bool(settings, "show_pid_debug_window", false);
 	obs_data_set_default_bool(settings, "show_track_id_in_floating_window", false);
-	
-	obs_data_set_default_bool(settings, "webserver_enabled", false);
-	obs_data_set_default_int(settings, "webserver_port", 8080);
 #endif
 
 #ifdef _WIN32
@@ -1480,9 +1454,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.3);
 		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
-		// 绝对移动模式默认值
-		snprintf(propName, sizeof(propName), "use_absolute_move_%d", i);
-		obs_data_set_default_bool(settings, propName, false);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -1716,33 +1687,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 
 	tf->showTrackIdInFloatingWindow = obs_data_get_bool(settings, "show_track_id_in_floating_window");
 
-	// WebServer参数读取
-	bool newWebServerEnabled = obs_data_get_bool(settings, "webserver_enabled");
-	int newWebServerPort = (int)obs_data_get_int(settings, "webserver_port");
-	
-	if (newWebServerEnabled != tf->webServerEnabled || newWebServerPort != tf->webServerPort) {
-		tf->webServerEnabled = newWebServerEnabled;
-		tf->webServerPort = newWebServerPort;
-		
-		if (tf->webServerEnabled) {
-			if (!tf->webServer) {
-				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
-				tf->webServer->start();
-				setupWebServerCallbacks(tf.get());
-			} else if (newWebServerPort != tf->webServerPort) {
-				tf->webServer->stop();
-				tf->webServer = std::make_unique<WebServer>(tf->webServerPort);
-				tf->webServer->start();
-				setupWebServerCallbacks(tf.get());
-			}
-		} else {
-			if (tf->webServer) {
-				tf->webServer->stop();
-				tf->webServer.reset();
-			}
-		}
-	}
-
 	tf->currentConfigIndex = (int)obs_data_get_int(settings, "mouse_config_select");
 
 	for (int i = 0; i < 5; i++) {
@@ -1873,9 +1817,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].bezierCurvature = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
 		tf->mouseConfigs[i].bezierRandomness = (float)obs_data_get_double(settings, propName);
-		// 绝对移动模式
-		snprintf(propName, sizeof(propName), "use_absolute_move_%d", i);
-		tf->mouseConfigs[i].useAbsoluteMove = obs_data_get_bool(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -2890,29 +2831,6 @@ static LRESULT CALLBACK PidDebugWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 	return 0;
 }
 
-static void setupWebServerCallbacks(yolo_detector_filter *filter)
-{
-	if (!filter || !filter->webServer) {
-		return;
-	}
-	
-	// 设置配置回调：网页修改参数后同步到控制器
-	filter->webServer->setConfigCallback([filter](const MouseControllerConfig& config) {
-		if (filter->mouseController) {
-			filter->mouseController->updateConfig(config);
-		}
-	});
-	
-	// 设置状态提供者：返回当前控制器配置
-	filter->webServer->setStatusProvider([filter]() {
-		MouseControllerConfig config;
-		if (filter->mouseController) {
-			config = filter->mouseController->getConfig();
-		}
-		return config;
-	});
-}
-
 static void createPidDebugWindow(yolo_detector_filter *filter)
 {
 	if (filter->pidDebugWindowHandle) {
@@ -3670,10 +3588,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisIMax = 100.0f;
 		instance->chrisDFilterAlpha = 0.3f;
 		
-		// WebServer初始化
-		instance->webServerEnabled = false;
-		instance->webServerPort = 8080;
-		instance->webServer = nullptr;
 #endif
 
 		// 强制关闭悬浮窗（每次启动OBS时）
@@ -3736,12 +3650,6 @@ void yolo_detector_filter_destroy(void *data)
 #ifdef _WIN32
 	// Destroy floating window
 	destroyFloatingWindow(tf.get());
-	
-	// 停止WebServer
-	if (tf->webServer) {
-		tf->webServer->stop();
-		tf->webServer.reset();
-	}
 	
 	// 保存悬浮窗关闭状态
 	obs_data_t *settings = obs_source_get_settings(tf->source);
@@ -3963,8 +3871,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.enableBezierMovement = cfg.enableBezierMovement;
 		mcConfig.bezierCurvature = cfg.bezierCurvature;
 		mcConfig.bezierRandomness = cfg.bezierRandomness;
-		// 绝对移动模式
-		mcConfig.useAbsoluteMove = cfg.useAbsoluteMove;
 		// 算法选择（使用全局设置）
 		mcConfig.algorithmType = static_cast<AlgorithmType>(tf->algorithmTypeGlobal);
 		// 标准PID参数（使用全局设置）
@@ -4150,14 +4056,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				tf->mouseController->tick();
 			}
 		}
-	}
-
-	// 更新WebServer实时状态
-	if (tf->webServer && tf->mouseController) {
-		WebServerStatus status;
-		status.isRunning = tf->mouseController->getConfig().enableMouseControl;
-		status.fps = static_cast<int>(tf->currentFps);
-		tf->webServer->updateStatus(status);
 	}
 #endif
 }

@@ -22,7 +22,6 @@ protected:
     const char* getLogPrefix() const override { return ""; }
 
 private:
-    bool useAbsoluteMove_ = false;
     int screenWidth_ = 1920;
     int screenHeight_ = 1080;
 };

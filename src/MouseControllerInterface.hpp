@@ -142,9 +142,6 @@ struct MouseControllerConfig {
     float trackingWeightCenter = 0.3f;    // 中心点距离权重
     float trackingWeightAspect = 0.15f;   // 宽高比距离权重
     float trackingWeightArea = 0.15f;     // 面积距离权重
-    
-    // 鼠标移动模式
-    bool useAbsoluteMove = false;              // 使用绝对移动模式（默认相对移动）
 };
 
 class MouseControllerInterface {

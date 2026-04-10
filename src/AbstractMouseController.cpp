@@ -267,31 +267,7 @@ void AbstractMouseController::tick()
 
     float moveX, moveY;
 
-    // 绝对移动模式：直接使用原始误差，绕过 PID 处理
-    if (config.useAbsoluteMove) {
-        moveX = errorX;
-        moveY = errorY;
-        
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = 1.0f;
-            data.currentKi = 0.0f;
-            data.currentKd = 0.0f;
-            pidDataCallback_(data);
-        }
-        
-        // 绝对模式：直接移动到目标位置，跳过所有后处理
-        moveMouse(static_cast<int>(moveX), static_cast<int>(moveY));
-        return;
-    } else if (config.algorithmType == AlgorithmType::StandardPID) {
+    if (config.algorithmType == AlgorithmType::StandardPID) {
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
         float fusionErrorX = errorX;
         float fusionErrorY = errorY;
