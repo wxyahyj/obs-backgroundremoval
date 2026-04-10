@@ -15,13 +15,12 @@ void GaussianGravityController::setConfig(const GaussianGravityConfig& config)
 
 float GaussianGravityController::calculateGravityForce(float distance)
 {
-    if (distance > config_.maxDistance) {
+    if (distance >= config_.maxDistance) {
         return 0.0f;
     }
     
-    // 高斯引力公式：F = G * exp(-r² / (2ε²))
-    float normalized_dist = distance / config_.softEpsilon;
-    float force = config_.gravityStrength * std::exp(-normalized_dist * normalized_dist / 2.0f);
+    // 线性引力公式：F = G * (1 - distance / maxDistance)
+    float force = config_.gravityStrength * (1.0f - distance / config_.maxDistance);
     
     return force;
 }
