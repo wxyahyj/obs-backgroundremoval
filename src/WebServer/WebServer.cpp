@@ -6,6 +6,13 @@
 
 static WebServer* g_webServer = nullptr;
 
+static void mongooseEventHandler(struct mg_connection* c, int ev, void* ev_data, void* fn_data)
+{
+    if (g_webServer) {
+        g_webServer->eventHandler(c, ev, ev_data);
+    }
+}
+
 WebServer::WebServer(int port)
     : port_(port)
     , running_(false)
@@ -32,12 +39,7 @@ void WebServer::start()
         
         std::string listenAddr = "http://127.0.0.1:" + std::to_string(port_);
         
-        struct mg_connection* c = mg_http_listen(&mgr, listenAddr.c_str(), 
-            [](struct mg_connection* c, int ev, void* ev_data, void* fn_data) {
-                if (g_webServer) {
-                    g_webServer->eventHandler(c, ev, ev_data);
-                }
-            }, nullptr);
+        struct mg_connection* c = mg_http_listen(&mgr, listenAddr.c_str(), mongooseEventHandler, nullptr);
         
         if (c == nullptr) {
             std::cerr << "[WebServer] 无法启动服务器在端口 " << port_ << std::endl;
