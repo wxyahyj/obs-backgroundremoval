@@ -39,7 +39,7 @@ struct InferenceLatency {
         postprocessMs += other.postprocessMs;
         gpuCopyMs += other.gpuCopyMs;
         cudaKernelMs += other.cudaKernelMs;
-        isGpuPath = other.isGpuPath;
+        isGpuPath = isGpuPath || other.isGpuPath;
         return *this;
     }
 };
