@@ -195,7 +195,7 @@ jobs:
         run: "$VCPKG_ROOT/vcpkg install --triplet x64-windows-static-md-obs"
       
       - name: "Download ONNX Runtime"
-        run: "cmake -DGPU=ON -P cmake/DownloadOnnxruntime.cmake"
+        run: "cmake -DGPU=ON -DDIRECTML=ON -P cmake/DownloadOnnxruntime.cmake"
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
