@@ -14,6 +14,10 @@ if(NOT DEFINED GPU)
   set(GPU OFF)
 endif()
 
+if(NOT DEFINED DIRECTML)
+  set(DIRECTML OFF)
+endif()
+
 file(REMOVE_RECURSE onnxruntime)
 
 if(PLATFORM STREQUAL "macos")
@@ -29,6 +33,7 @@ if(PLATFORM STREQUAL "macos")
   file(RENAME onnxruntime-osx-universal2-1.23.2 onnxruntime)
 elseif(PLATFORM STREQUAL "windows")
   if(GPU)
+    # GPU版本包含CUDA和TensorRT
     file(
       DOWNLOAD
         https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-gpu-1.23.2.zip
@@ -39,7 +44,26 @@ elseif(PLATFORM STREQUAL "windows")
       COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-win-x64-gpu-1.23.2.zip
     )
     file(RENAME onnxruntime-win-x64-gpu-1.23.2 onnxruntime)
+    message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT)")
+  elseif(DIRECTML)
+    # DirectML版本 - 从NuGet下载
+    # NuGet包实际上是ZIP文件，包含runtimes/win-x64/native/目录
+    file(
+      DOWNLOAD
+        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.0
+        onnxruntime-directml.nupkg
+    )
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
+    )
+    # NuGet包结构: runtimes/win-x64/native/ -> onnxruntime/
+    file(RENAME runtimes/win-x64/native onnxruntime)
+    # 清理NuGet包的其他文件
+    file(REMOVE_RECURSE runtimes package _rels package.services.metadata.core-properties)
+    file(REMOVE onnxruntime-directml.nupkg [Content_Types].xml)
+    message(STATUS "Downloaded ONNX Runtime DirectML version from NuGet")
   else()
+    # CPU版本
     file(
       DOWNLOAD
         https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip
@@ -50,6 +74,7 @@ elseif(PLATFORM STREQUAL "windows")
       COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-win-x64-1.23.2.zip
     )
     file(RENAME onnxruntime-win-x64-1.23.2 onnxruntime)
+    message(STATUS "Downloaded ONNX Runtime CPU version")
   endif()
 elseif(PLATFORM STREQUAL "linux")
   file(

@@ -243,9 +243,10 @@ if(HAVE_ONNXRUNTIME_TENSORRT_EP)
 endif()
 
 if(WIN32)
-  # Windows GPU版本ONNX Runtime内置DML支持
-  if(GPU)
-    message(STATUS "ONNX Runtime DirectML Execution Provider enabled (Windows GPU build)")
+  # DirectML支持 - 仅在DIRECTML构建时启用
+  # 注意：GPU版本(CUDA+TensorRT)不包含DirectML，DirectML需要单独的NuGet包
+  if(DIRECTML)
+    message(STATUS "ONNX Runtime DirectML Execution Provider enabled (DirectML build)")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
   else()
     check_library_exists(
