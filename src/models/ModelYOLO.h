@@ -1,6 +1,10 @@
 #ifndef MODEL_YOLO_H
 #define MODEL_YOLO_H
 
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
 #include "Model.h"
 #include "Detection.h"
 #include <vector>

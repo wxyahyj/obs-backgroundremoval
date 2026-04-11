@@ -3,6 +3,7 @@
 #include <onnxruntime_cxx_api.h>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <wchar.h>
 #include <windows.h>
 #include <gdiplus.h>
@@ -181,12 +182,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 线程池相关成员
 	std::vector<std::thread> threadPool;
 	
-#ifdef HAVE_CUDA
-	// GPU纹理推理支持（阶段2）
-	bool useGpuTextureInference;
-	ID3D11Texture2D* cachedD3D11Texture;
-	int gpuTextureWidth;
-	int gpuTextureHeight;
+#ifdef _WIN32
+	// GPU纹理推理支持
+	bool useGpuTextureInference = false;
+	ID3D11Texture2D* cachedD3D11Texture = nullptr;
+	int gpuTextureWidth = 0;
+	int gpuTextureHeight = 0;
 #endif
 	
 	std::queue<std::function<void()>> taskQueue;
@@ -483,7 +484,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 	~yolo_detector_filter() {
 		obs_log(LOG_INFO, "YOLO detector filter destructor called");
-#ifdef HAVE_CUDA
+#ifdef _WIN32
 		if (cachedD3D11Texture) {
 			cachedD3D11Texture->Release();
 			cachedD3D11Texture = nullptr;
@@ -3669,8 +3670,8 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisIMax = 100.0f;
 		instance->chrisDFilterAlpha = 0.3f;
 		
-#ifdef HAVE_CUDA
-		// GPU纹理推理初始化（阶段2）
+#ifdef _WIN32
+		// GPU纹理推理初始化
 		instance->useGpuTextureInference = false;
 		instance->cachedD3D11Texture = nullptr;
 		instance->gpuTextureWidth = 0;

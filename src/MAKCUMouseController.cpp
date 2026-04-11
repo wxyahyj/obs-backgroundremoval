@@ -3,6 +3,8 @@
 #include "MAKCUMouseController.hpp"
 #include <obs-module.h>
 #include <plugin-support.h>
+
+#define NOMINMAX
 #include <windows.h>
 #include <setupapi.h>
 #include <initguid.h>

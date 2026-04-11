@@ -3,6 +3,8 @@
 #include "MouseController.hpp"
 #include <obs-module.h>
 #include <plugin-support.h>
+
+#define NOMINMAX
 #include <windowsx.h>
 
 MouseController::MouseController()

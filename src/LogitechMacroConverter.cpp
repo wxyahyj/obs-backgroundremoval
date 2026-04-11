@@ -5,6 +5,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+
+#define NOMINMAX
 #include <shlobj.h>
 #include <windows.h>
 
