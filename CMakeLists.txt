@@ -174,7 +174,6 @@ elseif(MSVC)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/models/DmlPreprocessor.cpp)
   
   message(STATUS "DML texture sharing support enabled")
-endif()
 else()
   if(NOT USE_SYSTEM_ONNXRUNTIME)
     set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")
