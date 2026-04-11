@@ -47,9 +47,9 @@ elseif(PLATFORM STREQUAL "windows")
     message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT)")
   elseif(DIRECTML)
     # DirectML版本 - 从NuGet下载
-    # NuGet包结构：
-    # - build/native/include/ -> 头文件
-    # - runtimes/win-x64/native/ -> DLL和LIB
+    # NuGet包解压后会创建以包名命名的根目录:
+    # - microsoft.ml.onnxruntime.directml.1.23.2/build/native/include/ -> 头文件
+    # - microsoft.ml.onnxruntime.directml.1.23.2/runtimes/win-x64/native/ -> DLL和LIB
     
     # 下载ONNX Runtime DirectML包
     file(
@@ -64,11 +64,11 @@ elseif(PLATFORM STREQUAL "windows")
     # 创建目标目录结构
     file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
     
-    # 复制头文件: build/native/include/ -> include/
-    file(COPY build/native/include/ DESTINATION onnxruntime/include)
+    # 复制头文件: 包名/build/native/include/ -> include/
+    file(COPY microsoft.ml.onnxruntime.directml.1.23.2/build/native/include/ DESTINATION onnxruntime/include)
     
-    # 复制库文件: runtimes/win-x64/native/ -> lib/
-    file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
+    # 复制库文件: 包名/runtimes/win-x64/native/ -> lib/
+    file(COPY microsoft.ml.onnxruntime.directml.1.23.2/runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
     
     # 下载DirectML平台包 (DirectML.dll)
     # 注意：Microsoft.ML.OnnxRuntime.DirectML包不包含DirectML.dll
@@ -82,10 +82,10 @@ elseif(PLATFORM STREQUAL "windows")
     )
     
     # 复制DirectML.dll到lib目录
-    file(COPY runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
+    file(COPY microsoft.ai.directml.1.15.4/runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
     
     # 清理所有NuGet包的临时文件
-    file(REMOVE_RECURSE build runtimes package _rels)
+    file(REMOVE_RECURSE microsoft.ml.onnxruntime.directml.1.23.2 microsoft.ai.directml.1.15.4 package _rels)
     file(REMOVE onnxruntime-directml.nupkg directml.nupkg [Content_Types].xml Microsoft.AI.DirectML.nuspec)
     
     message(STATUS "Downloaded ONNX Runtime DirectML version from NuGet")
