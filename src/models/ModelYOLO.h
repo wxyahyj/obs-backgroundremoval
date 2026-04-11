@@ -15,6 +15,10 @@
 #include <atomic>
 #include <cstdio>
 
+#ifdef _WIN32
+#include "DmlPreprocessor.h"
+#endif
+
 // 前向声明CUDA类型
 struct cudaGraphicsResource;
 typedef struct cudaGraphicsResource* cudaGraphicsResource_t;
@@ -126,11 +130,17 @@ public:
     std::vector<Detection> inference(const cv::Mat& input);
     std::future<std::vector<Detection>> asyncInference(const cv::Mat& input);
 
-    // GPU纹理直接推理（阶段2）
+    // GPU纹理直接推理（CUDA/TensorRT）
     std::vector<Detection> inferenceFromTexture(void* d3d11Texture, int width, int height, 
                                                  int originalWidth, int originalHeight,
                                                  InferenceLatency* outLatency = nullptr);
     bool isGpuTextureSupported() const { return cudaInteropInitialized_; }
+    
+    // DML纹理直接推理
+    std::vector<Detection> inferenceFromTextureDml(void* d3d11Texture, int width, int height,
+                                                    int originalWidth, int originalHeight,
+                                                    InferenceLatency* outLatency = nullptr);
+    bool isDmlTextureSupported() const { return dmlInteropInitialized_; }
     
     // 延迟统计
     const LatencyStats& getLatencyStats() const { return latencyStats_; }
@@ -254,6 +264,10 @@ private:
     void* cudaStream_;
     cudaGraphicsResource_t cudaResource_;
     void* cudaInputBuffer_;
+    
+    // === DML纹理共享 ===
+    bool dmlInteropInitialized_;
+    class DmlPreprocessor* dmlPreprocessor_;
     
     // === 延迟统计 ===
     LatencyStats latencyStats_;

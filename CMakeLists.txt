@@ -168,6 +168,13 @@ elseif(MSVC)
       message(WARNING "CUDA compiler not found, CUDA support disabled")
     endif()
   endif()
+  
+  # DML纹理共享支持 - 添加D3D12链接库
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE d3d12 dxgi d3d11)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/models/DmlPreprocessor.cpp)
+  
+  message(STATUS "DML texture sharing support enabled")
+endif()
 else()
   if(NOT USE_SYSTEM_ONNXRUNTIME)
     set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")

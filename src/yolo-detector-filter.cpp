@@ -573,9 +573,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #endif
 	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/CPU）");
 	
-#ifdef HAVE_CUDA
+#ifdef _WIN32
 	obs_property_t *useGpuTextureProp = obs_properties_add_bool(props, "use_gpu_texture_inference", "启用GPU纹理推理(实验性)");
-	obs_property_set_long_description(useGpuTextureProp, "直接在GPU上处理纹理，避免GPU-CPU数据传输（需要CUDA设备）");
+	obs_property_set_long_description(useGpuTextureProp, "直接在GPU上处理纹理，避免GPU-CPU数据传输（支持CUDA/DML设备）");
 #endif
 	
 	obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", obs_module_text("InputResolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1159,7 +1159,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "model_path"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "model_version"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "use_gpu"), page == 0);
-#ifdef HAVE_CUDA
+#ifdef _WIN32
 	obs_property_set_visible(obs_properties_get(props, "use_gpu_texture_inference"), page == 0);
 #endif
 	obs_property_set_visible(obs_properties_get(props, "input_resolution"), page == 0);
@@ -1304,7 +1304,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "model_path", "");
 	obs_data_set_default_int(settings, "model_version", static_cast<int>(ModelYOLO::Version::YOLOv8));
 	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
-#ifdef HAVE_CUDA
+#ifdef _WIN32
 	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
 #endif
 	obs_data_set_default_int(settings, "input_resolution", 640);
@@ -1597,11 +1597,11 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	
 	tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
 	
-#ifdef HAVE_CUDA
+#ifdef _WIN32
 	tf->useGpuTextureInference = obs_data_get_bool(settings, "use_gpu_texture_inference");
-	// 只有在使用CUDA或TensorRT时才启用GPU纹理推理
-	if (tf->useGpuTextureInference && tf->useGPU != "cuda" && tf->useGPU != "tensorrt") {
-		obs_log(LOG_WARNING, "[YOLO Filter] GPU纹理推理需要CUDA或TensorRT设备，已禁用");
+	// GPU纹理推理支持CUDA、TensorRT和DML设备
+	if (tf->useGpuTextureInference && tf->useGPU != "cuda" && tf->useGPU != "tensorrt" && tf->useGPU != "dml") {
+		obs_log(LOG_WARNING, "[YOLO Filter] GPU纹理推理需要CUDA、TensorRT或DML设备，已禁用");
 		tf->useGpuTextureInference = false;
 	}
 #endif
@@ -3119,24 +3119,38 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (filter->yoloModel) {
-#ifdef HAVE_CUDA
-				// GPU纹理推理路径（阶段2）
+#ifdef _WIN32
+				// GPU纹理推理路径
 				if (filter->useGpuTextureInference && 
-					filter->yoloModel->isGpuTextureSupported() &&
 					filter->cachedD3D11Texture &&
 					filter->gpuTextureWidth > 0 && 
 					filter->gpuTextureHeight > 0) {
 					
-					newDetections = filter->yoloModel->inferenceFromTexture(
-						filter->cachedD3D11Texture,
-						filter->gpuTextureWidth,
-						filter->gpuTextureHeight,
-						cropWidth,
-						cropHeight
-					);
+					// CUDA/TensorRT路径
+					if ((filter->useGPU == "cuda" || filter->useGPU == "tensorrt") &&
+						filter->yoloModel->isGpuTextureSupported()) {
+						newDetections = filter->yoloModel->inferenceFromTexture(
+							filter->cachedD3D11Texture,
+							filter->gpuTextureWidth,
+							filter->gpuTextureHeight,
+							cropWidth,
+							cropHeight
+						);
+					}
+					// DML路径
+					else if (filter->useGPU == "dml" && 
+							 filter->yoloModel->isDmlTextureSupported()) {
+						newDetections = filter->yoloModel->inferenceFromTextureDml(
+							filter->cachedD3D11Texture,
+							filter->gpuTextureWidth,
+							filter->gpuTextureHeight,
+							cropWidth,
+							cropHeight
+						);
+					}
 					
+					// GPU推理失败，回退到CPU路径
 					if (newDetections.empty()) {
-						// GPU推理失败，回退到CPU路径
 						newDetections = filter->yoloModel->inference(inferenceFrame);
 					}
 				} else {
