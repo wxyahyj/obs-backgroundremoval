@@ -1,0 +1,37 @@
+# Exclude everything
+/*
+
+# Except for default project files
+!/.github
+!/build-aux
+!/cmake
+!/data
+!/docs
+!/models
+!/pages
+!/scripts
+!/src
+!/vcpkg-triplets
+!.clang-format
+!.cmake-format.json
+!.gersemirc
+!.gitignore
+!buildspec.json
+!CMakeLists.txt
+!CMakePresets.json
+!FAQ.md
+!LICENSE
+!README.md
+!vcpkg-configuration.json
+!vcpkg.json
+
+# Exclude lock files
+*.lock.json
+
+# Exclude macOS legacy resource forks
+.DS_Store
+
+# Exclude CMake build number cache
+/cmake/.CMakeBuildNumber
+
+src/*.generated.*

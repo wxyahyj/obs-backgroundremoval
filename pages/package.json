@@ -1,0 +1,29 @@
+{
+  "name": "obs-backgroundremoval-pages",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@ai-sdk/svelte": "^4.0.81",
+    "@astrojs/svelte": "^7.2.5",
+    "@mlc-ai/web-llm": "^0.2.80",
+    "@octokit/rest": "^22.0.1",
+    "astro": "^5.17.2",
+    "pretty-bytes": "^7.1.0",
+    "svelte": "^5.50.2",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "prettier": "3.8.1",
+    "prettier-plugin-astro": "0.14.1",
+    "prettier-plugin-svelte": "^3.4.1"
+  }
+}
