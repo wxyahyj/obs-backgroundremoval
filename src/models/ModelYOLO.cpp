@@ -21,6 +21,22 @@
 #include "CudaPreprocessor.cuh"
 #endif
 
+ModelYOLO::LetterboxInfo ModelYOLO::calculateLetterboxParams(int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
+    LetterboxInfo info;
+    
+    float scaleX = static_cast<float>(dstWidth) / srcWidth;
+    float scaleY = static_cast<float>(dstHeight) / srcHeight;
+    info.scale = std::min(scaleX, scaleY);
+    
+    int newWidth = static_cast<int>(srcWidth * info.scale);
+    int newHeight = static_cast<int>(srcHeight * info.scale);
+    
+    info.padX = (dstWidth - newWidth) / 2;
+    info.padY = (dstHeight - newHeight) / 2;
+    
+    return info;
+}
+
 ModelYOLO::LetterboxInfo ModelYOLO::letterbox(const cv::Mat& input, cv::Mat& output) {
     LetterboxInfo info;
     
@@ -68,10 +84,12 @@ ModelYOLO::ModelYOLO(Version version)
       useIOBinding_(false),
       useGpuMemory_(false),
       gpuAllocator_(nullptr),
+      gpuMemInfo_(nullptr),
       cudaInteropInitialized_(false),
       cudaStream_(nullptr),
       cudaResource_(nullptr),
       cudaInputBuffer_(nullptr),
+      lastLatencyLogTime_(std::chrono::steady_clock::now()),
       inferenceThreadRunning_(false)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
@@ -430,6 +448,9 @@ std::future<std::vector<Detection>> ModelYOLO::asyncInference(const cv::Mat& inp
 
 std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     
+    auto totalStartTime = std::chrono::high_resolution_clock::now();
+    InferenceLatency latency;
+    
     if (input.empty()) {
         obs_log(LOG_ERROR, "[ModelYOLO] Input image is empty");
         return {};
@@ -446,16 +467,20 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     }
     
     try {
+        auto preprocessStartTime = std::chrono::high_resolution_clock::now();
+        
         cv::Mat letterboxed;
         LetterboxInfo letterboxInfo = letterbox(input, letterboxed);
         
         preprocessInput(letterboxed, inputBuffer_.data());
         
+        auto preprocessEndTime = std::chrono::high_resolution_clock::now();
+        latency.preprocessMs = std::chrono::duration<double, std::milli>(preprocessEndTime - preprocessStartTime).count();
+        
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         
         Ort::Value inputTensor;
         try {
-            // 根据执行提供程序选择合适的内存分配器
             Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
                 OrtAllocatorType::OrtArenaAllocator, 
                 OrtMemType::OrtMemTypeDefault
@@ -485,10 +510,9 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         for (const auto& name : outputNames_) {
             outputNamesChar.push_back(name.get());
         }
-        
 
+        auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         
-        // 添加详细的错误处理
         Ort::RunOptions runOptions;
         
         std::vector<Ort::Value> outputTensors;
@@ -511,6 +535,9 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
             obs_log(LOG_ERROR, "[ModelYOLO] Unknown exception during Run");
             return {};
         }
+        
+        auto inferenceEndTime = std::chrono::high_resolution_clock::now();
+        latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
         
         if (outputTensors.empty()) {
             obs_log(LOG_ERROR, "[ModelYOLO] No output tensors from ONNX Runtime");
@@ -570,6 +597,8 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         
         cv::Size originalSize(input.cols, input.rows);
         
+        auto postprocessStartTime = std::chrono::high_resolution_clock::now();
+        
         std::vector<Detection> detections;
         
         try {
@@ -590,6 +619,24 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Postprocessing exception: %s", e.what());
             return {};
+        }
+        
+        auto postprocessEndTime = std::chrono::high_resolution_clock::now();
+        latency.postprocessMs = std::chrono::duration<double, std::milli>(postprocessEndTime - postprocessStartTime).count();
+        
+        // 计算总延迟
+        auto totalEndTime = std::chrono::high_resolution_clock::now();
+        latency.totalMs = std::chrono::duration<double, std::milli>(totalEndTime - totalStartTime).count();
+        latency.isGpuPath = false;
+        
+        // 添加到统计器
+        latencyStats_.addSample(latency);
+        
+        // 定期输出延迟日志
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLatencyLogTime_).count() >= LATENCY_LOG_INTERVAL_MS) {
+            lastLatencyLogTime_ = now;
+            obs_log(LOG_INFO, "[ModelYOLO] 延迟统计 (CPU路径):\n%s", latencyStats_.getSummary().c_str());
         }
         
         return detections;
@@ -939,12 +986,12 @@ bool ModelYOLO::initializeGpuMemory() {
         // 创建GPU内存信息
         if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
-            gpuMemInfo_ = Ort::MemoryInfo::CreateCpu(
-                OrtDeviceAllocator, OrtMemTypeDefault
+            gpuMemInfo_ = new Ort::MemoryInfo(
+                Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault)
             );
             
             // 创建CUDA分配器
-            gpuAllocator_ = new Ort::Allocator(*session_, gpuMemInfo_);
+            gpuAllocator_ = new Ort::Allocator(*session_, *gpuMemInfo_);
             
             // 预分配GPU输入张量
             std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
@@ -970,8 +1017,8 @@ bool ModelYOLO::initializeGpuMemory() {
         } else if (currentDevice_ == "dml") {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
             // DirectML使用CPU内存作为暂存，但IOBinding仍然有效
-            gpuMemInfo_ = Ort::MemoryInfo::CreateCpu(
-                OrtArenaAllocator, OrtMemTypeDefault
+            gpuMemInfo_ = new Ort::MemoryInfo(
+                Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)
             );
             
             useGpuMemory_ = false;  // DML不使用真正的GPU内存分配
@@ -994,6 +1041,11 @@ void ModelYOLO::releaseGpuMemory() {
     if (gpuAllocator_) {
         delete gpuAllocator_;
         gpuAllocator_ = nullptr;
+    }
+    
+    if (gpuMemInfo_) {
+        delete gpuMemInfo_;
+        gpuMemInfo_ = nullptr;
     }
     
     // Ort::Value会自动释放
@@ -1061,15 +1113,25 @@ void ModelYOLO::releaseCudaInterop() {
 #endif
 }
 
-bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) {
+std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height, 
+                                                         int originalWidth, int originalHeight,
+                                                         InferenceLatency* outLatency) {
 #ifdef HAVE_CUDA
+    auto totalStartTime = std::chrono::high_resolution_clock::now();
+    InferenceLatency latency;
+    latency.isGpuPath = true;
+    
     if (!cudaInteropInitialized_ || !session_) {
-        return false;
+        return {};
     }
     
+    std::vector<Detection> detections;
+    
     try {
+        auto cudaStartTime = std::chrono::high_resolution_clock::now();
+        
         ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
-        if (!d3dTex) return false;
+        if (!d3dTex) return {};
         
         cudaStream_t stream = static_cast<cudaStream_t>(cudaStream_);
         
@@ -1079,7 +1141,7 @@ bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) 
             if (err != cudaSuccess) {
                 obs_log(LOG_ERROR, "[ModelYOLO] Failed to register D3D11 texture: %s",
                         cudaGetErrorString(err));
-                return false;
+                return {};
             }
         }
         
@@ -1087,14 +1149,14 @@ bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) 
         if (err != cudaSuccess) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to map texture: %s", 
                     cudaGetErrorString(err));
-            return false;
+            return {};
         }
         
         cudaArray_t cudaArray;
         err = cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource_, 0, 0);
         if (err != cudaSuccess) {
             cudaGraphicsUnmapResources(1, &cudaResource_, stream);
-            return false;
+            return {};
         }
         
         size_t requiredSize = 3 * inputHeight_ * inputWidth_ * sizeof(float);
@@ -1104,9 +1166,11 @@ bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) 
                 obs_log(LOG_ERROR, "[ModelYOLO] Failed to allocate CUDA input buffer: %s",
                         cudaGetErrorString(err));
                 cudaGraphicsUnmapResources(1, &cudaResource_, stream);
-                return false;
+                return {};
             }
         }
+        
+        auto kernelStartTime = std::chrono::high_resolution_clock::now();
         
         bool preprocessSuccess = cudaLetterboxAndPreprocess(
             cudaArray,
@@ -1116,21 +1180,31 @@ bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) 
             stream
         );
         
+        auto kernelEndTime = std::chrono::high_resolution_clock::now();
+        latency.cudaKernelMs = std::chrono::duration<double, std::milli>(kernelEndTime - kernelStartTime).count();
+        
         cudaGraphicsUnmapResources(1, &cudaResource_, stream);
         
         if (!preprocessSuccess) {
             obs_log(LOG_ERROR, "[ModelYOLO] CUDA letterbox preprocessing failed");
-            return false;
+            return {};
         }
         
         err = cudaStreamSynchronize(stream);
         if (err != cudaSuccess) {
             obs_log(LOG_ERROR, "[ModelYOLO] CUDA stream sync failed: %s", 
                     cudaGetErrorString(err));
-            return false;
+            return {};
         }
         
+        auto copyStartTime = std::chrono::high_resolution_clock::now();
         cudaMemcpy(inputBuffer_.data(), cudaInputBuffer_, requiredSize, cudaMemcpyDeviceToHost);
+        auto copyEndTime = std::chrono::high_resolution_clock::now();
+        latency.gpuCopyMs = std::chrono::duration<double, std::milli>(copyEndTime - copyStartTime).count();
+        
+        latency.preprocessMs = std::chrono::duration<double, std::milli>(copyEndTime - cudaStartTime).count();
+        
+        auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
@@ -1168,19 +1242,74 @@ bool ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height) 
             outputNamesChar.size()
         );
         
+        auto inferenceEndTime = std::chrono::high_resolution_clock::now();
+        latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
+        
         if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
-            return false;
+            return {};
         }
         
-        return true;
+        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        if (!outputData) return {};
+        
+        std::vector<int64_t> outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        if (outputShape.size() < 3) return {};
+        
+        int numBoxes = 0;
+        if (version_ == Version::YOLOv5) {
+            numBoxes = static_cast<int>(outputShape[1]);
+        } else {
+            numBoxes = static_cast<int>(outputShape[2]);
+        }
+        
+        auto postprocessStartTime = std::chrono::high_resolution_clock::now();
+        
+        LetterboxInfo letterboxInfo = calculateLetterboxParams(width, height, inputWidth_, inputHeight_);
+        cv::Size originalSize(originalWidth, originalHeight);
+        
+        switch (version_) {
+            case Version::YOLOv5:
+                detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                break;
+            case Version::YOLOv8:
+                detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                break;
+            case Version::YOLOv11:
+                detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                break;
+        }
+        
+        auto postprocessEndTime = std::chrono::high_resolution_clock::now();
+        latency.postprocessMs = std::chrono::duration<double, std::milli>(postprocessEndTime - postprocessStartTime).count();
+        
+        auto totalEndTime = std::chrono::high_resolution_clock::now();
+        latency.totalMs = std::chrono::duration<double, std::milli>(totalEndTime - totalStartTime).count();
+        
+        latencyStats_.addSample(latency);
+        
+        if (outLatency) {
+            *outLatency = latency;
+        }
+        
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLatencyLogTime_).count() >= LATENCY_LOG_INTERVAL_MS) {
+            lastLatencyLogTime_ = now;
+            obs_log(LOG_INFO, "[ModelYOLO] 延迟统计 (GPU路径):\n%s", latencyStats_.getSummary().c_str());
+        }
+        
+        return detections;
+        
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Texture inference failed: %s", e.what());
-        return false;
+        return {};
     }
 #else
     (void)d3d11Texture;
     (void)width;
     (void)height;
-    return false;
+    (void)originalWidth;
+    (void)originalHeight;
+    (void)outLatency;
+    return {};
 #endif
 }

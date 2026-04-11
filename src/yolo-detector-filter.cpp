@@ -181,11 +181,14 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 线程池相关成员
 	std::vector<std::thread> threadPool;
 	
+#ifdef HAVE_CUDA
 	// GPU纹理推理支持（阶段2）
 	bool useGpuTextureInference;
 	ID3D11Texture2D* cachedD3D11Texture;
 	int gpuTextureWidth;
 	int gpuTextureHeight;
+#endif
+	
 	std::queue<std::function<void()>> taskQueue;
 	std::mutex taskQueueMutex;
 	std::condition_variable taskCondition;
@@ -3124,13 +3127,15 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					filter->gpuTextureWidth > 0 && 
 					filter->gpuTextureHeight > 0) {
 					
-					bool success = filter->yoloModel->inferenceFromTexture(
+					newDetections = filter->yoloModel->inferenceFromTexture(
 						filter->cachedD3D11Texture,
 						filter->gpuTextureWidth,
-						filter->gpuTextureHeight
+						filter->gpuTextureHeight,
+						cropWidth,
+						cropHeight
 					);
 					
-					if (!success) {
+					if (newDetections.empty()) {
 						// GPU推理失败，回退到CPU路径
 						newDetections = filter->yoloModel->inference(inferenceFrame);
 					}
@@ -3650,11 +3655,13 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->chrisIMax = 100.0f;
 		instance->chrisDFilterAlpha = 0.3f;
 		
+#ifdef HAVE_CUDA
 		// GPU纹理推理初始化（阶段2）
 		instance->useGpuTextureInference = false;
 		instance->cachedD3D11Texture = nullptr;
 		instance->gpuTextureWidth = 0;
 		instance->gpuTextureHeight = 0;
+#endif
 		
 #endif
 

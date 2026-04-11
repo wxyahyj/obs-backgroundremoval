@@ -11,10 +11,102 @@
 #include <mutex>
 #include <queue>
 #include <unordered_set>
+#include <chrono>
+#include <atomic>
+#include <cstdio>
 
 // 前向声明CUDA类型
 struct cudaGraphicsResource;
 typedef struct cudaGraphicsResource* cudaGraphicsResource_t;
+
+// 延迟统计结构体
+struct InferenceLatency {
+    double totalMs;           // 总延迟
+    double preprocessMs;      // 预处理延迟
+    double inferenceMs;       // 推理延迟
+    double postprocessMs;     // 后处理延迟
+    double gpuCopyMs;         // GPU数据拷贝延迟（仅GPU路径）
+    double cudaKernelMs;      // CUDA内核执行延迟（仅GPU路径）
+    bool isGpuPath;           // 是否使用GPU路径
+    
+    InferenceLatency() : totalMs(0), preprocessMs(0), inferenceMs(0), 
+                         postprocessMs(0), gpuCopyMs(0), cudaKernelMs(0), isGpuPath(false) {}
+    
+    InferenceLatency& operator+=(const InferenceLatency& other) {
+        totalMs += other.totalMs;
+        preprocessMs += other.preprocessMs;
+        inferenceMs += other.inferenceMs;
+        postprocessMs += other.postprocessMs;
+        gpuCopyMs += other.gpuCopyMs;
+        cudaKernelMs += other.cudaKernelMs;
+        isGpuPath = other.isGpuPath;
+        return *this;
+    }
+};
+
+// 延迟统计器
+class LatencyStats {
+public:
+    void addSample(const InferenceLatency& latency) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        count_++;
+        sum_ += latency;
+        if (count_ == 1 || latency.totalMs < min_.totalMs) min_ = latency;
+        if (count_ == 1 || latency.totalMs > max_.totalMs) max_ = latency;
+    }
+    
+    void reset() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        count_ = 0;
+        sum_ = InferenceLatency();
+        min_ = InferenceLatency();
+        max_ = InferenceLatency();
+    }
+    
+    std::string getSummary() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (count_ == 0) return "无数据";
+        
+        char buf[1024];
+        if (sum_.isGpuPath) {
+            snprintf(buf, sizeof(buf),
+                "=== 延迟统计 (GPU路径) ===\n"
+                "总延迟: 平均 %.2fms | 最小 %.2fms | 最大 %.2fms\n"
+                "  预处理: %.2fms (CUDA内核: %.2fms, GPU拷贝: %.2fms)\n"
+                "  推理: %.2fms\n"
+                "  后处理: %.2fms\n"
+                "样本数: %zu",
+                sum_.totalMs / count_, min_.totalMs, max_.totalMs,
+                sum_.preprocessMs / count_, sum_.cudaKernelMs / count_, sum_.gpuCopyMs / count_,
+                sum_.inferenceMs / count_,
+                sum_.postprocessMs / count_,
+                count_);
+        } else {
+            snprintf(buf, sizeof(buf),
+                "=== 延迟统计 (CPU路径) ===\n"
+                "总延迟: 平均 %.2fms | 最小 %.2fms | 最大 %.2fms\n"
+                "  预处理: %.2fms\n"
+                "  推理: %.2fms\n"
+                "  后处理: %.2fms\n"
+                "样本数: %zu",
+                sum_.totalMs / count_, min_.totalMs, max_.totalMs,
+                sum_.preprocessMs / count_,
+                sum_.inferenceMs / count_,
+                sum_.postprocessMs / count_,
+                count_);
+        }
+        return std::string(buf);
+    }
+    
+    size_t getCount() const { return count_; }
+    
+private:
+    mutable std::mutex mutex_;
+    size_t count_ = 0;
+    InferenceLatency sum_;
+    InferenceLatency min_;
+    InferenceLatency max_;
+};
 
 class ModelYOLO : public ModelBCHW {
 public:
@@ -35,8 +127,15 @@ public:
     std::future<std::vector<Detection>> asyncInference(const cv::Mat& input);
 
     // GPU纹理直接推理（阶段2）
-    bool inferenceFromTexture(void* d3d11Texture, int width, int height);
+    std::vector<Detection> inferenceFromTexture(void* d3d11Texture, int width, int height, 
+                                                 int originalWidth, int originalHeight,
+                                                 InferenceLatency* outLatency = nullptr);
     bool isGpuTextureSupported() const { return cudaInteropInitialized_; }
+    
+    // 延迟统计
+    const LatencyStats& getLatencyStats() const { return latencyStats_; }
+    void resetLatencyStats() { latencyStats_.reset(); }
+    std::string getLatencySummary() const { return latencyStats_.getSummary(); }
 
     void setConfidenceThreshold(float threshold);
     void setNMSThreshold(float threshold);
@@ -98,6 +197,7 @@ private:
                     float& x1, float& y1, float& x2, float& y2);
 
     LetterboxInfo letterbox(const cv::Mat& input, cv::Mat& output);
+    static LetterboxInfo calculateLetterboxParams(int srcWidth, int srcHeight, int dstWidth, int dstHeight);
     std::vector<Detection> doInference(const cv::Mat& input);
     
     // GPU内存初始化
@@ -147,13 +247,18 @@ private:
     Ort::Allocator* gpuAllocator_;
     Ort::Value gpuInputTensor_;
     Ort::Value gpuOutputTensor_;
-    Ort::MemoryInfo gpuMemInfo_;
+    Ort::MemoryInfo* gpuMemInfo_;
     
     // === 阶段2：CUDA纹理共享 ===
     bool cudaInteropInitialized_;
     void* cudaStream_;
     cudaGraphicsResource_t cudaResource_;
     void* cudaInputBuffer_;
+    
+    // === 延迟统计 ===
+    LatencyStats latencyStats_;
+    std::chrono::steady_clock::time_point lastLatencyLogTime_;
+    static constexpr int LATENCY_LOG_INTERVAL_MS = 5000;  // 每5秒输出一次延迟统计
     
     std::thread inferenceThread_;
     std::atomic<bool> inferenceThreadRunning_;
