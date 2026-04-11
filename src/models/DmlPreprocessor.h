@@ -67,6 +67,10 @@ private:
     ComPtr<ID3D12Resource> sharedResource_;
     HANDLE sharedHandle_;
     
+    // 复用staging texture
+    ComPtr<ID3D11Texture2D> cachedStagingTexture_;
+    D3D11_TEXTURE2D_DESC cachedStagingDesc_;
+    
     std::vector<unsigned char> cpuBuffer_;
     std::vector<float> preprocessedBuffer_;
 };

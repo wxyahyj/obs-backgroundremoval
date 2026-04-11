@@ -231,31 +231,38 @@ bool DmlPreprocessor::copyAndPreprocess(
     D3D11_TEXTURE2D_DESC srcDesc;
     srcTexture->GetDesc(&srcDesc);
     
-    size_t bufferSize = srcDesc.Width * srcDesc.Height * 4;
-    cpuBuffer_.resize(bufferSize);
-    
-    D3D11_TEXTURE2D_DESC stagingDesc = srcDesc;
-    stagingDesc.Usage = D3D11_USAGE_STAGING;
-    stagingDesc.BindFlags = 0;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    stagingDesc.MiscFlags = 0;
-    
-    ComPtr<ID3D11Texture2D> stagingTexture;
-    HRESULT hr = d3d11Device_->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
-    if (FAILED(hr)) {
-        return false;
+    // 检查是否需要重新创建staging texture
+    bool needNewStaging = false;
+    if (!cachedStagingTexture_ ||
+        cachedStagingDesc_.Width != srcDesc.Width ||
+        cachedStagingDesc_.Height != srcDesc.Height ||
+        cachedStagingDesc_.Format != srcDesc.Format) {
+        needNewStaging = true;
     }
     
-    d3d11Context_->CopyResource(stagingTexture.Get(), srcTexture);
+    if (needNewStaging) {
+        cachedStagingTexture_.Reset();
+        
+        D3D11_TEXTURE2D_DESC stagingDesc = srcDesc;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags = 0;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags = 0;
+        
+        HRESULT hr = d3d11Device_->CreateTexture2D(&stagingDesc, nullptr, &cachedStagingTexture_);
+        if (FAILED(hr)) {
+            return false;
+        }
+        cachedStagingDesc_ = stagingDesc;
+    }
+    
+    d3d11Context_->CopyResource(cachedStagingTexture_.Get(), srcTexture);
     
     D3D11_MAPPED_SUBRESOURCE mapped;
-    hr = d3d11Context_->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    HRESULT hr = d3d11Context_->Map(cachedStagingTexture_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr)) {
         return false;
     }
-    
-    int newWidth = static_cast<int>(params.srcWidth * params.scale);
-    int newHeight = static_cast<int>(params.srcHeight * params.scale);
     
     int channelSize = params.dstWidth * params.dstHeight;
     float* dstR = dstBuffer;
@@ -288,7 +295,7 @@ bool DmlPreprocessor::copyAndPreprocess(
         }
     }
     
-    d3d11Context_->Unmap(stagingTexture.Get(), 0);
+    d3d11Context_->Unmap(cachedStagingTexture_.Get(), 0);
     
     return true;
 }
