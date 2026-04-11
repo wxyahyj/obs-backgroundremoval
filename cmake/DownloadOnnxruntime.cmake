@@ -47,7 +47,11 @@ elseif(PLATFORM STREQUAL "windows")
     message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT)")
   elseif(DIRECTML)
     # DirectML版本 - 从NuGet下载
-    # NuGet包实际上是ZIP文件，包含runtimes/win-x64/native/目录
+    # 需要下载两个包：
+    # 1. Microsoft.ML.OnnxRuntime.DirectML - 包含onnxruntime.dll（内置DirectML EP）
+    # 2. Microsoft.AI.DirectML - 包含DirectML.dll（平台代码）
+    
+    # 下载ONNX Runtime DirectML包
     file(
       DOWNLOAD
         https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.0
@@ -61,7 +65,25 @@ elseif(PLATFORM STREQUAL "windows")
     # 清理NuGet包的其他文件
     file(REMOVE_RECURSE runtimes package _rels package.services.metadata.core-properties)
     file(REMOVE onnxruntime-directml.nupkg [Content_Types].xml)
+    
+    # 下载DirectML平台包
+    file(
+      DOWNLOAD
+        https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4
+        directml.nupkg
+    )
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xf directml.nupkg
+    )
+    # 复制DirectML.dll到onnxruntime目录
+    file(COPY runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
+    # 清理DirectML NuGet包的其他文件
+    file(REMOVE_RECURSE runtimes package _rels package.services.metadata.core-properties build)
+    file(REMOVE directml.nupkg [Content_Types].xml Microsoft.AI.DirectML.nuspec)
+    
     message(STATUS "Downloaded ONNX Runtime DirectML version from NuGet")
+    message(STATUS "  - onnxruntime.dll (with DirectML EP)")
+    message(STATUS "  - DirectML.dll (platform code)")
   else()
     # CPU版本
     file(
