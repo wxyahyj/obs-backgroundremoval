@@ -221,6 +221,10 @@ private:
     // CUDA互操作初始化（阶段2）
     bool initializeCudaInterop();
     void releaseCudaInterop();
+    
+    // DML预处理器初始化
+    bool initializeDmlPreprocessor();
+    void releaseDmlInterop();
 
     Version version_;
     float confidenceThreshold_;

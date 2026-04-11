@@ -6,6 +6,7 @@
 #include <numeric>
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 #include <dml_provider_factory.h>
+#include <d3d11.h>
 #endif
 #ifdef _WIN32
 #define NOMINMAX
@@ -89,6 +90,8 @@ ModelYOLO::ModelYOLO(Version version)
       cudaStream_(nullptr),
       cudaResource_(nullptr),
       cudaInputBuffer_(nullptr),
+      dmlInteropInitialized_(false),
+      dmlPreprocessor_(nullptr),
       lastLatencyLogTime_(std::chrono::steady_clock::now()),
       inferenceThreadRunning_(false)
 {
@@ -141,6 +144,9 @@ ModelYOLO::~ModelYOLO() {
     if (inferenceThread_.joinable()) {
         inferenceThread_.join();
     }
+    
+    // 释放DML互操作资源
+    releaseDmlInterop();
     
     // 释放CUDA互操作资源
     releaseCudaInterop();
@@ -361,6 +367,15 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                             obs_log(LOG_INFO, "[ModelYOLO] CUDA texture interop initialized");
                         } else {
                             obs_log(LOG_WARNING, "[ModelYOLO] CUDA interop init failed, texture sharing disabled");
+                        }
+                    }
+                    
+                    // 初始化DML预处理器（仅DML模式）
+                    if (currentDevice_ == "dml") {
+                        if (initializeDmlPreprocessor()) {
+                            obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized");
+                        } else {
+                            obs_log(LOG_WARNING, "[ModelYOLO] DML preprocessor init failed, texture sharing disabled");
                         }
                     }
                 } else {
@@ -1113,6 +1128,72 @@ void ModelYOLO::releaseCudaInterop() {
 #endif
 }
 
+bool ModelYOLO::initializeDmlPreprocessor() {
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+    if (dmlInteropInitialized_) {
+        return true;
+    }
+    
+    try {
+        // 获取 D3D11 设备（从当前会话或创建新的）
+        // 这里我们创建一个独立的 D3D11 设备用于预处理
+        D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
+        ID3D11Device* d3d11Device = nullptr;
+        HRESULT hr = D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_HARDWARE,
+            nullptr,
+            0,
+            featureLevels,
+            1,
+            D3D11_SDK_VERSION,
+            &d3d11Device,
+            nullptr,
+            nullptr
+        );
+        
+        if (FAILED(hr) || !d3d11Device) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create D3D11 device for DML: 0x%08X", hr);
+            return false;
+        }
+        
+        dmlPreprocessor_ = new DmlPreprocessor();
+        if (!dmlPreprocessor_->initialize(d3d11Device)) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize DML preprocessor");
+            delete dmlPreprocessor_;
+            dmlPreprocessor_ = nullptr;
+            d3d11Device->Release();
+            return false;
+        }
+        
+        d3d11Device->Release();
+        dmlInteropInitialized_ = true;
+        obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized successfully");
+        return true;
+        
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML preprocessor init exception: %s", e.what());
+        return false;
+    }
+#else
+    obs_log(LOG_WARNING, "[ModelYOLO] DML not supported in this build");
+    return false;
+#endif
+}
+
+void ModelYOLO::releaseDmlInterop() {
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+    if (dmlPreprocessor_) {
+        dmlPreprocessor_->release();
+        delete dmlPreprocessor_;
+        dmlPreprocessor_ = nullptr;
+    }
+    
+    dmlInteropInitialized_ = false;
+    obs_log(LOG_INFO, "[ModelYOLO] DML interop released");
+#endif
+}
+
 std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height, 
                                                          int originalWidth, int originalHeight,
                                                          InferenceLatency* outLatency) {
@@ -1318,14 +1399,178 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
                                                           int originalWidth, int originalHeight,
                                                           InferenceLatency* outLatency) {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
-    (void)d3d11Texture;
-    (void)width;
-    (void)height;
-    (void)originalWidth;
-    (void)originalHeight;
-    (void)outLatency;
-    obs_log(LOG_WARNING, "[ModelYOLO] DML texture inference not yet implemented");
-    return {};
+    auto totalStartTime = std::chrono::high_resolution_clock::now();
+    InferenceLatency latency;
+    latency.isGpuPath = true;
+    
+    if (!session_) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: session not initialized");
+        return {};
+    }
+    
+    ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
+    if (!d3dTex) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid texture");
+        return {};
+    }
+    
+    std::vector<Detection> detections;
+    
+    try {
+        auto preprocessStartTime = std::chrono::high_resolution_clock::now();
+        
+        // 确保输入缓冲区大小正确
+        size_t requiredSize = 3 * inputHeight_ * inputWidth_;
+        if (inputBuffer_.size() < requiredSize) {
+            inputBuffer_.resize(requiredSize);
+            inputBufferSize_ = requiredSize * sizeof(float);
+        }
+        
+        // 使用 DML 预处理器从纹理预处理
+        bool preprocessSuccess = false;
+        if (dmlPreprocessor_ && dmlPreprocessor_->isInitialized()) {
+            DmlPreprocessParams params;
+            preprocessSuccess = dmlPreprocessor_->preprocessFromTexture(
+                d3dTex,
+                inputBuffer_.data(),
+                inputWidth_,
+                inputHeight_,
+                &params
+            );
+            
+            if (preprocessSuccess) {
+                // 计算 letterbox 参数用于后处理
+                // params 包含 scale, padX, padY
+            }
+        }
+        
+        auto preprocessEndTime = std::chrono::high_resolution_clock::now();
+        latency.preprocessMs = std::chrono::duration<double, std::milli>(preprocessEndTime - preprocessStartTime).count();
+        
+        if (!preprocessSuccess) {
+            obs_log(LOG_WARNING, "[ModelYOLO] DML preprocessing failed, falling back to CPU");
+            return {};
+        }
+        
+        auto inferenceStartTime = std::chrono::high_resolution_clock::now();
+        
+        // 创建输入张量
+        std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
+        Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+            OrtArenaAllocator, OrtMemTypeDefault
+        );
+        
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo,
+            inputBuffer_.data(),
+            inputBufferSize_,
+            inputShape.data(),
+            inputShape.size()
+        );
+        
+        std::vector<Ort::Value> inputTensors;
+        inputTensors.push_back(std::move(inputTensor));
+        
+        std::vector<const char*> inputNamesChar;
+        for (const auto& name : inputNames_) {
+            inputNamesChar.push_back(name.get());
+        }
+        
+        std::vector<const char*> outputNamesChar;
+        for (const auto& name : outputNames_) {
+            outputNamesChar.push_back(name.get());
+        }
+        
+        Ort::RunOptions runOptions;
+        std::vector<Ort::Value> outputTensors = session_->Run(
+            runOptions,
+            inputNamesChar.data(),
+            inputTensors.data(),
+            inputTensors.size(),
+            outputNamesChar.data(),
+            outputNamesChar.size()
+        );
+        
+        auto inferenceEndTime = std::chrono::high_resolution_clock::now();
+        latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
+        
+        if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
+            obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid output tensor");
+            return {};
+        }
+        
+        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        if (!outputData) {
+            obs_log(LOG_ERROR, "[ModelYOLO] DML inference: null output data");
+            return {};
+        }
+        
+        std::vector<int64_t> outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        if (outputShape.size() < 3) {
+            obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid output shape");
+            return {};
+        }
+        
+        auto postprocessStartTime = std::chrono::high_resolution_clock::now();
+        
+        // 计算 letterbox 参数
+        LetterboxInfo letterboxInfo = calculateLetterboxParams(width, height, inputWidth_, inputHeight_);
+        
+        int numBoxes = 0;
+        if (version_ == Version::YOLOv5) {
+            numBoxes = static_cast<int>(outputShape[1]);
+            detections = postprocessYOLOv5(
+                outputData,
+                numBoxes,
+                numClasses_,
+                letterboxInfo,
+                cv::Size(originalWidth, originalHeight)
+            );
+        } else if (version_ == Version::YOLOv8) {
+            numBoxes = static_cast<int>(outputShape[2]);
+            detections = postprocessYOLOv8(
+                outputData,
+                numBoxes,
+                numClasses_,
+                letterboxInfo,
+                cv::Size(originalWidth, originalHeight)
+            );
+        } else if (version_ == Version::YOLOv11) {
+            numBoxes = static_cast<int>(outputShape[2]);
+            detections = postprocessYOLOv11(
+                outputData,
+                numBoxes,
+                numClasses_,
+                letterboxInfo,
+                cv::Size(originalWidth, originalHeight)
+            );
+        }
+        
+        auto postprocessEndTime = std::chrono::high_resolution_clock::now();
+        latency.postprocessMs = std::chrono::duration<double, std::milli>(postprocessEndTime - postprocessStartTime).count();
+        
+        auto totalEndTime = std::chrono::high_resolution_clock::now();
+        latency.totalMs = std::chrono::duration<double, std::milli>(totalEndTime - totalStartTime).count();
+        
+        // 记录延迟统计
+        latencyStats_.addSample(latency);
+        
+        if (outLatency) {
+            *outLatency = latency;
+        }
+        
+        obs_log(LOG_INFO, "[ModelYOLO] DML texture inference: %zu detections, total %.2fms (preprocess %.2fms, inference %.2fms, postprocess %.2fms)",
+                detections.size(), latency.totalMs, latency.preprocessMs, latency.inferenceMs, latency.postprocessMs);
+        
+        return detections;
+        
+    } catch (const Ort::Exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML ONNX Runtime error: %s", e.what());
+        return {};
+    } catch (const std::exception& e) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML inference error: %s", e.what());
+        return {};
+    }
 #else
     (void)d3d11Texture;
     (void)width;
@@ -1333,6 +1578,7 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
     (void)originalWidth;
     (void)originalHeight;
     (void)outLatency;
+    obs_log(LOG_WARNING, "[ModelYOLO] DML not supported in this build");
     return {};
 #endif
 }

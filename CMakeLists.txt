@@ -243,15 +243,21 @@ if(HAVE_ONNXRUNTIME_TENSORRT_EP)
 endif()
 
 if(WIN32)
-  check_library_exists(
-    onnxruntime::onnxruntime
-    OrtSessionOptionsAppendExecutionProvider_DML
-    onnxruntime_c_api.h
-    HAVE_ONNXRUNTIME_DML_EP
-  )
-  if(HAVE_ONNXRUNTIME_DML_EP)
-    message(STATUS "ONNX Runtime DirectML Execution Provider found")
+  # Windows GPU版本ONNX Runtime内置DML支持
+  if(GPU)
+    message(STATUS "ONNX Runtime DirectML Execution Provider enabled (Windows GPU build)")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+  else()
+    check_library_exists(
+      onnxruntime::onnxruntime
+      OrtSessionOptionsAppendExecutionProvider_DML
+      onnxruntime_c_api.h
+      HAVE_ONNXRUNTIME_DML_EP
+    )
+    if(HAVE_ONNXRUNTIME_DML_EP)
+      message(STATUS "ONNX Runtime DirectML Execution Provider found")
+      target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+    endif()
   endif()
 endif()
 
