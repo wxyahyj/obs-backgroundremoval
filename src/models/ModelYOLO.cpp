@@ -1134,11 +1134,14 @@ bool ModelYOLO::initializeDmlPreprocessor() {
         return true;
     }
     
+    ID3D11Device* d3d11Device = nullptr;
+    ID3D11DeviceContext* d3d11Context = nullptr;
+    
     try {
-        // 获取 D3D11 设备（从当前会话或创建新的）
-        // 这里我们创建一个独立的 D3D11 设备用于预处理
+        // 创建 D3D11 设备
         D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
-        ID3D11Device* d3d11Device = nullptr;
+        D3D_FEATURE_LEVEL obtainedFeatureLevel;
+        
         HRESULT hr = D3D11CreateDevice(
             nullptr,
             D3D_DRIVER_TYPE_HARDWARE,
@@ -1148,31 +1151,49 @@ bool ModelYOLO::initializeDmlPreprocessor() {
             1,
             D3D11_SDK_VERSION,
             &d3d11Device,
-            nullptr,
-            nullptr
+            &obtainedFeatureLevel,
+            &d3d11Context
         );
         
-        if (FAILED(hr) || !d3d11Device) {
+        if (FAILED(hr) || !d3d11Device || !d3d11Context) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to create D3D11 device for DML: 0x%08X", hr);
+            if (d3d11Context) d3d11Context->Release();
+            if (d3d11Device) d3d11Device->Release();
             return false;
         }
         
+        // DmlPreprocessor 使用 ComPtr 管理设备生命周期
+        // initialize() 内部会 AddRef，我们释放本地引用
         dmlPreprocessor_ = new DmlPreprocessor();
         if (!dmlPreprocessor_->initialize(d3d11Device)) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize DML preprocessor");
             delete dmlPreprocessor_;
             dmlPreprocessor_ = nullptr;
+            d3d11Context->Release();
             d3d11Device->Release();
             return false;
         }
         
+        // DmlPreprocessor 已通过 ComPtr 持有设备引用
+        // 释放本地引用（ComPtr 已 AddRef）
+        d3d11Context->Release();
         d3d11Device->Release();
+        d3d11Device = nullptr;
+        d3d11Context = nullptr;
+        
         dmlInteropInitialized_ = true;
-        obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized successfully");
+        obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized successfully (D3D11 Feature Level: 0x%X)", obtainedFeatureLevel);
         return true;
         
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] DML preprocessor init exception: %s", e.what());
+        // 异常情况下确保资源释放
+        if (d3d11Context) d3d11Context->Release();
+        if (d3d11Device) d3d11Device->Release();
+        if (dmlPreprocessor_) {
+            delete dmlPreprocessor_;
+            dmlPreprocessor_ = nullptr;
+        }
         return false;
     }
 #else
