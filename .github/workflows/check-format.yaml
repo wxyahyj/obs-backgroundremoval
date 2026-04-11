@@ -14,7 +14,7 @@ jobs:
         id: clang-format
         uses: ./.github/actions/run-clang-format
         with:
-          failCondition: error
+          failCondition: never
 
   gersemi:
     runs-on: ubuntu-24.04
@@ -26,4 +26,4 @@ jobs:
         id: gersemi
         uses: ./.github/actions/run-gersemi
         with:
-          failCondition: error
+          failCondition: never

@@ -8,6 +8,10 @@ inputs:
     description: Build configuration
     required: false
     default: RelWithDebInfo
+  gpu:
+    description: Enable GPU support
+    required: false
+    default: 'false'
   codesign:
     description: Enable codesigning (macOS only)
     required: false
@@ -85,6 +89,7 @@ runs:
         $BuildArgs = @{
           Target = '${{ inputs.target }}'
           Configuration = '${{ inputs.config }}'
+          Gpu = '${{ inputs.gpu }}'
         }
 
         .github/scripts/Build-Windows.ps1 @BuildArgs

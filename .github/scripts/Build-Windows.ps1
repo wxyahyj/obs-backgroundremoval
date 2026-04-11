@@ -3,7 +3,9 @@ param(
     [ValidateSet('x64')]
     [string] $Target = 'x64',
     [ValidateSet('Debug', 'RelWithDebInfo', 'Release', 'MinSizeRel')]
-    [string] $Configuration = 'RelWithDebInfo'
+    [string] $Configuration = 'RelWithDebInfo',
+    [ValidateSet('true', 'false')]
+    [string] $Gpu = 'false'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,7 +49,8 @@ function Build {
     Push-Location -Stack BuildTemp
     Ensure-Location $ProjectRoot
 
-    $CmakeArgs = @('--preset', "windows-ci-${Target}")
+    $PresetSuffix = if ( $Gpu -eq 'true' ) { '-gpu' } else { '' }
+    $CmakeArgs = @('--preset', "windows-ci-${Target}${PresetSuffix}")
     $CmakeBuildArgs = @('--build')
     $CmakeInstallArgs = @()
 
@@ -58,7 +61,7 @@ function Build {
     }
 
     $CmakeBuildArgs += @(
-        '--preset', "windows-${Target}"
+        '--preset', "windows-${Target}${PresetSuffix}"
         '--config', $Configuration
         '--parallel'
         '--', '/consoleLoggerParameters:Summary', '/noLogo'

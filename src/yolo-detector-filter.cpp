@@ -4215,20 +4215,29 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 			gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 			if (tex) {
+#if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
+				// GPU纹理推理路径（CUDA 或 DML）
+				if (tf->useGpuTextureInference && tf->yoloModel) {
+					bool canUseGpuTexture = false;
 #ifdef HAVE_CUDA
-				// GPU纹理推理路径（阶段2）
-				if (tf->useGpuTextureInference && tf->yoloModel && tf->yoloModel->isGpuTextureSupported()) {
-					void* d3d11Texture = gs_texture_get_obj(tex);
-					if (d3d11Texture) {
-						ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
-						d3dTex->AddRef();
-						
-						if (tf->cachedD3D11Texture) {
-							tf->cachedD3D11Texture->Release();
+					canUseGpuTexture = canUseGpuTexture || tf->yoloModel->isGpuTextureSupported();
+#endif
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+					canUseGpuTexture = canUseGpuTexture || tf->yoloModel->isDmlTextureSupported();
+#endif
+					if (canUseGpuTexture) {
+						void* d3d11Texture = gs_texture_get_obj(tex);
+						if (d3d11Texture) {
+							ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
+							d3dTex->AddRef();
+							
+							if (tf->cachedD3D11Texture) {
+								tf->cachedD3D11Texture->Release();
+							}
+							tf->cachedD3D11Texture = d3dTex;
+							tf->gpuTextureWidth = width;
+							tf->gpuTextureHeight = height;
 						}
-						tf->cachedD3D11Texture = d3dTex;
-						tf->gpuTextureWidth = width;
-						tf->gpuTextureHeight = height;
 					}
 				}
 #endif

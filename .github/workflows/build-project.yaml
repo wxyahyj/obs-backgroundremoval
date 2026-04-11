@@ -202,6 +202,7 @@ jobs:
         with:
           target: x64
           config: ${{ needs.check-event.outputs.config }}
+          gpu: 'true'
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
