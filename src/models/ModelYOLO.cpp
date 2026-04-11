@@ -1313,3 +1313,26 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int w
     return {};
 #endif
 }
+
+std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, int width, int height,
+                                                          int originalWidth, int originalHeight,
+                                                          InferenceLatency* outLatency) {
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+    (void)d3d11Texture;
+    (void)width;
+    (void)height;
+    (void)originalWidth;
+    (void)originalHeight;
+    (void)outLatency;
+    obs_log(LOG_WARNING, "[ModelYOLO] DML texture inference not yet implemented");
+    return {};
+#else
+    (void)d3d11Texture;
+    (void)width;
+    (void)height;
+    (void)originalWidth;
+    (void)originalHeight;
+    (void)outLatency;
+    return {};
+#endif
+}
