@@ -48,6 +48,10 @@ void DmlPreprocessor::release()
         return;
     }
     
+    // 清理缓存的staging texture
+    cachedStagingTexture_.Reset();
+    memset(&cachedStagingDesc_, 0, sizeof(cachedStagingDesc_));
+    
     sharedResource_.Reset();
     sharedTexture_.Reset();
     
