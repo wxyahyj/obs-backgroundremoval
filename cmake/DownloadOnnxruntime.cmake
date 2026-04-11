@@ -54,7 +54,7 @@ elseif(PLATFORM STREQUAL "windows")
     # 下载ONNX Runtime DirectML包
     file(
       DOWNLOAD
-        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.0
+        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.2
         onnxruntime-directml.nupkg
     )
     execute_process(
@@ -70,11 +70,8 @@ elseif(PLATFORM STREQUAL "windows")
     # 复制库文件: runtimes/win-x64/native/ -> lib/
     file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
     
-    # 清理NuGet包的其他文件
-    file(REMOVE_RECURSE build runtimes package _rels)
-    file(REMOVE onnxruntime-directml.nupkg [Content_Types].xml)
-    
     # 下载DirectML平台包 (DirectML.dll)
+    # 注意：Microsoft.ML.OnnxRuntime.DirectML包不包含DirectML.dll
     file(
       DOWNLOAD
         https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4
@@ -87,9 +84,9 @@ elseif(PLATFORM STREQUAL "windows")
     # 复制DirectML.dll到lib目录
     file(COPY runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
     
-    # 清理DirectML NuGet包
-    file(REMOVE_RECURSE runtimes package _rels build)
-    file(REMOVE directml.nupkg [Content_Types].xml Microsoft.AI.DirectML.nuspec)
+    # 清理所有NuGet包的临时文件
+    file(REMOVE_RECURSE build runtimes package _rels)
+    file(REMOVE onnxruntime-directml.nupkg directml.nupkg [Content_Types].xml Microsoft.AI.DirectML.nuspec)
     
     message(STATUS "Downloaded ONNX Runtime DirectML version from NuGet")
     message(STATUS "  - onnxruntime.dll (with DirectML EP)")
