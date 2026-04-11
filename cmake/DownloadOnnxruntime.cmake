@@ -47,9 +47,7 @@ elseif(PLATFORM STREQUAL "windows")
     message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT)")
   elseif(DIRECTML)
     # DirectML版本 - 从NuGet下载
-    # NuGet包解压后会创建以包名命名的根目录:
-    # - microsoft.ml.onnxruntime.directml.1.23.2/build/native/include/ -> 头文件
-    # - microsoft.ml.onnxruntime.directml.1.23.2/runtimes/win-x64/native/ -> DLL和LIB
+    # NuGet包解压后可能创建以包名命名的根目录，也可能不创建
     
     # 下载ONNX Runtime DirectML包
     file(
@@ -64,11 +62,23 @@ elseif(PLATFORM STREQUAL "windows")
     # 创建目标目录结构
     file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
     
-    # 复制头文件: 包名/build/native/include/ -> include/
-    file(COPY microsoft.ml.onnxruntime.directml.1.23.2/build/native/include/ DESTINATION onnxruntime/include)
-    
-    # 复制库文件: 包名/runtimes/win-x64/native/ -> lib/
-    file(COPY microsoft.ml.onnxruntime.directml.1.23.2/runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
+    # 查找解压后的目录结构
+    # NuGet包可能直接解压到当前目录，也可能创建以包名命名的子目录
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build/native/include")
+      # 直接解压到当前目录
+      file(COPY build/native/include/ DESTINATION onnxruntime/include)
+      file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
+    else()
+      # 解压到以包名命名的子目录，使用GLOB查找
+      file(GLOB ORT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/microsoft.ml.onnxruntime.directml.*")
+      if(ORT_DIR)
+        list(GET ORT_DIR 0 ORT_DIR)
+        file(COPY "${ORT_DIR}/build/native/include/" DESTINATION onnxruntime/include)
+        file(COPY "${ORT_DIR}/runtimes/win-x64/native/" DESTINATION onnxruntime/lib)
+      else()
+        message(FATAL_ERROR "Cannot find ONNX Runtime DirectML package directory")
+      endif()
+    endif()
     
     # 下载DirectML平台包 (DirectML.dll)
     # 注意：Microsoft.ML.OnnxRuntime.DirectML包不包含DirectML.dll
@@ -81,11 +91,28 @@ elseif(PLATFORM STREQUAL "windows")
       COMMAND ${CMAKE_COMMAND} -E tar xf directml.nupkg
     )
     
-    # 复制DirectML.dll到lib目录
-    file(COPY microsoft.ai.directml.1.15.4/runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
+    # 查找DirectML.dll的位置
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtimes/win-x64/native/DirectML.dll")
+      file(COPY runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
+    else()
+      file(GLOB DML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/microsoft.ai.directml.*")
+      if(DML_DIR)
+        list(GET DML_DIR 0 DML_DIR)
+        file(COPY "${DML_DIR}/runtimes/win-x64/native/DirectML.dll" DESTINATION onnxruntime/lib)
+      else()
+        message(FATAL_ERROR "Cannot find DirectML.dll")
+      endif()
+    endif()
     
     # 清理所有NuGet包的临时文件
-    file(REMOVE_RECURSE microsoft.ml.onnxruntime.directml.1.23.2 microsoft.ai.directml.1.15.4 package _rels)
+    file(GLOB ORT_CLEANUP "${CMAKE_CURRENT_SOURCE_DIR}/microsoft.ml.onnxruntime.directml.*")
+    file(GLOB DML_CLEANUP "${CMAKE_CURRENT_SOURCE_DIR}/microsoft.ai.directml.*")
+    if(ORT_CLEANUP)
+      file(REMOVE_RECURSE ${ORT_CLEANUP})
+    endif()
+    if(DML_CLEANUP)
+      file(REMOVE_RECURSE ${DML_CLEANUP})
+    endif()
     file(REMOVE onnxruntime-directml.nupkg directml.nupkg [Content_Types].xml Microsoft.AI.DirectML.nuspec)
     
     message(STATUS "Downloaded ONNX Runtime DirectML version from NuGet")
@@ -106,21 +133,7 @@ if(NOT TARGET onnxruntime::onnxruntime)
   )
 endif()
 ")
-  else()
-    # CPU版本
-    file(
-      DOWNLOAD
-        https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip
-        onnxruntime-win-x64-1.23.2.zip
-      EXPECTED_HASH SHA256=0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd
-    )
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-win-x64-1.23.2.zip
-    )
-    file(RENAME onnxruntime-win-x64-1.23.2 onnxruntime)
-    message(STATUS "Downloaded ONNX Runtime CPU version")
-  endif()
-elseif(PLATFORM STREQUAL "linux")
+  elseif(PLATFORM STREQUAL "linux")
   file(
     DOWNLOAD
       https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz
