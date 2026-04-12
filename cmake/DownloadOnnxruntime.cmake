@@ -46,17 +46,26 @@ elseif(PLATFORM STREQUAL "windows")
       DOWNLOAD
         https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.2
         onnxruntime-directml.nupkg
+      SHOW_PROGRESS
     )
+    
+    # 解压NuGet包
+    message(STATUS "Extracting NuGet package...")
     execute_process(
       COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
+      RESULT_VARIABLE EXTRACT_RESULT
+      OUTPUT_VARIABLE EXTRACT_OUTPUT
+      ERROR_VARIABLE EXTRACT_ERROR
     )
+    
+    if(NOT EXTRACT_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to extract NuGet package: ${EXTRACT_ERROR}")
+    endif()
+    
+    message(STATUS "Extraction completed successfully")
     
     # 创建目标目录
     file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
-    
-    # NuGet包可能解压到当前目录或以包名命名的子目录
-    set(ORT_RUNTIME_DIR "")
-    set(ORT_INCLUDE_DIR "")
     
     # 调试：列出当前目录内容
     message(STATUS "Checking directory structure after extraction...")
@@ -64,6 +73,10 @@ elseif(PLATFORM STREQUAL "windows")
     foreach(ITEM ${ALL_ITEMS})
       message(STATUS "  Found: ${ITEM}")
     endforeach()
+    
+    # NuGet包可能解压到当前目录或以包名命名的子目录
+    set(ORT_RUNTIME_DIR "")
+    set(ORT_INCLUDE_DIR "")
     
     if(EXISTS "runtimes/win-x64/native")
       set(ORT_RUNTIME_DIR "runtimes/win-x64/native")
@@ -90,10 +103,10 @@ elseif(PLATFORM STREQUAL "windows")
             endforeach()
           endif()
         else()
-          message(STATUS "Is directory: no")
+          message(STATUS "Is directory: no, it's a file")
         endif()
       else()
-        message(STATUS "No matching directories found")
+        message(STATUS "No matching directories found for microsoft.ml.onnxruntime.directml.*")
       endif()
     endif()
     
