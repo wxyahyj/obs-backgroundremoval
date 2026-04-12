@@ -49,27 +49,60 @@ elseif(PLATFORM STREQUAL "windows")
       SHOW_PROGRESS
     )
     
-    # 解压NuGet包
+    # 解压NuGet包（NuGet包实际上是ZIP格式）
     message(STATUS "Extracting NuGet package...")
+    
+    # 方法1：尝试使用CMake的tar命令
     execute_process(
       COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
+      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
       RESULT_VARIABLE EXTRACT_RESULT
-      OUTPUT_VARIABLE EXTRACT_OUTPUT
       ERROR_VARIABLE EXTRACT_ERROR
     )
     
+    # 如果tar失败，尝试重命名为zip再解压
     if(NOT EXTRACT_RESULT EQUAL 0)
-      message(FATAL_ERROR "Failed to extract NuGet package: ${EXTRACT_ERROR}")
+      message(STATUS "tar extraction failed, trying zip method...")
+      message(STATUS "Error was: ${EXTRACT_ERROR}")
+      
+      # 重命名为.zip
+      file(RENAME onnxruntime-directml.nupkg onnxruntime-directml.zip)
+      
+      # 使用unzip或PowerShell解压
+      find_program(UNZIP_CMD unzip)
+      if(UNZIP_CMD)
+        execute_process(
+          COMMAND ${UNZIP_CMD} -o onnxruntime-directml.zip
+          WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
+          RESULT_VARIABLE EXTRACT_RESULT
+        )
+      else()
+        # 使用PowerShell解压
+        execute_process(
+          COMMAND powershell -Command "Expand-Archive -Path onnxruntime-directml.zip -DestinationPath . -Force"
+          WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
+          RESULT_VARIABLE EXTRACT_RESULT
+          ERROR_VARIABLE EXTRACT_ERROR
+        )
+      endif()
+      
+      if(NOT EXTRACT_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to extract NuGet package: ${EXTRACT_ERROR}")
+      endif()
     endif()
     
     message(STATUS "Extraction completed successfully")
     
-    # 创建目标目录
-    file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
+    # 设置工作目录
+    set(WORK_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
     
-    # 调试：列出当前目录内容
+    # 创建目标目录
+    file(MAKE_DIRECTORY ${WORK_DIR}/onnxruntime/include ${WORK_DIR}/onnxruntime/lib)
+    
+    # 调试：列出工作目录内容
     message(STATUS "Checking directory structure after extraction...")
-    file(GLOB ALL_ITEMS "*")
+    message(STATUS "Work directory: ${WORK_DIR}")
+    file(GLOB ALL_ITEMS RELATIVE ${WORK_DIR} "${WORK_DIR}/*")
     foreach(ITEM ${ALL_ITEMS})
       message(STATUS "  Found: ${ITEM}")
     endforeach()
@@ -78,12 +111,12 @@ elseif(PLATFORM STREQUAL "windows")
     set(ORT_RUNTIME_DIR "")
     set(ORT_INCLUDE_DIR "")
     
-    if(EXISTS "runtimes/win-x64/native")
-      set(ORT_RUNTIME_DIR "runtimes/win-x64/native")
-      set(ORT_INCLUDE_DIR "build/native/include")
+    if(EXISTS "${WORK_DIR}/runtimes/win-x64/native")
+      set(ORT_RUNTIME_DIR "${WORK_DIR}/runtimes/win-x64/native")
+      set(ORT_INCLUDE_DIR "${WORK_DIR}/build/native/include")
       message(STATUS "Found ONNX Runtime in current directory")
     else()
-      file(GLOB ORT_PKG_DIRS "microsoft.ml.onnxruntime.directml.*")
+      file(GLOB ORT_PKG_DIRS "${WORK_DIR}/microsoft.ml.onnxruntime.directml.*")
       message(STATUS "Glob result for microsoft.ml.onnxruntime.directml.*: ${ORT_PKG_DIRS}")
       if(ORT_PKG_DIRS)
         list(GET ORT_PKG_DIRS 0 ORT_PKG_DIR)
@@ -111,24 +144,24 @@ elseif(PLATFORM STREQUAL "windows")
     endif()
     
     if(NOT ORT_RUNTIME_DIR OR NOT EXISTS "${ORT_RUNTIME_DIR}")
-      message(FATAL_ERROR "Cannot find ONNX Runtime native libraries after NuGet extraction")
+      message(FATAL_ERROR "Cannot find ONNX Runtime native libraries after NuGet extraction. ORT_RUNTIME_DIR=${ORT_RUNTIME_DIR}")
     endif()
     
-    file(COPY ${ORT_RUNTIME_DIR}/ DESTINATION onnxruntime/lib)
-    file(COPY ${ORT_INCLUDE_DIR}/ DESTINATION onnxruntime/include)
+    file(COPY ${ORT_RUNTIME_DIR}/ DESTINATION ${WORK_DIR}/onnxruntime/lib)
+    file(COPY ${ORT_INCLUDE_DIR}/ DESTINATION ${WORK_DIR}/onnxruntime/include)
     
     # 清理临时文件
     if(DEFINED ORT_PKG_DIR AND ORT_PKG_DIR)
       file(REMOVE_RECURSE ${ORT_PKG_DIR})
     endif()
-    file(REMOVE_RECURSE runtimes build package _rels)
-    file(REMOVE onnxruntime-directml.nupkg [Content_Types].xml)
-    file(REMOVE Microsoft.ML.OnnxRuntime.DirectML.nuspec)
-    file(REMOVE LICENSE README.md ThirdPartyNotices.txt Privacy.md .signature.p7s ORT_icon_for_light_bg.png)
+    file(REMOVE_RECURSE ${WORK_DIR}/runtimes ${WORK_DIR}/build ${WORK_DIR}/package ${WORK_DIR}/_rels)
+    file(REMOVE ${WORK_DIR}/onnxruntime-directml.nupkg ${WORK_DIR}/[Content_Types].xml)
+    file(REMOVE ${WORK_DIR}/Microsoft.ML.OnnxRuntime.DirectML.nuspec)
+    file(REMOVE ${WORK_DIR}/LICENSE ${WORK_DIR}/README.md ${WORK_DIR}/ThirdPartyNotices.txt ${WORK_DIR}/Privacy.md ${WORK_DIR}/.signature.p7s ${WORK_DIR}/ORT_icon_for_light_bg.png)
     
     # 创建CMake配置文件
-    file(MAKE_DIRECTORY onnxruntime/lib/cmake/onnxruntime)
-    file(WRITE onnxruntime/lib/cmake/onnxruntime/onnxruntimeConfig.cmake
+    file(MAKE_DIRECTORY ${WORK_DIR}/onnxruntime/lib/cmake/onnxruntime)
+    file(WRITE ${WORK_DIR}/onnxruntime/lib/cmake/onnxruntime/onnxruntimeConfig.cmake
 "include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 if(NOT TARGET onnxruntime::onnxruntime)
