@@ -188,6 +188,7 @@ DmlPreprocessParams DmlPreprocessor::calculateParams(
     params.dstWidth = dstWidth;
     params.dstHeight = dstHeight;
     
+    // 计算letterbox参数
     float scaleX = static_cast<float>(dstWidth) / srcWidth;
     float scaleY = static_cast<float>(dstHeight) / srcHeight;
     params.scale = std::min(scaleX, scaleY);
@@ -236,10 +237,11 @@ bool DmlPreprocessor::copyAndPreprocess(
     srcTexture->GetDesc(&srcDesc);
     
     // 检查是否需要重新创建staging texture
+    // 使用params中的尺寸而不是srcDesc中的尺寸
     bool needNewStaging = false;
     if (!cachedStagingTexture_ ||
-        cachedStagingDesc_.Width != srcDesc.Width ||
-        cachedStagingDesc_.Height != srcDesc.Height ||
+        cachedStagingDesc_.Width != params.srcWidth ||
+        cachedStagingDesc_.Height != params.srcHeight ||
         cachedStagingDesc_.Format != srcDesc.Format) {
         needNewStaging = true;
     }
