@@ -349,7 +349,7 @@ void AbstractMouseController::tick()
             }
 
             data.algorithmType = 1; // StandardPID
-            data.isFiring = firing;
+            data.isFiring = isFiring;
             data.smoothingFactorX = config.stdSmoothingX;
             data.smoothingFactorY = config.stdSmoothingY;
 
@@ -436,7 +436,7 @@ void AbstractMouseController::tick()
             }
 
             data.algorithmType = 2; // ChrisPID
-            data.isFiring = firing;
+            data.isFiring = isFiring;
 
             pidDataCallback_(data);
         }
@@ -569,7 +569,7 @@ void AbstractMouseController::tick()
             }
 
             data.algorithmType = 0; // AdvancedPID
-            data.isFiring = firing;
+            data.isFiring = isFiring;
             data.smoothingFactorX = config.aimSmoothingX;
             data.smoothingFactorY = config.aimSmoothingY;
 
