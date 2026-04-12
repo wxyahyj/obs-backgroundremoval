@@ -85,8 +85,8 @@
       "displayName": "Windows x64 GPU CI build",
       "description": "Build for Windows x64 with GPU support on CI",
       "cacheVariables": {
-        "GPU": true,
-        "DIRECTML": true
+        "GPU": "ON",
+        "DIRECTML": "ON"
       }
     },
     {

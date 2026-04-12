@@ -61,14 +61,15 @@ elseif(PLATFORM STREQUAL "windows")
       )
       
       # 查找DirectML.dll的位置
-      file(GLOB DML_PKG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/microsoft.ai.directml.*")
+      # NuGet包解压到当前工作目录
+      file(GLOB DML_PKG_DIR "microsoft.ai.directml.*")
       
       if(DML_PKG_DIR)
         # 解压到以包名命名的目录
         list(GET DML_PKG_DIR 0 DML_PKG_DIR)
         message(STATUS "Found DirectML package directory: ${DML_PKG_DIR}")
         file(COPY ${DML_PKG_DIR}/runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
-      elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtimes/win-x64/native/DirectML.dll")
+      elseif(EXISTS "runtimes/win-x64/native/DirectML.dll")
         # 直接解压到当前目录
         file(COPY runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
       else()
