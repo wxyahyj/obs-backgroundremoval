@@ -6,6 +6,7 @@
 #include <numeric>
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 #include <d3d11.h>
+#include <dml_provider_factory.h>
 #endif
 #ifdef _WIN32
 #define NOMINMAX
