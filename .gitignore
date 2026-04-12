@@ -12,6 +12,8 @@
 !/scripts
 !/src
 !/vcpkg-triplets
+!/microsoft.ml.onnxruntime.directml.*
+!/microsoft.ai.directml.*
 !.clang-format
 !.cmake-format.json
 !.gersemirc

@@ -37,55 +37,9 @@ elseif(PLATFORM STREQUAL "windows")
   # 三个独立版本：GPU(CUDA/TensorRT)、DirectML、CPU
   
   if(DIRECTML)
-    # DirectML版本 - 使用 Microsoft.ML.OnnxRuntime.DirectML NuGet包
+    # DirectML版本 - 使用本地已解压的NuGet包
     # 包含: DirectML执行提供程序 + CPU执行提供程序
-    # 注意: DirectML.dll需要单独提供
-    message(STATUS "Downloading ONNX Runtime DirectML version from NuGet...")
-    
-    file(
-      DOWNLOAD
-        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.2
-        onnxruntime-directml.nupkg
-      SHOW_PROGRESS
-    )
-    
-    # 解压NuGet包（NuGet包实际上是ZIP格式）
-    message(STATUS "Extracting NuGet package...")
-    
-    # 检查nupkg文件是否存在
-    if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg")
-      message(FATAL_ERROR "NuGet package not found at ${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg")
-    endif()
-    
-    # 获取文件大小
-    file(SIZE "${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg" NUPKG_SIZE)
-    message(STATUS "NuGet package size: ${NUPKG_SIZE} bytes")
-    
-    # 在Windows上使用PowerShell解压（更可靠）
-    if(WIN32)
-      message(STATUS "Using PowerShell to extract...")
-      execute_process(
-        COMMAND powershell -Command "Expand-Archive -Path '${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg' -DestinationPath '${CMAKE_CURRENT_LIST_DIR}/..' -Force"
-        RESULT_VARIABLE EXTRACT_RESULT
-        ERROR_VARIABLE EXTRACT_ERROR
-      )
-      if(NOT EXTRACT_RESULT EQUAL 0)
-        message(FATAL_ERROR "PowerShell extraction failed: ${EXTRACT_ERROR}")
-      endif()
-    else()
-      # 其他平台使用CMake的tar命令
-      execute_process(
-        COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
-        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
-        RESULT_VARIABLE EXTRACT_RESULT
-        ERROR_VARIABLE EXTRACT_ERROR
-      )
-      if(NOT EXTRACT_RESULT EQUAL 0)
-        message(FATAL_ERROR "tar extraction failed: ${EXTRACT_ERROR}")
-      endif()
-    endif()
-    
-    message(STATUS "Extraction completed successfully")
+    message(STATUS "Setting up ONNX Runtime DirectML version...")
     
     # 设置工作目录
     set(WORK_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
@@ -93,98 +47,49 @@ elseif(PLATFORM STREQUAL "windows")
     # 创建目标目录
     file(MAKE_DIRECTORY ${WORK_DIR}/onnxruntime/include ${WORK_DIR}/onnxruntime/lib)
     
-    # 调试：列出工作目录内容
-    message(STATUS "Checking directory structure after extraction...")
-    message(STATUS "Work directory: ${WORK_DIR}")
-    file(GLOB ALL_ITEMS RELATIVE ${WORK_DIR} "${WORK_DIR}/*")
-    foreach(ITEM ${ALL_ITEMS})
-      message(STATUS "  Found: ${ITEM}")
-    endforeach()
-    
-    # NuGet包可能解压到当前目录或以包名命名的子目录
-    set(ORT_RUNTIME_DIR "")
-    set(ORT_INCLUDE_DIR "")
-
-    if(EXISTS "${WORK_DIR}/runtimes/win-x64/native")
-      set(ORT_RUNTIME_DIR "${WORK_DIR}/runtimes/win-x64/native")
-      set(ORT_INCLUDE_DIR "${WORK_DIR}/build/native/include")
-      message(STATUS "Found ONNX Runtime in current directory")
+    # 查找本地已解压的ONNX Runtime DirectML包目录
+    set(ORT_LOCAL_DIR "")
+    file(GLOB ORT_LOCAL_DIRS "${WORK_DIR}/microsoft.ml.onnxruntime.directml.*")
+    if(ORT_LOCAL_DIRS)
+      list(GET ORT_LOCAL_DIRS 0 ORT_LOCAL_DIR)
+      message(STATUS "Found local ONNX Runtime DirectML package: ${ORT_LOCAL_DIR}")
     else()
-      file(GLOB_RECURSE ORT_RUNTIME_DIRS RELATIVE ${WORK_DIR}
-        "${WORK_DIR}/runtimes/win-x64/native"
-        "${WORK_DIR}/*/runtimes/win-x64/native"
-        "${WORK_DIR}/*/*/runtimes/win-x64/native"
-        "${WORK_DIR}/*/*/*/runtimes/win-x64/native"
-      )
-      if(ORT_RUNTIME_DIRS)
-        list(GET ORT_RUNTIME_DIRS 0 ORT_RUNTIME_REL)
-        set(ORT_RUNTIME_DIR "${WORK_DIR}/${ORT_RUNTIME_REL}")
-        message(STATUS "Found nested ONNX Runtime runtime directory: ${ORT_RUNTIME_DIR}")
-      else()
-        file(GLOB ORT_PKG_DIRS "${WORK_DIR}/microsoft.ml.onnxruntime.directml.*")
-        message(STATUS "Glob result for microsoft.ml.onnxruntime.directml.*: ${ORT_PKG_DIRS}")
-        if(ORT_PKG_DIRS)
-          list(GET ORT_PKG_DIRS 0 ORT_PKG_DIR)
-          message(STATUS "Checking directory: ${ORT_PKG_DIR}")
-          if(IS_DIRECTORY ${ORT_PKG_DIR})
-            message(STATUS "Is directory: yes")
-            if(EXISTS "${ORT_PKG_DIR}/runtimes/win-x64/native")
-              set(ORT_RUNTIME_DIR "${ORT_PKG_DIR}/runtimes/win-x64/native")
-            else()
-              message(STATUS "runtimes/win-x64/native not found in ${ORT_PKG_DIR}")
-              file(GLOB SUB_ITEMS "${ORT_PKG_DIR}/*")
-              foreach(SUB ${SUB_ITEMS})
-                message(STATUS "  Sub: ${SUB}")
-              endforeach()
-            endif()
-          else()
-            message(STATUS "Is directory: no, it's a file")
-          endif()
-        else()
-          message(STATUS "No matching directories found for microsoft.ml.onnxruntime.directml.*")
-        endif()
-      endif()
-
-      if(ORT_RUNTIME_DIR)
-        file(GLOB_RECURSE ORT_INCLUDE_DIRS RELATIVE ${WORK_DIR}
-          "${WORK_DIR}/build/native/include"
-          "${WORK_DIR}/*/build/native/include"
-          "${WORK_DIR}/*/*/build/native/include"
-          "${WORK_DIR}/*/*/*/build/native/include"
-        )
-        if(ORT_INCLUDE_DIRS)
-          list(GET ORT_INCLUDE_DIRS 0 ORT_INCLUDE_REL)
-          set(ORT_INCLUDE_DIR "${WORK_DIR}/${ORT_INCLUDE_REL}")
-          message(STATUS "Found nested ONNX Runtime include directory: ${ORT_INCLUDE_DIR}")
-        else()
-          get_filename_component(ORT_PKG_ROOT "${ORT_RUNTIME_DIR}" DIRECTORY)
-          get_filename_component(ORT_PKG_ROOT "${ORT_PKG_ROOT}" DIRECTORY)
-          get_filename_component(ORT_PKG_ROOT "${ORT_PKG_ROOT}" DIRECTORY)
-          set(ORT_INCLUDE_DIR "${ORT_PKG_ROOT}/build/native/include")
-          if(EXISTS "${ORT_INCLUDE_DIR}")
-            message(STATUS "Found include directory by package root fallback: ${ORT_INCLUDE_DIR}")
-          else()
-            set(ORT_INCLUDE_DIR "")
-          endif()
-        endif()
-      endif()
-    endif()
-
-    if(NOT ORT_RUNTIME_DIR OR NOT EXISTS "${ORT_RUNTIME_DIR}")
-      message(FATAL_ERROR "Cannot find ONNX Runtime native libraries after NuGet extraction. ORT_RUNTIME_DIR=${ORT_RUNTIME_DIR}")
+      message(FATAL_ERROR "Cannot find local microsoft.ml.onnxruntime.directml.* directory. Please ensure the NuGet package is extracted.")
     endif()
     
-    file(COPY ${ORT_RUNTIME_DIR}/ DESTINATION ${WORK_DIR}/onnxruntime/lib)
-    file(COPY ${ORT_INCLUDE_DIR}/ DESTINATION ${WORK_DIR}/onnxruntime/include)
-    
-    # 清理临时文件
-    if(DEFINED ORT_PKG_DIR AND ORT_PKG_DIR)
-      file(REMOVE_RECURSE ${ORT_PKG_DIR})
+    # 复制ONNX Runtime文件
+    if(EXISTS "${ORT_LOCAL_DIR}/runtimes/win-x64/native")
+      file(COPY "${ORT_LOCAL_DIR}/runtimes/win-x64/native/" DESTINATION ${WORK_DIR}/onnxruntime/lib)
+      message(STATUS "Copied onnxruntime.dll and onnxruntime_providers_shared.dll")
+    else()
+      message(FATAL_ERROR "Cannot find runtimes/win-x64/native in ${ORT_LOCAL_DIR}")
     endif()
-    file(REMOVE_RECURSE ${WORK_DIR}/runtimes ${WORK_DIR}/build ${WORK_DIR}/package ${WORK_DIR}/_rels)
-    file(REMOVE ${WORK_DIR}/onnxruntime-directml.nupkg ${WORK_DIR}/[Content_Types].xml)
-    file(REMOVE ${WORK_DIR}/Microsoft.ML.OnnxRuntime.DirectML.nuspec)
-    file(REMOVE ${WORK_DIR}/LICENSE ${WORK_DIR}/README.md ${WORK_DIR}/ThirdPartyNotices.txt ${WORK_DIR}/Privacy.md ${WORK_DIR}/.signature.p7s ${WORK_DIR}/ORT_icon_for_light_bg.png)
+    
+    # 复制头文件
+    if(EXISTS "${ORT_LOCAL_DIR}/build/native/include")
+      file(COPY "${ORT_LOCAL_DIR}/build/native/include/" DESTINATION ${WORK_DIR}/onnxruntime/include)
+      message(STATUS "Copied ONNX Runtime headers")
+    else()
+      message(FATAL_ERROR "Cannot find build/native/include in ${ORT_LOCAL_DIR}")
+    endif()
+    
+    # 查找本地已解压的DirectML包目录
+    set(DML_LOCAL_DIR "")
+    file(GLOB DML_LOCAL_DIRS "${WORK_DIR}/microsoft.ai.directml.*")
+    if(DML_LOCAL_DIRS)
+      list(GET DML_LOCAL_DIRS 0 DML_LOCAL_DIR)
+      message(STATUS "Found local DirectML package: ${DML_LOCAL_DIR}")
+    else()
+      message(FATAL_ERROR "Cannot find local microsoft.ai.directml.* directory. Please ensure the NuGet package is extracted.")
+    endif()
+    
+    # 复制DirectML.dll
+    if(EXISTS "${DML_LOCAL_DIR}/bin/x64-win/DirectML.dll")
+      file(COPY "${DML_LOCAL_DIR}/bin/x64-win/DirectML.dll" DESTINATION ${WORK_DIR}/onnxruntime/lib)
+      message(STATUS "Copied DirectML.dll")
+    else()
+      message(FATAL_ERROR "Cannot find bin/x64-win/DirectML.dll in ${DML_LOCAL_DIR}")
+    endif()
     
     # 创建CMake配置文件
     file(MAKE_DIRECTORY ${WORK_DIR}/onnxruntime/lib/cmake/onnxruntime)
