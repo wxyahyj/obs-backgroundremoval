@@ -238,10 +238,11 @@ bool DmlPreprocessor::copyAndPreprocess(
     
     // 检查是否需要重新创建staging texture
     // 使用params中的尺寸而不是srcDesc中的尺寸
+    // 注意：显式转换为UINT类型进行比较，避免有符号/无符号比较警告
     bool needNewStaging = false;
     if (!cachedStagingTexture_ ||
-        cachedStagingDesc_.Width != params.srcWidth ||
-        cachedStagingDesc_.Height != params.srcHeight ||
+        cachedStagingDesc_.Width != static_cast<UINT>(params.srcWidth) ||
+        cachedStagingDesc_.Height != static_cast<UINT>(params.srcHeight) ||
         cachedStagingDesc_.Format != srcDesc.Format) {
         needNewStaging = true;
     }
