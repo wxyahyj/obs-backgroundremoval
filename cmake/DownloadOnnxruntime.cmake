@@ -61,19 +61,26 @@ elseif(PLATFORM STREQUAL "windows")
       )
       
       # 查找DirectML.dll的位置
-      # NuGet包解压到当前工作目录
-      file(GLOB DML_PKG_DIR "microsoft.ai.directml.*")
-      
-      if(DML_PKG_DIR)
-        # 解压到以包名命名的目录
-        list(GET DML_PKG_DIR 0 DML_PKG_DIR)
-        message(STATUS "Found DirectML package directory: ${DML_PKG_DIR}")
-        file(COPY ${DML_PKG_DIR}/runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
-      elseif(EXISTS "runtimes/win-x64/native/DirectML.dll")
-        # 直接解压到当前目录
+      # NuGet包解压后直接在当前目录创建文件
+      # 结构: runtimes/win-x64/native/DirectML.dll
+      if(EXISTS "runtimes/win-x64/native/DirectML.dll")
+        message(STATUS "Found DirectML.dll in runtimes/win-x64/native/")
         file(COPY runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
       else()
-        message(FATAL_ERROR "Cannot find DirectML.dll after extraction")
+        # 尝试查找可能的子目录
+        file(GLOB DML_PKG_DIR "microsoft.ai.directml.*")
+        if(DML_PKG_DIR)
+          list(GET DML_PKG_DIR 0 DML_PKG_DIR)
+          # 检查是否是目录
+          if(IS_DIRECTORY ${DML_PKG_DIR})
+            message(STATUS "Found DirectML package directory: ${DML_PKG_DIR}")
+            file(COPY ${DML_PKG_DIR}/runtimes/win-x64/native/DirectML.dll DESTINATION onnxruntime/lib)
+          else()
+            message(FATAL_ERROR "Cannot find DirectML.dll - ${DML_PKG_DIR} is not a directory")
+          endif()
+        else()
+          message(FATAL_ERROR "Cannot find DirectML.dll after extraction")
+        endif()
       endif()
       
       # 清理DirectML临时文件
