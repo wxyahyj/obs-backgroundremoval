@@ -117,13 +117,24 @@ elseif(MSVC)
   set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")
 
   add_library(onnxruntime::onnxruntime_provider_shared SHARED IMPORTED)
-  set_target_properties(
-    onnxruntime::onnxruntime_provider_shared
-    PROPERTIES
-      IMPORTED_IMPLIB "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib"
-      IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.dll"
-      INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
-  )
+  
+  # DirectML版本没有onnxruntime_providers_shared.lib，只有dll
+  if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib")
+    set_target_properties(
+      onnxruntime::onnxruntime_provider_shared
+      PROPERTIES
+        IMPORTED_IMPLIB "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib"
+        IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.dll"
+        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
+    )
+  else()
+    set_target_properties(
+      onnxruntime::onnxruntime_provider_shared
+      PROPERTIES
+        IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.dll"
+        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
+    )
+  endif()
 
   add_library(onnxruntime::onnxruntime SHARED IMPORTED)
   set_target_properties(
