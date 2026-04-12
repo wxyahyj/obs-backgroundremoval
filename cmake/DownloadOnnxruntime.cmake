@@ -52,42 +52,36 @@ elseif(PLATFORM STREQUAL "windows")
     # 解压NuGet包（NuGet包实际上是ZIP格式）
     message(STATUS "Extracting NuGet package...")
     
-    # 方法1：尝试使用CMake的tar命令
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
-      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
-      RESULT_VARIABLE EXTRACT_RESULT
-      ERROR_VARIABLE EXTRACT_ERROR
-    )
+    # 检查nupkg文件是否存在
+    if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg")
+      message(FATAL_ERROR "NuGet package not found at ${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg")
+    endif()
     
-    # 如果tar失败，尝试重命名为zip再解压
-    if(NOT EXTRACT_RESULT EQUAL 0)
-      message(STATUS "tar extraction failed, trying zip method...")
-      message(STATUS "Error was: ${EXTRACT_ERROR}")
-      
-      # 重命名为.zip
-      file(RENAME onnxruntime-directml.nupkg onnxruntime-directml.zip)
-      
-      # 使用unzip或PowerShell解压
-      find_program(UNZIP_CMD unzip)
-      if(UNZIP_CMD)
-        execute_process(
-          COMMAND ${UNZIP_CMD} -o onnxruntime-directml.zip
-          WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
-          RESULT_VARIABLE EXTRACT_RESULT
-        )
-      else()
-        # 使用PowerShell解压
-        execute_process(
-          COMMAND powershell -Command "Expand-Archive -Path onnxruntime-directml.zip -DestinationPath . -Force"
-          WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
-          RESULT_VARIABLE EXTRACT_RESULT
-          ERROR_VARIABLE EXTRACT_ERROR
-        )
-      endif()
-      
+    # 获取文件大小
+    file(SIZE "${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg" NUPKG_SIZE)
+    message(STATUS "NuGet package size: ${NUPKG_SIZE} bytes")
+    
+    # 在Windows上使用PowerShell解压（更可靠）
+    if(WIN32)
+      message(STATUS "Using PowerShell to extract...")
+      execute_process(
+        COMMAND powershell -Command "Expand-Archive -Path '${CMAKE_CURRENT_LIST_DIR}/../onnxruntime-directml.nupkg' -DestinationPath '${CMAKE_CURRENT_LIST_DIR}/..' -Force"
+        RESULT_VARIABLE EXTRACT_RESULT
+        ERROR_VARIABLE EXTRACT_ERROR
+      )
       if(NOT EXTRACT_RESULT EQUAL 0)
-        message(FATAL_ERROR "Failed to extract NuGet package: ${EXTRACT_ERROR}")
+        message(FATAL_ERROR "PowerShell extraction failed: ${EXTRACT_ERROR}")
+      endif()
+    else()
+      # 其他平台使用CMake的tar命令
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
+        RESULT_VARIABLE EXTRACT_RESULT
+        ERROR_VARIABLE EXTRACT_ERROR
+      )
+      if(NOT EXTRACT_RESULT EQUAL 0)
+        message(FATAL_ERROR "tar extraction failed: ${EXTRACT_ERROR}")
       endif()
     endif()
     
