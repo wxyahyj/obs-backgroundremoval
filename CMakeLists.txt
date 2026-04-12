@@ -116,10 +116,10 @@ elseif(MSVC)
 
   set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")
 
-  add_library(onnxruntime::onnxruntime_provider_shared SHARED IMPORTED)
-  
   # DirectML版本没有onnxruntime_providers_shared.lib，只有dll
+  # 只有存在.lib文件时才创建库目标
   if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib")
+    add_library(onnxruntime::onnxruntime_provider_shared SHARED IMPORTED)
     set_target_properties(
       onnxruntime::onnxruntime_provider_shared
       PROPERTIES
@@ -127,13 +127,9 @@ elseif(MSVC)
         IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.dll"
         INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
     )
+    set(ONNXRUNTIME_HAS_PROVIDERS_SHARED TRUE)
   else()
-    set_target_properties(
-      onnxruntime::onnxruntime_provider_shared
-      PROPERTIES
-        IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.dll"
-        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
-    )
+    set(ONNXRUNTIME_HAS_PROVIDERS_SHARED FALSE)
   endif()
 
   add_library(onnxruntime::onnxruntime SHARED IMPORTED)
@@ -145,7 +141,11 @@ elseif(MSVC)
       INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
       INTERFACE_LINK_OPTIONS "/DELAYLOAD:onnxruntime.dll"
   )
-  target_link_libraries(onnxruntime::onnxruntime INTERFACE onnxruntime::onnxruntime_provider_shared)
+  
+  # 只有存在providers_shared库时才链接
+  if(ONNXRUNTIME_HAS_PROVIDERS_SHARED)
+    target_link_libraries(onnxruntime::onnxruntime INTERFACE onnxruntime::onnxruntime_provider_shared)
+  endif()
 
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE onnxruntime::onnxruntime)
 
