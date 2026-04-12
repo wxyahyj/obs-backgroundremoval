@@ -195,7 +195,7 @@ jobs:
         run: "$VCPKG_ROOT/vcpkg install --triplet x64-windows-static-md-obs"
       
       - name: "Download ONNX Runtime"
-        run: "cmake -DGPU=ON -DDIRECTML=ON -P cmake/DownloadOnnxruntime.cmake"
+        run: "cmake -DGPU=ON -P cmake/DownloadOnnxruntime.cmake"
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
@@ -266,14 +266,15 @@ jobs:
         run: "$VCPKG_ROOT/vcpkg install --triplet x64-windows-static-md-obs"
       
       - name: "Download ONNX Runtime (DirectML)"
-        run: "cmake -DGPU=ON -DDIRECTML=ON -P cmake/DownloadOnnxruntime.cmake"
+        run: "cmake -DDIRECTML=ON -P cmake/DownloadOnnxruntime.cmake"
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
           target: x64
           config: ${{ needs.check-event.outputs.config }}
-          gpu: 'true'
+          gpu: 'false'
+          directml: 'true'
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin

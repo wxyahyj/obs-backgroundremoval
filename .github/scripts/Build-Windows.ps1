@@ -5,7 +5,9 @@ param(
     [ValidateSet('Debug', 'RelWithDebInfo', 'Release', 'MinSizeRel')]
     [string] $Configuration = 'RelWithDebInfo',
     [ValidateSet('true', 'false')]
-    [string] $Gpu = 'false'
+    [string] $Gpu = 'false',
+    [ValidateSet('true', 'false')]
+    [string] $DirectML = 'false'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,7 +51,15 @@ function Build {
     Push-Location -Stack BuildTemp
     Ensure-Location $ProjectRoot
 
-    $PresetSuffix = if ( $Gpu -eq 'true' ) { '-gpu' } else { '' }
+    # 根据参数选择预设后缀
+    # GPU和DirectML是互斥的，优先使用GPU
+    $PresetSuffix = ''
+    if ( $Gpu -eq 'true' ) {
+        $PresetSuffix = '-gpu'
+    } elseif ( $DirectML -eq 'true' ) {
+        $PresetSuffix = '-directml'
+    }
+
     $CmakeArgs = @('--preset', "windows-ci-${Target}${PresetSuffix}")
     $CmakeBuildArgs = @('--build')
     $CmakeInstallArgs = @()

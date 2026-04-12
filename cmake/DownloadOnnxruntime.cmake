@@ -31,88 +31,126 @@ if(PLATFORM STREQUAL "macos")
     COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-osx-universal2-1.23.2.tgz
   )
   file(RENAME onnxruntime-osx-universal2-1.23.2 onnxruntime)
+  message(STATUS "Downloaded ONNX Runtime for macOS")
 elseif(PLATFORM STREQUAL "windows")
-  if(GPU)
-    # GPU版本包含CUDA和TensorRT
+  # Windows平台：使用NuGet预编译包
+  # 三个独立版本：GPU(CUDA/TensorRT)、DirectML、CPU
+  
+  if(DIRECTML)
+    # DirectML版本 - 使用 Microsoft.ML.OnnxRuntime.DirectML NuGet包
+    # 包含: DirectML执行提供程序 + CPU执行提供程序
+    message(STATUS "Downloading ONNX Runtime DirectML version from NuGet...")
+    
     file(
       DOWNLOAD
-        https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-gpu-1.23.2.zip
-        onnxruntime-win-x64-gpu-1.23.2.zip
-      EXPECTED_HASH SHA256=e77afdbbc2b8cb6da4e5a50d89841b48c44f3e47dce4fb87b15a2743786d0bb9
+        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.23.2
+        onnxruntime-directml.nupkg
     )
     execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-win-x64-gpu-1.23.2.zip
+      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-directml.nupkg
     )
-    file(RENAME onnxruntime-win-x64-gpu-1.23.2 onnxruntime)
     
-    # 如果开启DIRECTML，就额外下载并复制DirectML.dll
-    if(DIRECTML)
-      message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT) with DirectML support")
-      message(STATUS "Adding DirectML support to GPU package...")
-      
-      # 下载DirectML平台包 (DirectML.dll)
-      file(
-        DOWNLOAD
-          https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4
-          directml.nupkg
-      )
-      execute_process(
-        COMMAND ${CMAKE_COMMAND} -E tar xf directml.nupkg
-      )
-      
-      # 查找DirectML.dll的位置
-      # NuGet包解压后的实际结构: bin/x64-win/DirectML.dll
-      set(DML_DLL_PATH "")
-      
-      # 路径1: bin/x64-win/ (NuGet包实际结构)
-      if(EXISTS "bin/x64-win/DirectML.dll")
-        set(DML_DLL_PATH "bin/x64-win/DirectML.dll")
-        message(STATUS "Found DirectML.dll in bin/x64-win/")
-      # 路径2: runtimes/win-x64/native/ (某些NuGet包结构)
-      elseif(EXISTS "runtimes/win-x64/native/DirectML.dll")
-        set(DML_DLL_PATH "runtimes/win-x64/native/DirectML.dll")
-        message(STATUS "Found DirectML.dll in runtimes/win-x64/native/")
-      # 路径3: package目录下
-      elseif(EXISTS "package/runtimes/win-x64/native/DirectML.dll")
-        set(DML_DLL_PATH "package/runtimes/win-x64/native/DirectML.dll")
-        message(STATUS "Found DirectML.dll in package/runtimes/win-x64/native/")
-      else()
-        # 尝试查找可能的子目录
-        file(GLOB DML_PKG_DIRS LIST_DIRECTORIES true "microsoft.ai.directml.*")
-        if(DML_PKG_DIRS)
-          list(GET DML_PKG_DIRS 0 DML_PKG_DIR)
-          if(EXISTS "${DML_PKG_DIR}/runtimes/win-x64/native/DirectML.dll")
-            set(DML_DLL_PATH "${DML_PKG_DIR}/runtimes/win-x64/native/DirectML.dll")
-            message(STATUS "Found DirectML.dll in ${DML_PKG_DIR}/runtimes/win-x64/native/")
-          endif()
-        endif()
-      endif()
-      
-      if(DML_DLL_PATH)
-        file(COPY ${DML_DLL_PATH} DESTINATION onnxruntime/lib)
-      else()
-        # 调试信息：列出当前目录结构
-        message(STATUS "Current directory structure:")
-        file(GLOB_RECURSE ALL_FILES "*")
-        foreach(F ${ALL_FILES})
-          message(STATUS "  ${F}")
-        endforeach()
-        message(FATAL_ERROR "Cannot find DirectML.dll after extraction. See directory structure above.")
-      endif()
-      
-      # 清理DirectML临时文件
-      if(DEFINED DML_PKG_DIR AND DML_PKG_DIR)
-        file(REMOVE_RECURSE ${DML_PKG_DIR})
-      endif()
-      file(REMOVE_RECURSE runtimes package _rels bin build include)
-      file(REMOVE directml.nupkg [Content_Types].xml Microsoft.AI.DirectML.nuspec LICENSE.txt LICENSE-CODE.txt README.md ThirdPartyNotices.txt .signature.p7s)
-      
-      message(STATUS "已打包 DirectML.dll，支持运行时切换到 DirectML")
+    # 创建目标目录
+    file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
+    
+    # NuGet包结构: runtimes/win-x64/native/
+    file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
+    file(COPY build/native/include/ DESTINATION onnxruntime/include)
+    
+    # 下载DirectML平台包 (DirectML.dll)
+    message(STATUS "Downloading DirectML platform package...")
+    file(
+      DOWNLOAD
+        https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4
+        directml.nupkg
+    )
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xf directml.nupkg
+    )
+    
+    # DirectML.dll位置: bin/x64-win/DirectML.dll
+    if(EXISTS "bin/x64-win/DirectML.dll")
+      file(COPY bin/x64-win/DirectML.dll DESTINATION onnxruntime/lib)
+      message(STATUS "Found and copied DirectML.dll")
     else()
-      message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT)")
+      message(FATAL_ERROR "Cannot find DirectML.dll in bin/x64-win/")
     endif()
+    
+    # 清理临时文件
+    file(REMOVE_RECURSE runtimes build package _rels bin include)
+    file(REMOVE onnxruntime-directml.nupkg directml.nupkg [Content_Types].xml)
+    file(REMOVE Microsoft.ML.OnnxRuntime.DirectML.nuspec Microsoft.AI.DirectML.nuspec)
+    file(REMOVE LICENSE.txt LICENSE-CODE.txt README.md ThirdPartyNotices.txt .signature.p7s)
+    
+    # 创建CMake配置文件
+    file(MAKE_DIRECTORY onnxruntime/lib/cmake/onnxruntime)
+    file(WRITE onnxruntime/lib/cmake/onnxruntime/onnxruntimeConfig.cmake
+"include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+if(NOT TARGET onnxruntime::onnxruntime)
+  add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+  set_target_properties(onnxruntime::onnxruntime PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES \"\${CMAKE_CURRENT_LIST_DIR}/../../../include\"
+    IMPORTED_LOCATION \"\${CMAKE_CURRENT_LIST_DIR}/../onnxruntime.dll\"
+    IMPORTED_IMPLIB \"\${CMAKE_CURRENT_LIST_DIR}/../onnxruntime.lib\"
+  )
+endif()
+")
+    
+    message(STATUS "Downloaded ONNX Runtime DirectML version")
+    message(STATUS "  - onnxruntime.dll (with DirectML EP)")
+    message(STATUS "  - onnxruntime_providers_shared.dll")
+    message(STATUS "  - DirectML.dll (platform code)")
+    
+  elseif(GPU)
+    # GPU版本 - 使用 Microsoft.ML.OnnxRuntime.Gpu NuGet包
+    # 包含: CUDA执行提供程序 + TensorRT执行提供程序 + CPU执行提供程序
+    message(STATUS "Downloading ONNX Runtime GPU version from NuGet...")
+    
+    file(
+      DOWNLOAD
+        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.Gpu/1.23.2
+        onnxruntime-gpu.nupkg
+    )
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-gpu.nupkg
+    )
+    
+    # 创建目标目录
+    file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
+    
+    # NuGet包结构: runtimes/win-x64/native/
+    file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
+    file(COPY build/native/include/ DESTINATION onnxruntime/include)
+    
+    # 清理临时文件
+    file(REMOVE_RECURSE runtimes build package _rels)
+    file(REMOVE onnxruntime-gpu.nupkg [Content_Types].xml Microsoft.ML.OnnxRuntime.Gpu.nuspec)
+    file(REMOVE LICENSE.txt README.md ThirdPartyNotices.txt .signature.p7s)
+    
+    # 创建CMake配置文件
+    file(MAKE_DIRECTORY onnxruntime/lib/cmake/onnxruntime)
+    file(WRITE onnxruntime/lib/cmake/onnxruntime/onnxruntimeConfig.cmake
+"include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+if(NOT TARGET onnxruntime::onnxruntime)
+  add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+  set_target_properties(onnxruntime::onnxruntime PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES \"\${CMAKE_CURRENT_LIST_DIR}/../../../include\"
+    IMPORTED_LOCATION \"\${CMAKE_CURRENT_LIST_DIR}/../onnxruntime.dll\"
+    IMPORTED_IMPLIB \"\${CMAKE_CURRENT_LIST_DIR}/../onnxruntime.lib\"
+  )
+endif()
+")
+    
+    message(STATUS "Downloaded ONNX Runtime GPU version")
+    message(STATUS "  - onnxruntime.dll (with CUDA + TensorRT EP)")
+    message(STATUS "  - onnxruntime_providers_shared.dll")
+    
   else()
     # CPU版本
+    message(STATUS "Downloading ONNX Runtime CPU version...")
+    
     file(
       DOWNLOAD
         https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip
@@ -125,6 +163,7 @@ elseif(PLATFORM STREQUAL "windows")
     file(RENAME onnxruntime-win-x64-1.23.2 onnxruntime)
     message(STATUS "Downloaded ONNX Runtime CPU version")
   endif()
+  
 elseif(PLATFORM STREQUAL "linux")
   file(
     DOWNLOAD
@@ -137,6 +176,7 @@ elseif(PLATFORM STREQUAL "linux")
   )
   file(RENAME onnxruntime-linux-x64-1.23.2 onnxruntime)
   execute_process(COMMAND ln -s lib onnxruntime/lib64)
+  message(STATUS "Downloaded ONNX Runtime for Linux")
 endif()
 
 if(EXISTS onnxruntime/lib/cmake/onnxruntime/onnxruntimeTargets.cmake)

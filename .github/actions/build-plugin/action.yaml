@@ -9,7 +9,11 @@ inputs:
     required: false
     default: RelWithDebInfo
   gpu:
-    description: Enable GPU support
+    description: Enable GPU support (CUDA/TensorRT)
+    required: false
+    default: 'false'
+  directml:
+    description: Enable DirectML support
     required: false
     default: 'false'
   codesign:
@@ -90,6 +94,7 @@ runs:
           Target = '${{ inputs.target }}'
           Configuration = '${{ inputs.config }}'
           Gpu = '${{ inputs.gpu }}'
+          DirectML = '${{ inputs.directml }}'
         }
 
         .github/scripts/Build-Windows.ps1 @BuildArgs

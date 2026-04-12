@@ -83,9 +83,17 @@
       "name": "windows-ci-x64-gpu",
       "inherits": ["windows-ci-x64"],
       "displayName": "Windows x64 GPU CI build",
-      "description": "Build for Windows x64 with GPU support on CI",
+      "description": "Build for Windows x64 with GPU (CUDA/TensorRT) support on CI",
       "cacheVariables": {
-        "GPU": "ON",
+        "GPU": "ON"
+      }
+    },
+    {
+      "name": "windows-ci-x64-directml",
+      "inherits": ["windows-ci-x64"],
+      "displayName": "Windows x64 DirectML CI build",
+      "description": "Build for Windows x64 with DirectML support on CI",
+      "cacheVariables": {
         "DIRECTML": "ON"
       }
     },
@@ -163,6 +171,20 @@
       "configurePreset": "windows-ci-x64-gpu",
       "displayName": "Windows x64 GPU CI",
       "description": "Windows CI build for x64 with GPU support (RelWithDebInfo configuration)",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "windows-x64-directml",
+      "configurePreset": "windows-ci-x64-directml",
+      "displayName": "Windows x64 DirectML",
+      "description": "Windows build for x64 with DirectML support",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "windows-ci-x64-directml",
+      "configurePreset": "windows-ci-x64-directml",
+      "displayName": "Windows x64 DirectML CI",
+      "description": "Windows CI build for x64 with DirectML support (RelWithDebInfo configuration)",
       "configuration": "RelWithDebInfo"
     },
     {
