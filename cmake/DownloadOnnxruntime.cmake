@@ -39,6 +39,7 @@ elseif(PLATFORM STREQUAL "windows")
   if(DIRECTML)
     # DirectML版本 - 使用 Microsoft.ML.OnnxRuntime.DirectML NuGet包
     # 包含: DirectML执行提供程序 + CPU执行提供程序
+    # 注意: DirectML.dll需要单独提供
     message(STATUS "Downloading ONNX Runtime DirectML version from NuGet...")
     
     file(
@@ -53,34 +54,40 @@ elseif(PLATFORM STREQUAL "windows")
     # 创建目标目录
     file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
     
-    # NuGet包结构: runtimes/win-x64/native/
-    file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
-    file(COPY build/native/include/ DESTINATION onnxruntime/include)
+    # NuGet包可能解压到当前目录或以包名命名的子目录
+    set(ORT_RUNTIME_DIR "")
+    set(ORT_INCLUDE_DIR "")
     
-    # 下载DirectML平台包 (DirectML.dll)
-    message(STATUS "Downloading DirectML platform package...")
-    file(
-      DOWNLOAD
-        https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4
-        directml.nupkg
-    )
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar xf directml.nupkg
-    )
-    
-    # DirectML.dll位置: bin/x64-win/DirectML.dll
-    if(EXISTS "bin/x64-win/DirectML.dll")
-      file(COPY bin/x64-win/DirectML.dll DESTINATION onnxruntime/lib)
-      message(STATUS "Found and copied DirectML.dll")
+    if(EXISTS "runtimes/win-x64/native")
+      set(ORT_RUNTIME_DIR "runtimes/win-x64/native")
+      set(ORT_INCLUDE_DIR "build/native/include")
     else()
-      message(FATAL_ERROR "Cannot find DirectML.dll in bin/x64-win/")
+      file(GLOB ORT_PKG_DIRS "microsoft.ml.onnxruntime.directml.*")
+      if(ORT_PKG_DIRS)
+        list(GET ORT_PKG_DIRS 0 ORT_PKG_DIR)
+        if(IS_DIRECTORY ${ORT_PKG_DIR})
+          set(ORT_RUNTIME_DIR "${ORT_PKG_DIR}/runtimes/win-x64/native")
+          set(ORT_INCLUDE_DIR "${ORT_PKG_DIR}/build/native/include")
+          message(STATUS "Found ONNX Runtime in ${ORT_PKG_DIR}")
+        endif()
+      endif()
     endif()
     
+    if(NOT ORT_RUNTIME_DIR OR NOT EXISTS "${ORT_RUNTIME_DIR}")
+      message(FATAL_ERROR "Cannot find ONNX Runtime native libraries after NuGet extraction")
+    endif()
+    
+    file(COPY ${ORT_RUNTIME_DIR}/ DESTINATION onnxruntime/lib)
+    file(COPY ${ORT_INCLUDE_DIR}/ DESTINATION onnxruntime/include)
+    
     # 清理临时文件
-    file(REMOVE_RECURSE runtimes build package _rels bin include)
-    file(REMOVE onnxruntime-directml.nupkg directml.nupkg [Content_Types].xml)
-    file(REMOVE Microsoft.ML.OnnxRuntime.DirectML.nuspec Microsoft.AI.DirectML.nuspec)
-    file(REMOVE LICENSE.txt LICENSE-CODE.txt README.md ThirdPartyNotices.txt .signature.p7s)
+    if(DEFINED ORT_PKG_DIR AND ORT_PKG_DIR)
+      file(REMOVE_RECURSE ${ORT_PKG_DIR})
+    endif()
+    file(REMOVE_RECURSE runtimes build package _rels)
+    file(REMOVE onnxruntime-directml.nupkg [Content_Types].xml)
+    file(REMOVE Microsoft.ML.OnnxRuntime.DirectML.nuspec)
+    file(REMOVE LICENSE README.md ThirdPartyNotices.txt Privacy.md .signature.p7s ORT_icon_for_light_bg.png)
     
     # 创建CMake配置文件
     file(MAKE_DIRECTORY onnxruntime/lib/cmake/onnxruntime)
@@ -103,49 +110,20 @@ endif()
     message(STATUS "  - DirectML.dll (platform code)")
     
   elseif(GPU)
-    # GPU版本 - 使用 Microsoft.ML.OnnxRuntime.Gpu NuGet包
-    # 包含: CUDA执行提供程序 + TensorRT执行提供程序 + CPU执行提供程序
-    message(STATUS "Downloading ONNX Runtime GPU version from NuGet...")
+    # GPU版本 - 从GitHub Release下载（CUDA + TensorRT）
+    message(STATUS "Downloading ONNX Runtime GPU version from GitHub Release...")
     
     file(
       DOWNLOAD
-        https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.Gpu/1.23.2
-        onnxruntime-gpu.nupkg
+        https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-gpu-1.23.2.zip
+        onnxruntime-win-x64-gpu-1.23.2.zip
+      EXPECTED_HASH SHA256=e77afdbbc2b8cb6da4e5a50d89841b48c44f3e47dce4fb87b15a2743786d0bb9
     )
     execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-gpu.nupkg
+      COMMAND ${CMAKE_COMMAND} -E tar xf onnxruntime-win-x64-gpu-1.23.2.zip
     )
-    
-    # 创建目标目录
-    file(MAKE_DIRECTORY onnxruntime/include onnxruntime/lib)
-    
-    # NuGet包结构: runtimes/win-x64/native/
-    file(COPY runtimes/win-x64/native/ DESTINATION onnxruntime/lib)
-    file(COPY build/native/include/ DESTINATION onnxruntime/include)
-    
-    # 清理临时文件
-    file(REMOVE_RECURSE runtimes build package _rels)
-    file(REMOVE onnxruntime-gpu.nupkg [Content_Types].xml Microsoft.ML.OnnxRuntime.Gpu.nuspec)
-    file(REMOVE LICENSE.txt README.md ThirdPartyNotices.txt .signature.p7s)
-    
-    # 创建CMake配置文件
-    file(MAKE_DIRECTORY onnxruntime/lib/cmake/onnxruntime)
-    file(WRITE onnxruntime/lib/cmake/onnxruntime/onnxruntimeConfig.cmake
-"include(CMakeFindDependencyMacro)
-find_dependency(Threads)
-if(NOT TARGET onnxruntime::onnxruntime)
-  add_library(onnxruntime::onnxruntime SHARED IMPORTED)
-  set_target_properties(onnxruntime::onnxruntime PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES \"\${CMAKE_CURRENT_LIST_DIR}/../../../include\"
-    IMPORTED_LOCATION \"\${CMAKE_CURRENT_LIST_DIR}/../onnxruntime.dll\"
-    IMPORTED_IMPLIB \"\${CMAKE_CURRENT_LIST_DIR}/../onnxruntime.lib\"
-  )
-endif()
-")
-    
-    message(STATUS "Downloaded ONNX Runtime GPU version")
-    message(STATUS "  - onnxruntime.dll (with CUDA + TensorRT EP)")
-    message(STATUS "  - onnxruntime_providers_shared.dll")
+    file(RENAME onnxruntime-win-x64-gpu-1.23.2 onnxruntime)
+    message(STATUS "Downloaded ONNX Runtime GPU version (CUDA + TensorRT)")
     
   else()
     # CPU版本
