@@ -3130,6 +3130,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					obs_log(LOG_INFO, "[YOLO Detector] GPU纹理推理: 设备=%s, 纹理=%dx%d", 
 							filter->useGPU.c_str(), filter->gpuTextureWidth, filter->gpuTextureHeight);
 					
+					bool gpuInferenceSuccess = false;
+					
 					// CUDA/TensorRT路径
 					if ((filter->useGPU == "cuda" || filter->useGPU == "tensorrt") &&
 						filter->yoloModel->isGpuTextureSupported()) {
@@ -3140,6 +3142,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							cropWidth,
 							cropHeight
 						);
+						gpuInferenceSuccess = true;
 					}
 					// DML路径
 					else if (filter->useGPU == "dml" && 
@@ -3151,11 +3154,13 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							cropWidth,
 							cropHeight
 						);
+						gpuInferenceSuccess = true;
 					}
 					
-					// GPU推理失败，回退到CPU路径
-					if (newDetections.empty()) {
-						obs_log(LOG_WARNING, "[YOLO Detector] GPU纹理推理失败，回退到CPU路径");
+					// 仅当GPU推理未成功执行时才回退到CPU路径
+					// 注意：0个检测结果是有效结果，不是失败
+					if (!gpuInferenceSuccess) {
+						obs_log(LOG_WARNING, "[YOLO Detector] GPU纹理推理不可用，使用CPU路径");
 						newDetections = filter->yoloModel->inference(inferenceFrame);
 					}
 				} else {

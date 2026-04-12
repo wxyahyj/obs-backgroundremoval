@@ -379,19 +379,21 @@ void AbstractMouseController::tick()
         stdIntegralGainX = 0.0f;
         stdIntegralGainY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
-        float feedforwardX = 0.0f, feedforwardY = 0.0f;
+        // 融合误差模式：P、I项基于融合误差，D项基于原始误差
+        float fusionErrorX = errorX;
+        float fusionErrorY = errorY;
+        float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
 
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
-            float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            feedforwardX = config.predictionWeightX * derivPredictedX;
-            feedforwardY = config.predictionWeightY * derivPredictedY;
+            fusionErrorX += config.predictionWeightX * derivPredictedX;
+            fusionErrorY += config.predictionWeightY * derivPredictedY;
         }
 
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
-        // D项基于原始误差计算（前馈模式：D项与预测器分离，无双重滤波）
+        // D项基于原始误差计算（避免双重滤波问题）
         float deltaErrorX = errorX - pidPreviousErrorX;
         float deltaErrorY = errorY - pidPreviousErrorY;
 
@@ -402,18 +404,18 @@ void AbstractMouseController::tick()
         float dTermX = config.pidD * filteredDeltaErrorX;
         float dTermY = config.pidD * filteredDeltaErrorY;
 
-        // 自适应积分基于原始误差
-        bool shouldIntegrateX = adjustIntegralGain(errorX, pidPreviousErrorX, integralGainX);
-        bool shouldIntegrateY = adjustIntegralGain(errorY, pidPreviousErrorY, integralGainY);
+        // 自适应积分基于融合误差
+        bool shouldIntegrateX = adjustIntegralGain(fusionErrorX, pidPreviousErrorX, integralGainX);
+        bool shouldIntegrateY = adjustIntegralGain(fusionErrorY, pidPreviousErrorY, integralGainY);
 
-        if (std::abs(errorX) >= config.integralDeadZone && shouldIntegrateX) {
-            integralX += errorX;
+        if (std::abs(fusionErrorX) >= config.integralDeadZone && shouldIntegrateX) {
+            integralX += fusionErrorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
             integralX *= 0.9f;
         }
-        if (std::abs(errorY) >= config.integralDeadZone && shouldIntegrateY) {
-            integralY += errorY;
+        if (std::abs(fusionErrorY) >= config.integralDeadZone && shouldIntegrateY) {
+            integralY += fusionErrorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
             integralY *= 0.9f;
@@ -422,9 +424,9 @@ void AbstractMouseController::tick()
         float integralTermX = config.pidI * integralX;
         float integralTermY = config.pidI * integralY;
 
-        // PID输出基于原始误差 + 前馈叠加
-        float pidOutputX = dynamicP * errorX + dTermX + integralTermX + feedforwardX;
-        float pidOutputY = dynamicP * errorY + dTermY + integralTermY + feedforwardY;
+        // PID输出：P、I项基于融合误差，D项基于原始误差
+        float pidOutputX = dynamicP * fusionErrorX + dTermX + integralTermX;
+        float pidOutputY = dynamicP * fusionErrorY + dTermY + integralTermY;
 
         moveX = pidOutputX;
         moveY = pidOutputY;
@@ -432,12 +434,17 @@ void AbstractMouseController::tick()
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID-前馈] dt=%.4f | errorX=%.1f errorY=%.1f | ffX=%.2f ffY=%.2f | dynamicP=%.3f",
-                 getLogPrefix(), deltaTime, errorX, errorY, feedforwardX, feedforwardY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID-前馈] dTermX=%.2f dTermY=%.2f | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
+            blog(LOG_INFO, "[%s高级PID-融合] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
+                 getLogPrefix(), deltaTime, errorX, errorY, fusionErrorX, fusionErrorY, dynamicP);
+            blog(LOG_INFO, "[%s高级PID-融合] dTermX=%.2f dTermY=%.2f (基于原始误差) | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID-前馈] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
+            blog(LOG_INFO, "[%s高级PID-融合] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
                  getLogPrefix(), integralX, integralY, integralTermX, integralTermY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
+            if (config.useDerivativePredictor) {
+                blog(LOG_INFO, "[%s高级PID-融合] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
+                     getLogPrefix(), derivPredictedX, derivPredictedY, config.predictionWeightX, config.predictionWeightY,
+                     config.predictionWeightX * derivPredictedX, config.predictionWeightY * derivPredictedY);
+            }
         }
 
         if (pidDataCallback_) {
