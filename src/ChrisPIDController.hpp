@@ -54,16 +54,29 @@ public:
     void reset();
     void resetPredictor();  // 只重置预测器，不重置积分
 
+    // 调试接口：获取内部 PID 分项状态
+    struct DebugTerms {
+        float pTermX = 0, pTermY = 0;
+        float iTermX = 0, iTermY = 0;
+        float dTermX = 0, dTermY = 0;
+    };
+    DebugTerms getLastDebugTerms() const;
+    float getCurrentScale() const { return lastScale_; }  // 获取当前 P-Gain Ramp 缩放系数
+
 private:
     ChrisPIDConfig config_;
     ChrisDerivativePredictor predictor_;
-    
+
     std::array<float, 2> i_term_;
     std::array<float, 2> last_error_;
     std::array<float, 2> last_raw_error_;
     std::array<float, 2> last_output_;
     std::array<float, 2> filtered_d_term_;  // 滤波后的D项
-    
+
+    // 缓存最近一次的 PID 分项值（供调试接口读取）
+    DebugTerms last_debug_terms_;
+    float lastScale_ = 1.0f;  // 缓存当前 P-Gain Ramp 缩放系数
+
     double last_time_;
     double lock_start_time_;
 };

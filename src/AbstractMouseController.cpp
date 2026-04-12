@@ -314,6 +314,45 @@ void AbstractMouseController::tick()
             data.currentKp = config.stdKp;
             data.currentKi = config.stdKi;
             data.currentKd = config.stdKd;
+
+            // 标准PID分项
+            float pOutX = config.stdKp * fusionErrorX;
+            float pOutY = config.stdKp * fusionErrorY;
+            float iOutX = config.stdKi * stdIntegralX;
+            float iOutY = config.stdKi * stdIntegralY;
+
+            data.pTermX = pOutX;
+            data.pTermY = pOutY;
+            data.iTermX = iOutX;
+            data.iTermY = iOutY;
+            data.dTermX = rawMoveX - pOutX - iOutX; // D项 = 输出 - P - I（近似）
+            data.dTermY = rawMoveY - pOutY - iOutY;
+
+            // 积分状态
+            data.integralAbsX = std::abs(stdIntegralX);
+            data.integralAbsY = std::abs(stdIntegralY);
+            float iLimitStd = 100.0f; // 标准PID无显式限幅，用默认值
+            data.integralLimitX = iLimitStd;
+            data.integralLimitY = iLimitStd;
+            data.integralRatioX = std::min(1.0f, data.integralAbsX / iLimitStd);
+            data.integralRatioY = std::min(1.0f, data.integralAbsY / iLimitStd);
+
+            // 控制模式诊断
+            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
+            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
+            if (!hasTarget) {
+                data.controlMode = 0;
+            } else if (errDist < 5.0f) {
+                data.controlMode = 2; // LOCKED
+            } else {
+                data.controlMode = 1; // TRACKING
+            }
+
+            data.algorithmType = 1; // StandardPID
+            data.isFiring = firing;
+            data.smoothingFactorX = config.stdSmoothingX;
+            data.smoothingFactorY = config.stdSmoothingY;
+
             pidDataCallback_(data);
         }
         
@@ -360,9 +399,45 @@ void AbstractMouseController::tick()
             data.targetY = targetPixelY;
             data.targetVelocityX = targetVelocityX;
             data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.chrisKp;
+            data.currentKp = config.chrisKp * chrisController_.getCurrentScale();
             data.currentKi = config.chrisKi;
             data.currentKd = config.chrisKd;
+
+            // 从 ChrisPID 获取分项值
+            auto terms = chrisController_.getLastDebugTerms();
+            data.pTermX = terms.pTermX;
+            data.pTermY = terms.pTermY;
+            data.iTermX = terms.iTermX;
+            data.iTermY = terms.iTermY;
+            data.dTermX = terms.dTermX;
+            data.dTermY = terms.dTermY;
+
+            // 积分状态
+            float iLimitChris = (config.chrisIMax > 0.0f) ? config.chrisIMax : 100.0f;
+            data.integralAbsX = std::abs(terms.iTermX);
+            data.integralAbsY = std::abs(terms.iTermY);
+            data.integralLimitX = iLimitChris;
+            data.integralLimitY = iLimitChris;
+            data.integralRatioX = std::min(1.0f, data.integralAbsX / iLimitChris);
+            data.integralRatioY = std::min(1.0f, data.integralAbsY / iLimitChris);
+
+            // 控制模式诊断
+            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
+            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
+            float maxIRatio = std::max(data.integralRatioX, data.integralRatioY);
+            if (!hasTarget) {
+                data.controlMode = 0; // IDLE
+            } else if (maxIRatio > 0.8f) {
+                data.controlMode = 3; // I_SATURATION
+            } else if (errDist < 10.0f && maxIRatio < 0.4f) {
+                data.controlMode = 2; // LOCKED
+            } else {
+                data.controlMode = 1; // TRACKING
+            }
+
+            data.algorithmType = 2; // ChrisPID
+            data.isFiring = firing;
+
             pidDataCallback_(data);
         }
         
@@ -460,6 +535,44 @@ void AbstractMouseController::tick()
             data.currentKp = dynamicP;
             data.currentKi = config.pidI;
             data.currentKd = config.pidD;
+
+            // 新增：P/I/D 分项值
+            data.pTermX = dynamicP * fusionErrorX;
+            data.pTermY = dynamicP * fusionErrorY;
+            data.iTermX = integralTermX;
+            data.iTermY = integralTermY;
+            data.dTermX = dTermX;
+            data.dTermY = dTermY;
+
+            // 积分状态
+            float iLimit = (config.integralLimit > 0.0f) ? config.integralLimit : 1000.0f;
+            data.integralAbsX = std::abs(integralX);
+            data.integralAbsY = std::abs(integralY);
+            data.integralLimitX = iLimit;
+            data.integralLimitY = iLimit;
+            data.integralRatioX = std::min(1.0f, std::abs(integralX) / iLimit);
+            data.integralRatioY = std::min(1.0f, std::abs(integralY) / iLimit);
+
+            // 控制模式自动诊断
+            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
+            float maxIRatio = std::max(data.integralRatioX, data.integralRatioY);
+            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
+
+            if (!hasTarget) {
+                data.controlMode = 0; // IDLE
+            } else if (maxIRatio > 0.8f) {
+                data.controlMode = 3; // I_SATURATION
+            } else if (errDist < 10.0f && maxIRatio < 0.4f) {
+                data.controlMode = 2; // LOCKED
+            } else {
+                data.controlMode = 1; // TRACKING
+            }
+
+            data.algorithmType = 0; // AdvancedPID
+            data.isFiring = firing;
+            data.smoothingFactorX = config.aimSmoothingX;
+            data.smoothingFactorY = config.aimSmoothingY;
+
             pidDataCallback_(data);
         }
 
@@ -516,15 +629,16 @@ void AbstractMouseController::tick()
         }
     }
 
+    // [FIX] 压枪补偿移到平滑之后，避免被 aimSmoothingY 稀释
+    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
+    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
+
     if (config.autoRecoilControlEnabled && firing) {
         float recoilPerMs = config.recoilStrength / static_cast<float>(config.recoilSpeed);
         float recoilThisFrame = recoilPerMs * deltaTime * 1000.0f;
-        moveY += recoilThisFrame;
+        finalMoveY += recoilThisFrame;
     }
 
-    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
-    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
-    
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     

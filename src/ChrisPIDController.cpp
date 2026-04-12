@@ -147,6 +147,7 @@ void ChrisAimController::update(float raw_dx, float raw_dy, double current_time,
     }
     
     float real_kp = config_.kp * scale;
+    lastScale_ = scale;  // 缓存供调试接口使用
     
     float p_term_x = fusion_error_x * real_kp;
     float p_term_y = fusion_error_y * real_kp;
@@ -197,7 +198,15 @@ void ChrisAimController::update(float raw_dx, float raw_dy, double current_time,
     last_error_[1] = fusion_error_y;
     last_raw_error_ = curr_raw_error;
     last_output_ = {output_x, output_y};
-    
+
+    // 缓存分项值供调试接口使用
+    last_debug_terms_.pTermX = p_term_x;
+    last_debug_terms_.pTermY = p_term_y;
+    last_debug_terms_.iTermX = i_term_[0];
+    last_debug_terms_.iTermY = i_term_[1];
+    last_debug_terms_.dTermX = filtered_d_term_[0];
+    last_debug_terms_.dTermY = filtered_d_term_[1];
+
     out_x = output_x;
     out_y = output_y;
 }
@@ -222,6 +231,11 @@ void ChrisAimController::resetPredictor()
     last_raw_error_.fill(0.0f);
     last_output_.fill(0.0f);
     // 不重置 i_term_
+}
+
+ChrisAimController::DebugTerms ChrisAimController::getLastDebugTerms() const
+{
+    return last_debug_terms_;
 }
 
 #endif // _WIN32
