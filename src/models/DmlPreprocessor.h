@@ -28,7 +28,8 @@ public:
     DmlPreprocessor();
     ~DmlPreprocessor();
     
-    bool initialize(ID3D11Device* d3d11Device);
+    // 初始化预处理器（不再需要传入D3D11设备，会从纹理动态获取）
+    bool initialize();
     void release();
     
     bool preprocessFromTexture(
@@ -48,7 +49,6 @@ public:
     
 private:
     bool createD3D12Device();
-    bool createSharedResource(int width, int height);
     bool copyAndPreprocess(
         ID3D11Texture2D* srcTexture,
         float* dstBuffer,
@@ -57,8 +57,7 @@ private:
     
     bool initialized_;
     
-    ComPtr<ID3D11Device> d3d11Device_;
-    ComPtr<ID3D11DeviceContext> d3d11Context_;
+    // D3D12设备用于未来的GPU加速预处理（可选）
     ComPtr<ID3D12Device> d3d12Device_;
     ComPtr<ID3D12CommandQueue> commandQueue_;
     ComPtr<ID3D12CommandAllocator> commandAllocator_;
@@ -67,11 +66,7 @@ private:
     UINT64 fenceValue_;
     HANDLE fenceEvent_;
     
-    ComPtr<ID3D11Texture2D> sharedTexture_;
-    ComPtr<ID3D12Resource> sharedResource_;
-    HANDLE sharedHandle_;
-    
-    // 复用staging texture
+    // 复用staging texture（每次从纹理获取OBS设备）
     ComPtr<ID3D11Texture2D> cachedStagingTexture_;
     D3D11_TEXTURE2D_DESC cachedStagingDesc_;
     

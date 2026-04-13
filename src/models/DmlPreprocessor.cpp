@@ -7,7 +7,6 @@ DmlPreprocessor::DmlPreprocessor()
     : initialized_(false)
     , fenceValue_(0)
     , fenceEvent_(nullptr)
-    , sharedHandle_(nullptr)
 {
 }
 
@@ -16,26 +15,21 @@ DmlPreprocessor::~DmlPreprocessor()
     release();
 }
 
-bool DmlPreprocessor::initialize(ID3D11Device* d3d11Device)
+bool DmlPreprocessor::initialize()
 {
     if (initialized_) {
         return true;
     }
     
-    if (!d3d11Device) {
-        return false;
-    }
-    
-    d3d11Device_ = d3d11Device;
-    d3d11Device_->GetImmediateContext(&d3d11Context_);
-    
+    // 创建D3D12设备（用于未来的GPU加速预处理，可选）
     if (!createD3D12Device()) {
-        return false;
+        // D3D12设备创建失败不影响基本功能
+        // 可以在没有D3D12的情况下运行CPU预处理
     }
     
     fenceEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent_) {
-        return false;
+        // 即使fence创建失败，也可以继续
     }
     
     initialized_ = true;
@@ -52,14 +46,6 @@ void DmlPreprocessor::release()
     cachedStagingTexture_.Reset();
     memset(&cachedStagingDesc_, 0, sizeof(cachedStagingDesc_));
     
-    sharedResource_.Reset();
-    sharedTexture_.Reset();
-    
-    if (sharedHandle_) {
-        CloseHandle(sharedHandle_);
-        sharedHandle_ = nullptr;
-    }
-    
     commandList_.Reset();
     commandAllocator_.Reset();
     commandQueue_.Reset();
@@ -71,8 +57,6 @@ void DmlPreprocessor::release()
     
     fence_.Reset();
     d3d12Device_.Reset();
-    d3d11Context_.Reset();
-    d3d11Device_.Reset();
     
     initialized_ = false;
 }
@@ -136,48 +120,6 @@ bool DmlPreprocessor::createD3D12Device()
     return SUCCEEDED(hr);
 }
 
-bool DmlPreprocessor::createSharedResource(int width, int height)
-{
-    D3D11_TEXTURE2D_DESC sharedDesc = {};
-    sharedDesc.Width = width;
-    sharedDesc.Height = height;
-    sharedDesc.MipLevels = 1;
-    sharedDesc.ArraySize = 1;
-    sharedDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    sharedDesc.SampleDesc.Count = 1;
-    sharedDesc.SampleDesc.Quality = 0;
-    sharedDesc.Usage = D3D11_USAGE_DEFAULT;
-    sharedDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    sharedDesc.CPUAccessFlags = 0;
-    sharedDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-    
-    HRESULT hr = d3d11Device_->CreateTexture2D(&sharedDesc, nullptr, &sharedTexture_);
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    ComPtr<IDXGIResource1> dxgiResource;
-    hr = sharedTexture_.As(&dxgiResource);
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    hr = dxgiResource->CreateSharedHandle(
-        nullptr,
-        DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
-        nullptr,
-        &sharedHandle_
-    );
-    
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    hr = d3d12Device_->OpenSharedHandle(sharedHandle_, IID_PPV_ARGS(&sharedResource_));
-    
-    return SUCCEEDED(hr);
-}
-
 DmlPreprocessParams DmlPreprocessor::calculateParams(
     int srcWidth, int srcHeight,
     int dstWidth, int dstHeight)
@@ -233,12 +175,33 @@ bool DmlPreprocessor::copyAndPreprocess(
     float* dstBuffer,
     const DmlPreprocessParams& params)
 {
+    // 从源纹理获取OBS的D3D11设备
+    // 这是关键修复：必须使用纹理所属的设备，而不是独立创建的设备
+    // 因为CopyResource要求源和目标资源在同一个设备上
+    ComPtr<ID3D11Device> obsDevice;
+    HRESULT hr = srcTexture->GetDevice(&obsDevice);
+    if (FAILED(hr) || !obsDevice) {
+        return false;
+    }
+    
+    // 获取OBS的D3D11设备上下文
+    ComPtr<ID3D11DeviceContext> obsContext;
+    obsDevice->GetImmediateContext(&obsContext);
+    if (!obsContext) {
+        return false;
+    }
+    
     D3D11_TEXTURE2D_DESC srcDesc;
     srcTexture->GetDesc(&srcDesc);
     
     // 检查是否需要重新创建staging texture
     // 使用params中的尺寸而不是srcDesc中的尺寸
-    // 注意：显式转换为UINT类型进行比较，避免有符号/无符号比较警告
+    // 
+    // 类型转换说明：
+    // - D3D11_TEXTURE2D_DESC的Width/Height是UINT类型
+    // - DmlPreprocessParams的srcWidth/srcHeight是int类型（便于循环索引和负值检查）
+    // - 使用static_cast<UINT>进行显式转换，避免有符号/无符号比较警告
+    // - 此处尺寸值不会为负数，转换是安全的
     bool needNewStaging = false;
     if (!cachedStagingTexture_ ||
         cachedStagingDesc_.Width != static_cast<UINT>(params.srcWidth) ||
@@ -251,22 +214,27 @@ bool DmlPreprocessor::copyAndPreprocess(
         cachedStagingTexture_.Reset();
         
         D3D11_TEXTURE2D_DESC stagingDesc = srcDesc;
+        stagingDesc.Width = static_cast<UINT>(params.srcWidth);
+        stagingDesc.Height = static_cast<UINT>(params.srcHeight);
         stagingDesc.Usage = D3D11_USAGE_STAGING;
         stagingDesc.BindFlags = 0;
         stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         stagingDesc.MiscFlags = 0;
         
-        HRESULT hr = d3d11Device_->CreateTexture2D(&stagingDesc, nullptr, &cachedStagingTexture_);
+        // 使用OBS设备创建staging texture
+        hr = obsDevice->CreateTexture2D(&stagingDesc, nullptr, &cachedStagingTexture_);
         if (FAILED(hr)) {
             return false;
         }
         cachedStagingDesc_ = stagingDesc;
     }
     
-    d3d11Context_->CopyResource(cachedStagingTexture_.Get(), srcTexture);
+    // 使用OBS设备上下文执行CopyResource
+    obsContext->CopyResource(cachedStagingTexture_.Get(), srcTexture);
     
+    // 使用OBS设备上下文执行Map
     D3D11_MAPPED_SUBRESOURCE mapped;
-    HRESULT hr = d3d11Context_->Map(cachedStagingTexture_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    hr = obsContext->Map(cachedStagingTexture_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr)) {
         return false;
     }
@@ -302,7 +270,8 @@ bool DmlPreprocessor::copyAndPreprocess(
         }
     }
     
-    d3d11Context_->Unmap(cachedStagingTexture_.Get(), 0);
+    // 使用OBS设备上下文执行Unmap
+    obsContext->Unmap(cachedStagingTexture_.Get(), 0);
     
     return true;
 }
