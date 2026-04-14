@@ -3513,52 +3513,17 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (filter->yoloModel) {
 #ifdef _WIN32
-				// GPU纹理推理路径
-				if (filter->useGpuTextureInference && 
-					filter->cachedD3D11Texture &&
-					filter->gpuTextureWidth > 0 && 
-					filter->gpuTextureHeight > 0) {
-					
-					obs_log(LOG_INFO, "[YOLO Detector] GPU纹理推理: 设备=%s, 纹理=%dx%d", 
-							filter->useGPU.c_str(), filter->gpuTextureWidth, filter->gpuTextureHeight);
-					
-					bool gpuInferenceSuccess = false;
-					
-					// CUDA/TensorRT路径
-					if ((filter->useGPU == "cuda" || filter->useGPU == "tensorrt") &&
-						filter->yoloModel->isGpuTextureSupported()) {
-						newDetections = filter->yoloModel->inferenceFromTexture(
-							filter->cachedD3D11Texture,
-							filter->gpuTextureWidth,
-							filter->gpuTextureHeight,
-							cropWidth,
-							cropHeight
-						);
-						gpuInferenceSuccess = true;
-					}
-					// DML路径
-					else if (filter->useGPU == "dml" && 
-							 filter->yoloModel->isDmlTextureSupported()) {
-						newDetections = filter->yoloModel->inferenceFromTextureDml(
-							filter->cachedD3D11Texture,
-							filter->gpuTextureWidth,
-							filter->gpuTextureHeight,
-							cropWidth,
-							cropHeight
-						);
-						gpuInferenceSuccess = true;
-					}
-					
-					// 仅当GPU推理未成功执行时才回退到CPU路径
-					// 注意：0个检测结果是有效结果，不是失败
-					if (!gpuInferenceSuccess) {
-						obs_log(LOG_WARNING, "[YOLO Detector] GPU纹理推理不可用，使用CPU路径");
-						newDetections = filter->yoloModel->inference(inferenceFrame);
-					}
-				} else {
-					// CPU推理路径
-					newDetections = filter->yoloModel->inference(inferenceFrame);
-				}
+				// ⚠️ GPU纹理推理已禁用
+				// 原因：全屏游戏切换时GPU纹理可能变得无效，导致崩溃
+				// 解决方案：使用CPU路径，纹理数据已通过gs_stagesurface_map复制到CPU
+				// TODO: 实现安全的GPU纹理生命周期管理
+				(void)filter->useGpuTextureInference;  // 避免未使用警告
+				(void)filter->cachedD3D11Texture;
+				(void)filter->gpuTextureWidth;
+				(void)filter->gpuTextureHeight;
+				
+				// CPU推理路径
+				newDetections = filter->yoloModel->inference(inferenceFrame);
 #else
 				newDetections = filter->yoloModel->inference(inferenceFrame);
 #endif
