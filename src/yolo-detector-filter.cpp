@@ -3490,14 +3490,35 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		// 标记输入缓冲区为空闲（已读取完毕）
 		filter->bufferState[readIdx].store(0, std::memory_order_release);
+		
+		// 安全检查：确保帧数据有效
+		if (frame.empty() || fullWidth <= 0 || fullHeight <= 0) {
+			continue;
+		}
+		
+		// 安全检查：确保裁剪区域有效
+		if (cropWidth <= 0 || cropHeight <= 0) {
+			cropWidth = fullWidth;
+			cropHeight = fullHeight;
+			cropX = 0;
+			cropY = 0;
+		}
+		
+		// 安全检查：确保裁剪区域不超出边界
+		if (cropX < 0) cropX = 0;
+		if (cropY < 0) cropY = 0;
+		if (cropX + cropWidth > fullWidth) cropWidth = fullWidth - cropX;
+		if (cropY + cropHeight > fullHeight) cropHeight = fullHeight - cropY;
+		if (cropWidth <= 0 || cropHeight <= 0) {
+			continue;
+		}
 
 		auto startTime = std::chrono::high_resolution_clock::now();
 		auto inferenceStartTime = startTime;
 
 		// 如果需要裁切，提取裁切区域
 		cv::Mat inferenceFrame;
-		if (cropWidth > 0 && cropHeight > 0 && 
-			(cropX > 0 || cropY > 0 || cropWidth < fullWidth || cropHeight < fullHeight)) {
+		if (cropX > 0 || cropY > 0 || cropWidth < fullWidth || cropHeight < fullHeight) {
 			inferenceFrame = frame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).clone();
 		} else {
 			inferenceFrame = frame;
