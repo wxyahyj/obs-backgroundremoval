@@ -177,6 +177,13 @@ bool DmlPreprocessor::copyAndPreprocess(
     float* dstBuffer,
     const DmlPreprocessParams& params)
 {
+    // ⚠️ 禁用DML GPU纹理预处理
+    // 原因：obs_enter_graphics() 不能在推理线程中调用
+    // 必须在OBS渲染线程中执行纹理复制操作
+    // TODO: 将纹理复制移到OBS渲染回调中
+    return false;
+    
+#if 0
     // 从源纹理获取OBS的D3D11设备
     ComPtr<ID3D11Device> obsDevice;
     srcTexture->GetDevice(&obsDevice);
@@ -285,4 +292,5 @@ bool DmlPreprocessor::copyAndPreprocess(
     obs_leave_graphics();
     
     return true;
+#endif
 }
