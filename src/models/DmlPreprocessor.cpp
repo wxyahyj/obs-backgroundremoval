@@ -1,4 +1,6 @@
 #include "DmlPreprocessor.h"
+#include <obs-module.h>
+#include <graphics/graphics.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -176,32 +178,31 @@ bool DmlPreprocessor::copyAndPreprocess(
     const DmlPreprocessParams& params)
 {
     // 从源纹理获取OBS的D3D11设备
-    // 这是关键修复：必须使用纹理所属的设备，而不是独立创建的设备
-    // 因为CopyResource要求源和目标资源在同一个设备上
     ComPtr<ID3D11Device> obsDevice;
-    HRESULT hr = srcTexture->GetDevice(&obsDevice);
-    if (FAILED(hr) || !obsDevice) {
+    srcTexture->GetDevice(&obsDevice);
+    if (!obsDevice) {
         return false;
     }
+    
+    // 使用obs_enter_graphics确保线程安全
+    // D3D11的Immediate Context不支持多线程并发
+    // 必须在OBS的graphics锁内执行D3D11操作
+    obs_enter_graphics();
     
     // 获取OBS的D3D11设备上下文
     ComPtr<ID3D11DeviceContext> obsContext;
     obsDevice->GetImmediateContext(&obsContext);
     if (!obsContext) {
+        obs_leave_graphics();
         return false;
     }
     
     D3D11_TEXTURE2D_DESC srcDesc;
     srcTexture->GetDesc(&srcDesc);
     
+    HRESULT hr;
+    
     // 检查是否需要重新创建staging texture
-    // 使用params中的尺寸而不是srcDesc中的尺寸
-    // 
-    // 类型转换说明：
-    // - D3D11_TEXTURE2D_DESC的Width/Height是UINT类型
-    // - DmlPreprocessParams的srcWidth/srcHeight是int类型（便于循环索引和负值检查）
-    // - 使用static_cast<UINT>进行显式转换，避免有符号/无符号比较警告
-    // - 此处尺寸值不会为负数，转换是安全的
     bool needNewStaging = false;
     if (!cachedStagingTexture_ ||
         cachedStagingDesc_.Width != static_cast<UINT>(params.srcWidth) ||
@@ -221,9 +222,9 @@ bool DmlPreprocessor::copyAndPreprocess(
         stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         stagingDesc.MiscFlags = 0;
         
-        // 使用OBS设备创建staging texture
         hr = obsDevice->CreateTexture2D(&stagingDesc, nullptr, &cachedStagingTexture_);
         if (FAILED(hr)) {
+            obs_leave_graphics();
             return false;
         }
         cachedStagingDesc_ = stagingDesc;
@@ -232,10 +233,18 @@ bool DmlPreprocessor::copyAndPreprocess(
     // 使用OBS设备上下文执行CopyResource
     obsContext->CopyResource(cachedStagingTexture_.Get(), srcTexture);
     
-    // 使用OBS设备上下文执行Map
+    // 使用DO_NOT_WAIT标志避免阻塞
+    // 如果GPU正在使用资源，立即返回错误
     D3D11_MAPPED_SUBRESOURCE mapped;
-    hr = obsContext->Map(cachedStagingTexture_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    hr = obsContext->Map(cachedStagingTexture_.Get(), 0, D3D11_MAP_READ, 
+                         D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+    if (hr == DXGI_ERROR_WAS_STILL_DRAWING || hr == DXGI_ERROR_DEVICE_REMOVED) {
+        // GPU正在使用资源，回退到CPU路径
+        obs_leave_graphics();
+        return false;
+    }
     if (FAILED(hr)) {
+        obs_leave_graphics();
         return false;
     }
     
@@ -270,8 +279,10 @@ bool DmlPreprocessor::copyAndPreprocess(
         }
     }
     
-    // 使用OBS设备上下文执行Unmap
     obsContext->Unmap(cachedStagingTexture_.Get(), 0);
+    
+    // 释放OBS的graphics锁
+    obs_leave_graphics();
     
     return true;
 }
