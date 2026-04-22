@@ -94,6 +94,15 @@ struct MouseControllerConfig {
     float deadZonePixels = 5.0f;
     float targetYOffset = 0.0f;
     float derivativeFilterAlpha = 0.2f;
+    
+    // 高级PID增强参数（状态机+动态阈值）
+    float advTargetThreshold = 10.0f;         // 达标误差阈值
+    float advMinCoefficient = 1.5f;           // 动态阈值最小系数
+    float advMaxCoefficient = 2.5f;           // 动态阈值最大系数
+    float advTransitionSharpness = 5.0f;      // Sigmoid过渡锐度
+    float advTransitionMidpoint = 0.3f;       // Sigmoid过渡中点
+    float advOutputSmoothing = 0.7f;          // 输出平滑系数
+    float advSpeedFactor = 0.5f;              // 未达标时速度因子（半速）
     ControllerType controllerType = ControllerType::WindowsAPI;
     std::string makcuPort;
     int makcuBaudRate = 115200;

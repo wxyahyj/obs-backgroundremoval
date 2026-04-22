@@ -468,6 +468,55 @@ void AbstractMouseController::tick()
 
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
+        // 动态阈值计算（基于目标宽度）
+        float widthRatio = target->width;
+        float dynamicCoeff = config.advMinCoefficient + (config.advMaxCoefficient - config.advMinCoefficient) /
+            (1.0f + std::exp(-config.advTransitionSharpness * (widthRatio - config.advTransitionMidpoint)));
+        float dynamicJudgmentThresholdX = dynamicCoeff * std::abs(fusionErrorX) + config.integralDeadZone;
+        float dynamicJudgmentThresholdY = dynamicCoeff * std::abs(fusionErrorY) + config.integralDeadZone;
+
+        // 状态机：达标判断（X轴）
+        if (!advHasReachedX && std::abs(fusionErrorX) < config.advTargetThreshold) {
+            advHasReachedX = true;
+        } else if (std::abs(fusionErrorX) >= dynamicJudgmentThresholdX) {
+            advHasReachedX = false;
+            advStableCountX = 0;
+        } else if (!advHasReachedX && std::abs(fusionErrorX) >= config.advTargetThreshold && std::abs(fusionErrorX) <= dynamicJudgmentThresholdX) {
+            float diff = std::abs(fusionErrorX - pidPreviousErrorX);
+            if (diff < config.advTargetThreshold) {
+                advStableCountX++;
+            } else {
+                advStableCountX = 0;
+            }
+            if (advStableCountX >= 2) {
+                advHasReachedX = true;
+                advStableCountX = 0;
+            }
+        }
+
+        // 状态机：达标判断（Y轴）
+        if (!advHasReachedY && std::abs(fusionErrorY) < config.advTargetThreshold) {
+            advHasReachedY = true;
+        } else if (std::abs(fusionErrorY) >= dynamicJudgmentThresholdY) {
+            advHasReachedY = false;
+            advStableCountY = 0;
+        } else if (!advHasReachedY && std::abs(fusionErrorY) >= config.advTargetThreshold && std::abs(fusionErrorY) <= dynamicJudgmentThresholdY) {
+            float diff = std::abs(fusionErrorY - pidPreviousErrorY);
+            if (diff < config.advTargetThreshold) {
+                advStableCountY++;
+            } else {
+                advStableCountY = 0;
+            }
+            if (advStableCountY >= 2) {
+                advHasReachedY = true;
+                advStableCountY = 0;
+            }
+        }
+
+        // 速度因子：达标时全速，未达标时半速
+        float speedFactorX = advHasReachedX ? 1.0f : config.advSpeedFactor;
+        float speedFactorY = advHasReachedY ? 1.0f : config.advSpeedFactor;
+
         // D项基于原始误差计算（避免双重滤波问题）
         float deltaErrorX = errorX - pidPreviousErrorX;
         float deltaErrorY = errorY - pidPreviousErrorY;
@@ -499,18 +548,23 @@ void AbstractMouseController::tick()
         float integralTermX = config.pidI * integralX;
         float integralTermY = config.pidI * integralY;
 
-        // PID输出：P、I项基于融合误差，D项基于原始误差
-        float pidOutputX = dynamicP * fusionErrorX + dTermX + integralTermX;
-        float pidOutputY = dynamicP * fusionErrorY + dTermY + integralTermY;
+        // PID输出：P、I项基于融合误差，D项基于原始误差，应用速度因子
+        float pidOutputX = dynamicP * fusionErrorX * speedFactorX + dTermX + integralTermX;
+        float pidOutputY = dynamicP * fusionErrorY * speedFactorY + dTermY + integralTermY;
 
-        moveX = pidOutputX;
-        moveY = pidOutputY;
+        // 输出整体平滑
+        moveX = advPreviousOutputX * (1.0f - config.advOutputSmoothing) + pidOutputX * config.advOutputSmoothing;
+        moveY = advPreviousOutputY * (1.0f - config.advOutputSmoothing) + pidOutputY * config.advOutputSmoothing;
+        advPreviousOutputX = moveX;
+        advPreviousOutputY = moveY;
 
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
             blog(LOG_INFO, "[%s高级PID-融合] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
                  getLogPrefix(), deltaTime, errorX, errorY, fusionErrorX, fusionErrorY, dynamicP);
+            blog(LOG_INFO, "[%s高级PID-融合] reachedX=%d reachedY=%d | speedX=%.1f speedY=%.1f | threshold=%.1f",
+                 getLogPrefix(), advHasReachedX ? 1 : 0, advHasReachedY ? 1 : 0, speedFactorX, speedFactorY, dynamicJudgmentThresholdX);
             blog(LOG_INFO, "[%s高级PID-融合] dTermX=%.2f dTermY=%.2f (基于原始误差) | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
                  getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
             blog(LOG_INFO, "[%s高级PID-融合] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
@@ -1058,6 +1112,12 @@ void AbstractMouseController::resetPidState()
     stdFilteredDeltaErrorY = 0.0f;
     stdPreviousMoveX = 0.0f;
     stdPreviousMoveY = 0.0f;
+    advHasReachedX = false;
+    advHasReachedY = false;
+    advStableCountX = 0;
+    advStableCountY = 0;
+    advPreviousOutputX = 0.0f;
+    advPreviousOutputY = 0.0f;
     lockedTrackId = -1;
     pendingTargetTrackId = -1;
     pendingTargetScore = 0.0f;
@@ -1065,6 +1125,12 @@ void AbstractMouseController::resetPidState()
     chrisController_.reset();
     dynamicPidX.reset();
     dynamicPidY.reset();
+    advHasReachedX = false;
+    advHasReachedY = false;
+    advStableCountX = 0;
+    advStableCountY = 0;
+    advPreviousOutputX = 0.0f;
+    advPreviousOutputY = 0.0f;
 }
 
 void AbstractMouseController::resetMotionState()

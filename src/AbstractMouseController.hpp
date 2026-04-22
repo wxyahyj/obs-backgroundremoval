@@ -64,6 +64,13 @@ protected:
     float stdPreviousMoveX;
     float stdPreviousMoveY;
     
+    bool advHasReachedX;
+    bool advHasReachedY;
+    int advStableCountX;
+    int advStableCountY;
+    float advPreviousOutputX;
+    float advPreviousOutputY;
+    
     int lockedTrackId;
     
     std::chrono::steady_clock::time_point lastRecoilTime;

@@ -331,8 +331,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float stdIntegralThresholdGlobal;
 	float stdIntegralRateGlobal;
 	float stdDerivativeFilterAlphaGlobal;
-	float stdSmoothingXGlobal;
-	float stdSmoothingYGlobal;
 
 	struct MouseControlConfig {
 		bool enabled;
@@ -352,6 +350,13 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int screenHeight;
 		float derivativeFilterAlpha;
 		float targetYOffset;
+		float advTargetThreshold;
+		float advMinCoefficient;
+		float advMaxCoefficient;
+		float advTransitionSharpness;
+		float advTransitionMidpoint;
+		float advOutputSmoothing;
+		float advSpeedFactor;
 		int controllerType;
 		std::string makcuPort;
 		int makcuBaudRate;
@@ -780,6 +785,29 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *derivFilterProp = obs_properties_add_float_slider(props, propName, "微分滤波系数", 0.01, 1.00, 0.01);
 		obs_property_set_long_description(derivFilterProp, "微分滤波系数，用于平滑D项，减少抖动");
 
+		// 高级PID增强参数（状态机+动态阈值）
+		snprintf(propName, sizeof(propName), "adv_target_threshold_%d", i);
+		obs_property_t *advThreshProp = obs_properties_add_float_slider(props, propName, "达标误差阈值", 1.0, 30.0, 0.5);
+		obs_property_set_long_description(advThreshProp, "误差小于此值时视为达标，激活全速PID");
+		snprintf(propName, sizeof(propName), "adv_min_coefficient_%d", i);
+		obs_property_t *advMinCoeffProp = obs_properties_add_float_slider(props, propName, "动态最小系数", 0.5, 3.0, 0.1);
+		obs_property_set_long_description(advMinCoeffProp, "目标小时动态阈值最小系数");
+		snprintf(propName, sizeof(propName), "adv_max_coefficient_%d", i);
+		obs_property_t *advMaxCoeffProp = obs_properties_add_float_slider(props, propName, "动态最大系数", 1.0, 5.0, 0.1);
+		obs_property_set_long_description(advMaxCoeffProp, "目标大时动态阈值最大系数");
+		snprintf(propName, sizeof(propName), "adv_transition_sharpness_%d", i);
+		obs_property_t *advSharpProp = obs_properties_add_float_slider(props, propName, "过渡锐度", 1.0, 15.0, 0.5);
+		obs_property_set_long_description(advSharpProp, "Sigmoid过渡锐度，越大过渡越陡峭");
+		snprintf(propName, sizeof(propName), "adv_transition_midpoint_%d", i);
+		obs_property_t *advMidProp = obs_properties_add_float_slider(props, propName, "过渡中点", 0.0, 1.0, 0.05);
+		obs_property_set_long_description(advMidProp, "Sigmoid过渡中点");
+		snprintf(propName, sizeof(propName), "adv_output_smoothing_%d", i);
+		obs_property_t *advSmoothProp = obs_properties_add_float_slider(props, propName, "输出平滑系数", 0.0, 1.0, 0.05);
+		obs_property_set_long_description(advSmoothProp, "PID输出整体平滑系数，1.0=不平滑");
+		snprintf(propName, sizeof(propName), "adv_speed_factor_%d", i);
+		obs_property_t *advSpeedProp = obs_properties_add_float_slider(props, propName, "未达标速度因子", 0.1, 1.0, 0.05);
+		obs_property_set_long_description(advSpeedProp, "未达标时P/I的速度因子，0.5=半速");
+
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		obs_property_t *aimSmoothXProp = obs_properties_add_float_slider(props, propName, "X轴平滑度", 0.00, 1.0, 0.01);
 		obs_property_set_long_description(aimSmoothXProp, "X轴鼠标移动平滑系数，值越大越平滑但延迟越高");
@@ -1022,10 +1050,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
 	obs_property_t *stdDerivativeFilterProp = obs_properties_add_float_slider(props, "std_derivative_filter_alpha_global", "微分滤波系数", 0.01, 1.0, 0.01);
 	obs_property_set_long_description(stdDerivativeFilterProp, "标准PID微分项低通滤波系数，值越大响应越快，值越小越平滑但延迟");
-	obs_property_t *stdSmoothingXProp = obs_properties_add_float_slider(props, "std_smoothing_x_global", "X轴平滑度", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(stdSmoothingXProp, "标准PID输出X轴平滑系数，值越大响应越快，值越小越平滑");
-	obs_property_t *stdSmoothingYProp = obs_properties_add_float_slider(props, "std_smoothing_y_global", "Y轴平滑度", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(stdSmoothingYProp, "标准PID输出Y轴平滑系数，值越大响应越快，值越小越平滑");
 
 	// ChrisPID参数
 	obs_properties_add_group(props, "chris_pid_group", "ChrisPID配置", OBS_GROUP_NORMAL, nullptr);
@@ -1150,6 +1174,20 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "i_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_target_threshold_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_min_coefficient_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_max_coefficient_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_transition_sharpness_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_transition_midpoint_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_output_smoothing_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adv_speed_factor_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// 以下参数已迁移到其他页面：
 	// target_y_offset, enable_y_axis_unlock, y_axis_unlock_delay -> 页面2（基础）
@@ -1335,8 +1373,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_smoothing_x_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_smoothing_y_global"), page == 3 && algorithm == 1);
 
 	// ChrisPID参数组（选择2时显示）
 	obs_property_set_visible(obs_properties_get(props, "chris_pid_group"), page == 3 && algorithm == 2);
@@ -1466,6 +1502,21 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.01);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
+
+		snprintf(propName, sizeof(propName), "adv_target_threshold_%d", i);
+		obs_data_set_default_double(settings, propName, 10.0);
+		snprintf(propName, sizeof(propName), "adv_min_coefficient_%d", i);
+		obs_data_set_default_double(settings, propName, 1.5);
+		snprintf(propName, sizeof(propName), "adv_max_coefficient_%d", i);
+		obs_data_set_default_double(settings, propName, 2.5);
+		snprintf(propName, sizeof(propName), "adv_transition_sharpness_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "adv_transition_midpoint_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
+		snprintf(propName, sizeof(propName), "adv_output_smoothing_%d", i);
+		obs_data_set_default_double(settings, propName, 0.7);
+		snprintf(propName, sizeof(propName), "adv_speed_factor_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		obs_data_set_default_double(settings, propName, 0.7);
@@ -1597,8 +1648,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "std_integral_threshold_global", 50.0);
     obs_data_set_default_double(settings, "std_integral_rate_global", 0.015);
     obs_data_set_default_double(settings, "std_derivative_filter_alpha_global", 0.2);
-    obs_data_set_default_double(settings, "std_smoothing_x_global", 0.7);
-    obs_data_set_default_double(settings, "std_smoothing_y_global", 0.5);
     
     // ChrisPID参数默认值
     obs_data_set_default_double(settings, "chris_kp", 0.45);
@@ -1853,6 +1902,21 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		tf->mouseConfigs[i].derivativeFilterAlpha = (float)obs_data_get_double(settings, propName);
 
+		snprintf(propName, sizeof(propName), "adv_target_threshold_%d", i);
+		tf->mouseConfigs[i].advTargetThreshold = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adv_min_coefficient_%d", i);
+		tf->mouseConfigs[i].advMinCoefficient = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adv_max_coefficient_%d", i);
+		tf->mouseConfigs[i].advMaxCoefficient = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adv_transition_sharpness_%d", i);
+		tf->mouseConfigs[i].advTransitionSharpness = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adv_transition_midpoint_%d", i);
+		tf->mouseConfigs[i].advTransitionMidpoint = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adv_output_smoothing_%d", i);
+		tf->mouseConfigs[i].advOutputSmoothing = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adv_speed_factor_%d", i);
+		tf->mouseConfigs[i].advSpeedFactor = (float)obs_data_get_double(settings, propName);
+
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		tf->mouseConfigs[i].aimSmoothingX = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "aim_smoothing_y_%d", i);
@@ -1967,8 +2031,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->stdIntegralThresholdGlobal = (float)obs_data_get_double(settings, "std_integral_threshold_global");
 	tf->stdIntegralRateGlobal = (float)obs_data_get_double(settings, "std_integral_rate_global");
 	tf->stdDerivativeFilterAlphaGlobal = (float)obs_data_get_double(settings, "std_derivative_filter_alpha_global");
-	tf->stdSmoothingXGlobal = (float)obs_data_get_double(settings, "std_smoothing_x_global");
-	tf->stdSmoothingYGlobal = (float)obs_data_get_double(settings, "std_smoothing_y_global");
 
 	// 读取ChrisPID参数
 	tf->chrisKp = (float)obs_data_get_double(settings, "chris_kp");
@@ -4390,6 +4452,13 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.screenHeight = cfg.screenHeight;
 		mcConfig.targetYOffset = cfg.targetYOffset;
 		mcConfig.derivativeFilterAlpha = cfg.derivativeFilterAlpha;
+		mcConfig.advTargetThreshold = cfg.advTargetThreshold;
+		mcConfig.advMinCoefficient = cfg.advMinCoefficient;
+		mcConfig.advMaxCoefficient = cfg.advMaxCoefficient;
+		mcConfig.advTransitionSharpness = cfg.advTransitionSharpness;
+		mcConfig.advTransitionMidpoint = cfg.advTransitionMidpoint;
+		mcConfig.advOutputSmoothing = cfg.advOutputSmoothing;
+		mcConfig.advSpeedFactor = cfg.advSpeedFactor;
 		mcConfig.controllerType = static_cast<ControllerType>(cfg.controllerType);
 		mcConfig.makcuPort = cfg.makcuPort;
 		mcConfig.makcuBaudRate = cfg.makcuBaudRate;
@@ -4445,8 +4514,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.stdIntegralThreshold = tf->stdIntegralThresholdGlobal;
 		mcConfig.stdIntegralRate = tf->stdIntegralRateGlobal;
 		mcConfig.stdDerivativeFilterAlpha = tf->stdDerivativeFilterAlphaGlobal;
-		mcConfig.stdSmoothingX = tf->stdSmoothingXGlobal;
-		mcConfig.stdSmoothingY = tf->stdSmoothingYGlobal;
+		mcConfig.stdSmoothingX = 0.7f;
+		mcConfig.stdSmoothingY = 0.5f;
 		// ChrisPID参数（使用全局设置）
 		mcConfig.chrisKp = tf->chrisKp;
 		mcConfig.chrisKi = tf->chrisKi;
