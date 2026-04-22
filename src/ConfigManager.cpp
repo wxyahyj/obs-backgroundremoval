@@ -245,6 +245,19 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["chrisIMax"] = config.chrisIMax;
     j["chrisDFilterAlpha"] = config.chrisDFilterAlpha;
     
+    j["dynamicKp"] = config.dynamicKp;
+    j["dynamicKi"] = config.dynamicKi;
+    j["dynamicKd"] = config.dynamicKd;
+    j["dynamicTargetThreshold"] = config.dynamicTargetThreshold;
+    j["dynamicSpeedMultiplier"] = config.dynamicSpeedMultiplier;
+    j["dynamicMinCoefficient"] = config.dynamicMinCoefficient;
+    j["dynamicMaxCoefficient"] = config.dynamicMaxCoefficient;
+    j["dynamicTransitionSharpness"] = config.dynamicTransitionSharpness;
+    j["dynamicTransitionMidpoint"] = config.dynamicTransitionMidpoint;
+    j["dynamicMinDataPoints"] = config.dynamicMinDataPoints;
+    j["dynamicErrorTolerance"] = config.dynamicErrorTolerance;
+    j["dynamicSmoothingFactor"] = config.dynamicSmoothingFactor;
+    
     return j;
 }
 
@@ -342,6 +355,19 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("chrisOutputMax")) config.chrisOutputMax = j["chrisOutputMax"].get<float>();
         if (j.contains("chrisIMax")) config.chrisIMax = j["chrisIMax"].get<float>();
         if (j.contains("chrisDFilterAlpha")) config.chrisDFilterAlpha = j["chrisDFilterAlpha"].get<float>();
+        
+        if (j.contains("dynamicKp")) config.dynamicKp = j["dynamicKp"].get<float>();
+        if (j.contains("dynamicKi")) config.dynamicKi = j["dynamicKi"].get<float>();
+        if (j.contains("dynamicKd")) config.dynamicKd = j["dynamicKd"].get<float>();
+        if (j.contains("dynamicTargetThreshold")) config.dynamicTargetThreshold = j["dynamicTargetThreshold"].get<float>();
+        if (j.contains("dynamicSpeedMultiplier")) config.dynamicSpeedMultiplier = j["dynamicSpeedMultiplier"].get<float>();
+        if (j.contains("dynamicMinCoefficient")) config.dynamicMinCoefficient = j["dynamicMinCoefficient"].get<float>();
+        if (j.contains("dynamicMaxCoefficient")) config.dynamicMaxCoefficient = j["dynamicMaxCoefficient"].get<float>();
+        if (j.contains("dynamicTransitionSharpness")) config.dynamicTransitionSharpness = j["dynamicTransitionSharpness"].get<float>();
+        if (j.contains("dynamicTransitionMidpoint")) config.dynamicTransitionMidpoint = j["dynamicTransitionMidpoint"].get<float>();
+        if (j.contains("dynamicMinDataPoints")) config.dynamicMinDataPoints = j["dynamicMinDataPoints"].get<int>();
+        if (j.contains("dynamicErrorTolerance")) config.dynamicErrorTolerance = j["dynamicErrorTolerance"].get<float>();
+        if (j.contains("dynamicSmoothingFactor")) config.dynamicSmoothingFactor = j["dynamicSmoothingFactor"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {

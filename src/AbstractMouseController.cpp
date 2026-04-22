@@ -590,6 +590,134 @@ void AbstractMouseController::tick()
         stdLastErrorY = errorY;
         stdFilteredDeltaErrorX = 0.0f;
         stdFilteredDeltaErrorY = 0.0f;
+    } else if (config.algorithmType == AlgorithmType::DynamicPID) {
+        // 动态PID：基于动态阈值和状态机的PID控制器
+        dynamicPidX.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
+        dynamicPidY.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
+
+        dynamicPidX.setBottomParams(
+            config.dynamicTargetThreshold, config.dynamicSpeedMultiplier,
+            config.dynamicMinCoefficient, config.dynamicMaxCoefficient,
+            config.dynamicTransitionSharpness, config.dynamicTransitionMidpoint,
+            config.dynamicMinDataPoints, config.dynamicErrorTolerance
+        );
+        dynamicPidY.setBottomParams(
+            config.dynamicTargetThreshold, config.dynamicSpeedMultiplier,
+            config.dynamicMinCoefficient, config.dynamicMaxCoefficient,
+            config.dynamicTransitionSharpness, config.dynamicTransitionMidpoint,
+            config.dynamicMinDataPoints, config.dynamicErrorTolerance
+        );
+
+        dynamicPidX.setSmoothingFactor(config.dynamicSmoothingFactor);
+        dynamicPidY.setSmoothingFactor(config.dynamicSmoothingFactor);
+
+        // 预测器融合误差（与其他算法一致）
+        float dynamicErrorX = errorX;
+        float dynamicErrorY = errorY;
+        float dynamicDerivPredictedX = 0.0f, dynamicDerivPredictedY = 0.0f;
+
+        if (config.useDerivativePredictor) {
+            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+            predictor.predict(deltaTime, dynamicDerivPredictedX, dynamicDerivPredictedY);
+            dynamicErrorX += config.predictionWeightX * dynamicDerivPredictedX;
+            dynamicErrorY += config.predictionWeightY * dynamicDerivPredictedY;
+        }
+
+        // 目标宽度（像素）用于动态阈值计算
+        float targetWidthPixels = target->width * config.inferenceFrameWidth;
+        float imageSize = static_cast<float>(config.inferenceFrameWidth);
+
+        moveX = dynamicPidX.controlLoop(dynamicErrorX, deltaTime, targetWidthPixels, imageSize);
+        moveY = dynamicPidY.controlLoop(dynamicErrorY, deltaTime, targetWidthPixels, imageSize);
+
+        static int dynamicLogCounter = 0;
+        if (++dynamicLogCounter >= 30) {
+            dynamicLogCounter = 0;
+            blog(LOG_INFO, "[%s动态PID] dt=%.4f | errorX=%.1f errorY=%.1f | dynErrX=%.1f dynErrY=%.1f | moveX=%.1f moveY=%.1f",
+                 getLogPrefix(), deltaTime, errorX, errorY, dynamicErrorX, dynamicErrorY, moveX, moveY);
+            blog(LOG_INFO, "[%s动态PID] pTermX=%.2f pTermY=%.2f | iTermX=%.2f iTermY=%.2f | dTermX=%.2f dTermY=%.2f",
+                 getLogPrefix(),
+                 dynamicPidX.getLastProportional(), dynamicPidY.getLastProportional(),
+                 dynamicPidX.getLastIntegral(), dynamicPidY.getLastIntegral(),
+                 dynamicPidX.getLastDerivative(), dynamicPidY.getLastDerivative());
+            blog(LOG_INFO, "[%s动态PID] reachedX=%d reachedY=%d | velX=%.1f velY=%.1f | kp=%.3f ki=%.3f kd=%.3f",
+                 getLogPrefix(),
+                 dynamicPidX.getIsReached() ? 1 : 0, dynamicPidY.getIsReached() ? 1 : 0,
+                 dynamicPidX.getVelocity(), dynamicPidY.getVelocity(),
+                 config.dynamicKp, config.dynamicKi, config.dynamicKd);
+            if (config.useDerivativePredictor) {
+                blog(LOG_INFO, "[%s动态PID] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
+                     getLogPrefix(), dynamicDerivPredictedX, dynamicDerivPredictedY, config.predictionWeightX, config.predictionWeightY,
+                     config.predictionWeightX * dynamicDerivPredictedX, config.predictionWeightY * dynamicDerivPredictedY);
+            }
+        }
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.dynamicKp;
+            data.currentKi = config.dynamicKi;
+            data.currentKd = config.dynamicKd;
+
+            data.pTermX = dynamicPidX.getLastProportional();
+            data.pTermY = dynamicPidY.getLastProportional();
+            data.iTermX = dynamicPidX.getLastIntegral();
+            data.iTermY = dynamicPidY.getLastIntegral();
+            data.dTermX = dynamicPidX.getLastDerivative();
+            data.dTermY = dynamicPidY.getLastDerivative();
+
+            float iLimitDyn = 100.0f;
+            data.integralAbsX = std::abs(data.iTermX);
+            data.integralAbsY = std::abs(data.iTermY);
+            data.integralLimitX = iLimitDyn;
+            data.integralLimitY = iLimitDyn;
+            data.integralRatioX = std::min(1.0f, data.integralAbsX / iLimitDyn);
+            data.integralRatioY = std::min(1.0f, data.integralAbsY / iLimitDyn);
+
+            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
+            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
+            if (!hasTarget) {
+                data.controlMode = 0;
+            } else if (errDist < 10.0f) {
+                data.controlMode = 2;
+            } else {
+                data.controlMode = 1;
+            }
+
+            data.algorithmType = 3;
+            data.isFiring = isFiring;
+            data.smoothingFactorX = config.dynamicSmoothingFactor;
+            data.smoothingFactorY = config.dynamicSmoothingFactor;
+
+            pidDataCallback_(data);
+        }
+
+        // 重置其他算法状态
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
+        integralGainX = 0.0f;
+        integralGainY = 0.0f;
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 0.0f;
+        stdLastErrorX = errorX;
+        stdLastErrorY = errorY;
+        stdFilteredDeltaErrorX = 0.0f;
+        stdFilteredDeltaErrorY = 0.0f;
     }
     
     bool firing = checkFiring();
@@ -935,6 +1063,8 @@ void AbstractMouseController::resetPidState()
     pendingTargetScore = 0.0f;
     currentTargetScore = 0.0f;
     chrisController_.reset();
+    dynamicPidX.reset();
+    dynamicPidY.reset();
 }
 
 void AbstractMouseController::resetMotionState()

@@ -500,6 +500,20 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float chrisOutputMax;
 	float chrisIMax;
 	float chrisDFilterAlpha;
+
+	// DynamicPID参数
+	float dynamicKp;
+	float dynamicKi;
+	float dynamicKd;
+	float dynamicTargetThreshold;
+	float dynamicSpeedMultiplier;
+	float dynamicMinCoefficient;
+	float dynamicMaxCoefficient;
+	float dynamicTransitionSharpness;
+	float dynamicTransitionMidpoint;
+	int   dynamicMinDataPoints;
+	float dynamicErrorTolerance;
+	float dynamicSmoothingFactor;
 	
 #endif
 
@@ -980,7 +994,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "高级PID (自适应)", 0);
 	obs_property_list_add_int(algorithmTypeList, "标准PID (经典)", 1);
 	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 2);
-	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器");
+	obs_property_list_add_int(algorithmTypeList, "动态PID (动态阈值)", 3);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 标准PID配置分组
@@ -1034,6 +1049,32 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(chrisIMaxProp, "ChrisPID积分项限幅，防止积分饱和");
 	obs_property_t *chrisDFilterAlphaProp = obs_properties_add_float_slider(props, "chris_d_filter_alpha", "D项滤波系数", 0.1, 1.0, 0.05);
 	obs_property_set_long_description(chrisDFilterAlphaProp, "ChrisPID D项滤波系数，1.0=无滤波，0.1=强滤波");
+
+	obs_properties_add_group(props, "dynamic_pid_group", "动态PID配置", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *dynamicKpProp = obs_properties_add_float_slider(props, "dynamic_kp", "动态PID-Kp", 0.0, 2.0, 0.01);
+	obs_property_set_long_description(dynamicKpProp, "动态PID比例系数");
+	obs_property_t *dynamicKiProp = obs_properties_add_float_slider(props, "dynamic_ki", "动态PID-Ki", 0.0, 2.0, 0.01);
+	obs_property_set_long_description(dynamicKiProp, "动态PID积分系数");
+	obs_property_t *dynamicKdProp = obs_properties_add_float_slider(props, "dynamic_kd", "动态PID-Kd", 0.0, 0.5, 0.001);
+	obs_property_set_long_description(dynamicKdProp, "动态PID微分系数");
+	obs_property_t *dynamicThresholdProp = obs_properties_add_float_slider(props, "dynamic_target_threshold", "达标误差阈值", 0.0, 20.0, 0.1);
+	obs_property_set_long_description(dynamicThresholdProp, "误差小于此值时视为达标，激活完整PID");
+	obs_property_t *dynamicSpeedProp = obs_properties_add_float_slider(props, "dynamic_speed_multiplier", "速度倍率", 0.0, 5.0, 0.1);
+	obs_property_set_long_description(dynamicSpeedProp, "速度计算倍率系数");
+	obs_property_t *dynamicMinCoeffProp = obs_properties_add_float_slider(props, "dynamic_min_coefficient", "最小系数", 0.0, 5.0, 0.1);
+	obs_property_set_long_description(dynamicMinCoeffProp, "动态阈值计算最小系数（目标小时）");
+	obs_property_t *dynamicMaxCoeffProp = obs_properties_add_float_slider(props, "dynamic_max_coefficient", "最大系数", 0.0, 5.0, 0.1);
+	obs_property_set_long_description(dynamicMaxCoeffProp, "动态阈值计算最大系数（目标大时）");
+	obs_property_t *dynamicSharpnessProp = obs_properties_add_float_slider(props, "dynamic_transition_sharpness", "过渡锐度", 0.0, 20.0, 0.5);
+	obs_property_set_long_description(dynamicSharpnessProp, "Sigmoid过渡锐度，越大过渡越陡峭");
+	obs_property_t *dynamicMidpointProp = obs_properties_add_float_slider(props, "dynamic_transition_midpoint", "过渡中点", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(dynamicMidpointProp, "动态阈值过渡中点");
+	obs_property_t *dynamicMinDataProp = obs_properties_add_int_slider(props, "dynamic_min_data_points", "最小数据量", 1, 10, 1);
+	obs_property_set_long_description(dynamicMinDataProp, "稳定计数达到此值时激活积分");
+	obs_property_t *dynamicToleranceProp = obs_properties_add_float_slider(props, "dynamic_error_tolerance", "误差变化容限", 0.0, 20.0, 0.1);
+	obs_property_set_long_description(dynamicToleranceProp, "误差变化小于此值时认为稳定");
+	obs_property_t *dynamicSmoothingProp = obs_properties_add_float_slider(props, "dynamic_smoothing_factor", "输出平滑因子", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(dynamicSmoothingProp, "输出EMA平滑系数，1.0=不平滑");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -1310,6 +1351,21 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 2);
 	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 2);
 
+	// 动态PID参数组（选择3时显示）
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_speed_multiplier"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_min_coefficient"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_max_coefficient"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_sharpness"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_midpoint"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_min_data_points"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_error_tolerance"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_smoothing_factor"), page == 3 && algorithm == 3);
+
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
@@ -1555,6 +1611,20 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "chris_output_max", 150.0);
     obs_data_set_default_double(settings, "chris_i_max", 100.0);
     obs_data_set_default_double(settings, "chris_d_filter_alpha", 0.3);
+
+    // DynamicPID默认值
+    obs_data_set_default_double(settings, "dynamic_kp", 0.5);
+    obs_data_set_default_double(settings, "dynamic_ki", 0.1);
+    obs_data_set_default_double(settings, "dynamic_kd", 0.05);
+    obs_data_set_default_double(settings, "dynamic_target_threshold", 4.0);
+    obs_data_set_default_double(settings, "dynamic_speed_multiplier", 1.0);
+    obs_data_set_default_double(settings, "dynamic_min_coefficient", 1.6);
+    obs_data_set_default_double(settings, "dynamic_max_coefficient", 2.7);
+    obs_data_set_default_double(settings, "dynamic_transition_sharpness", 5.0);
+    obs_data_set_default_double(settings, "dynamic_transition_midpoint", 0.0);
+    obs_data_set_default_int(settings, "dynamic_min_data_points", 2);
+    obs_data_set_default_double(settings, "dynamic_error_tolerance", 3.0);
+    obs_data_set_default_double(settings, "dynamic_smoothing_factor", 0.8);
 #endif
 }
 
@@ -1911,6 +1981,20 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->chrisOutputMax = (float)obs_data_get_double(settings, "chris_output_max");
 	tf->chrisIMax = (float)obs_data_get_double(settings, "chris_i_max");
 	tf->chrisDFilterAlpha = (float)obs_data_get_double(settings, "chris_d_filter_alpha");
+
+	// DynamicPID参数
+	tf->dynamicKp = (float)obs_data_get_double(settings, "dynamic_kp");
+	tf->dynamicKi = (float)obs_data_get_double(settings, "dynamic_ki");
+	tf->dynamicKd = (float)obs_data_get_double(settings, "dynamic_kd");
+	tf->dynamicTargetThreshold = (float)obs_data_get_double(settings, "dynamic_target_threshold");
+	tf->dynamicSpeedMultiplier = (float)obs_data_get_double(settings, "dynamic_speed_multiplier");
+	tf->dynamicMinCoefficient = (float)obs_data_get_double(settings, "dynamic_min_coefficient");
+	tf->dynamicMaxCoefficient = (float)obs_data_get_double(settings, "dynamic_max_coefficient");
+	tf->dynamicTransitionSharpness = (float)obs_data_get_double(settings, "dynamic_transition_sharpness");
+	tf->dynamicTransitionMidpoint = (float)obs_data_get_double(settings, "dynamic_transition_midpoint");
+	tf->dynamicMinDataPoints = (int)obs_data_get_int(settings, "dynamic_min_data_points");
+	tf->dynamicErrorTolerance = (float)obs_data_get_double(settings, "dynamic_error_tolerance");
+	tf->dynamicSmoothingFactor = (float)obs_data_get_double(settings, "dynamic_smoothing_factor");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -4374,6 +4458,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.chrisOutputMax = tf->chrisOutputMax;
 		mcConfig.chrisIMax = tf->chrisIMax;
 		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
+		mcConfig.dynamicKp = tf->dynamicKp;
+		mcConfig.dynamicKi = tf->dynamicKi;
+		mcConfig.dynamicKd = tf->dynamicKd;
+		mcConfig.dynamicTargetThreshold = tf->dynamicTargetThreshold;
+		mcConfig.dynamicSpeedMultiplier = tf->dynamicSpeedMultiplier;
+		mcConfig.dynamicMinCoefficient = tf->dynamicMinCoefficient;
+		mcConfig.dynamicMaxCoefficient = tf->dynamicMaxCoefficient;
+		mcConfig.dynamicTransitionSharpness = tf->dynamicTransitionSharpness;
+		mcConfig.dynamicTransitionMidpoint = tf->dynamicTransitionMidpoint;
+		mcConfig.dynamicMinDataPoints = tf->dynamicMinDataPoints;
+		mcConfig.dynamicErrorTolerance = tf->dynamicErrorTolerance;
+		mcConfig.dynamicSmoothingFactor = tf->dynamicSmoothingFactor;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 

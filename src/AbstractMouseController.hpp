@@ -13,6 +13,7 @@
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
 #include "ChrisPIDController.hpp"
+#include "DynamicPIDController.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -71,6 +72,9 @@ protected:
     DerivativePredictor predictor;
 
     ChrisAimController chrisController_;
+
+    DynamicPIDAxis dynamicPidX;  // 动态PID X轴控制器
+    DynamicPIDAxis dynamicPidY;  // 动态PID Y轴控制器
 
     std::chrono::steady_clock::time_point lastTickTime;
     float deltaTime;

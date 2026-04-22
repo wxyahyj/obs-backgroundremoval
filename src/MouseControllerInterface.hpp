@@ -14,7 +14,8 @@ enum class ControllerType {
 enum class AlgorithmType {
     AdvancedPID,      // 高级PID（当前使用的自适应PID）
     StandardPID,      // 标准PID（经典PID）
-    ChrisPID          // ChrisPID（克里斯控制器）
+    ChrisPID,         // ChrisPID（克里斯控制器）
+    DynamicPID        // 动态PID（动态阈值状态机）
 };
 
 // PID数据回调函数类型
@@ -162,6 +163,20 @@ struct MouseControllerConfig {
     float chrisOutputMax = 150.0f;
     float chrisIMax = 100.0f;
     float chrisDFilterAlpha = 0.3f;  // D项滤波系数
+    
+    // 动态PID参数（动态阈值状态机控制器）
+    float dynamicKp = 0.5f;
+    float dynamicKi = 0.1f;
+    float dynamicKd = 0.05f;
+    float dynamicTargetThreshold = 4.0f;       // 达标误差阈值
+    float dynamicSpeedMultiplier = 1.0f;       // 速度倍率
+    float dynamicMinCoefficient = 1.6f;        // 最小系数
+    float dynamicMaxCoefficient = 2.7f;        // 最大系数
+    float dynamicTransitionSharpness = 5.0f;   // 过渡锐度
+    float dynamicTransitionMidpoint = 0.0f;    // 动态过渡中点
+    int   dynamicMinDataPoints = 2;            // 最小数据量
+    float dynamicErrorTolerance = 3.0f;        // 误差变化容限
+    float dynamicSmoothingFactor = 0.8f;       // 平滑因子
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重
