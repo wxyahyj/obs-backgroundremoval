@@ -298,6 +298,7 @@ if(WIN32)
       src/LogitechMacroConverter.cpp
       src/RecoilPatternManager.cpp
       src/ChrisPIDController.cpp
+      src/DynamicPIDController.cpp
   )
 endif()
 target_compile_options(
