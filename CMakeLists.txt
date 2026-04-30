@@ -299,6 +299,7 @@ if(WIN32)
       src/RecoilPatternManager.cpp
       src/ChrisPIDController.cpp
       src/DynamicPIDController.cpp
+      src/OneEuroFilter.cpp
   )
 endif()
 target_compile_options(

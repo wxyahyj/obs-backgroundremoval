@@ -357,6 +357,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float advTransitionMidpoint;
 		float advOutputSmoothing;
 		float advSpeedFactor;
+		bool useOneEuroFilter;
+		float oneEuroMinCutoff;
+		float oneEuroBeta;
+		float oneEuroDCutoff;
 		int controllerType;
 		std::string makcuPort;
 		int makcuBaudRate;
@@ -430,6 +434,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			screenHeight = 0;
 			derivativeFilterAlpha = 0.2f;
 			targetYOffset = 0.0f;
+			useOneEuroFilter = false;
+			oneEuroMinCutoff = 1.0f;
+			oneEuroBeta = 0.0f;
+			oneEuroDCutoff = 1.0f;
 			controllerType = 0;
 			makcuPort = "COM5";
 			makcuBaudRate = 4000000;
@@ -807,6 +815,19 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "adv_speed_factor_%d", i);
 		obs_property_t *advSpeedProp = obs_properties_add_float_slider(props, propName, "未达标速度因子", 0.1, 1.0, 0.05);
 		obs_property_set_long_description(advSpeedProp, "未达标时P/I的速度因子，0.5=半速");
+
+		// 一欧元滤波器（高级PID可选输出平滑）
+		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
+		obs_properties_add_bool(props, propName, "使用一欧元滤波器");
+		snprintf(propName, sizeof(propName), "one_euro_min_cutoff_%d", i);
+		obs_property_t *oneEuroMinProp = obs_properties_add_float_slider(props, propName, "最小截止频率", 0.1, 10.0, 0.1);
+		obs_property_set_long_description(oneEuroMinProp, "目标静止时的截止频率，越小越平滑");
+		snprintf(propName, sizeof(propName), "one_euro_beta_%d", i);
+		obs_property_t *oneEuroBetaProp = obs_properties_add_float_slider(props, propName, "速度因子", 0.0, 1.0, 0.01);
+		obs_property_set_long_description(oneEuroBetaProp, "速度自适应系数，越大响应越快，0=固定EMA");
+		snprintf(propName, sizeof(propName), "one_euro_d_cutoff_%d", i);
+		obs_property_t *oneEuroDProp = obs_properties_add_float_slider(props, propName, "速度截止频率", 0.1, 10.0, 0.1);
+		obs_property_set_long_description(oneEuroDProp, "速度信号的截止频率，越大越灵敏");
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		obs_property_t *aimSmoothXProp = obs_properties_add_float_slider(props, propName, "X轴平滑度", 0.00, 1.0, 0.01);
@@ -1189,6 +1210,14 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "adv_speed_factor_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "one_euro_min_cutoff_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "one_euro_beta_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "one_euro_d_cutoff_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// 以下参数已迁移到其他页面：
 	// target_y_offset, enable_y_axis_unlock, y_axis_unlock_delay -> 页面2（基础）
 	// prediction_weight_x, prediction_weight_y -> 页面6（预测与滤波）
@@ -1517,6 +1546,15 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.7);
 		snprintf(propName, sizeof(propName), "adv_speed_factor_%d", i);
 		obs_data_set_default_double(settings, propName, 0.5);
+
+		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "one_euro_min_cutoff_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "one_euro_beta_%d", i);
+		obs_data_set_default_double(settings, propName, 0.0);
+		snprintf(propName, sizeof(propName), "one_euro_d_cutoff_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		obs_data_set_default_double(settings, propName, 0.7);
@@ -1916,6 +1954,15 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].advOutputSmoothing = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "adv_speed_factor_%d", i);
 		tf->mouseConfigs[i].advSpeedFactor = (float)obs_data_get_double(settings, propName);
+
+		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
+		tf->mouseConfigs[i].useOneEuroFilter = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "one_euro_min_cutoff_%d", i);
+		tf->mouseConfigs[i].oneEuroMinCutoff = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "one_euro_beta_%d", i);
+		tf->mouseConfigs[i].oneEuroBeta = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "one_euro_d_cutoff_%d", i);
+		tf->mouseConfigs[i].oneEuroDCutoff = (float)obs_data_get_double(settings, propName);
 
 		snprintf(propName, sizeof(propName), "aim_smoothing_x_%d", i);
 		tf->mouseConfigs[i].aimSmoothingX = (float)obs_data_get_double(settings, propName);
@@ -4459,6 +4506,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.advTransitionMidpoint = cfg.advTransitionMidpoint;
 		mcConfig.advOutputSmoothing = cfg.advOutputSmoothing;
 		mcConfig.advSpeedFactor = cfg.advSpeedFactor;
+		mcConfig.useOneEuroFilter = cfg.useOneEuroFilter;
+		mcConfig.oneEuroMinCutoff = cfg.oneEuroMinCutoff;
+		mcConfig.oneEuroBeta = cfg.oneEuroBeta;
+		mcConfig.oneEuroDCutoff = cfg.oneEuroDCutoff;
 		mcConfig.controllerType = static_cast<ControllerType>(cfg.controllerType);
 		mcConfig.makcuPort = cfg.makcuPort;
 		mcConfig.makcuBaudRate = cfg.makcuBaudRate;

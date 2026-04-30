@@ -536,13 +536,13 @@ void AbstractMouseController::tick()
             integralX += fusionErrorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
-            integralX *= 0.9f;
+            integralX = 0.0f;
         }
         if (std::abs(fusionErrorY) >= config.integralDeadZone && shouldIntegrateY) {
             integralY += fusionErrorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
-            integralY *= 0.9f;
+            integralY = 0.0f;
         }
 
         float integralTermX = config.pidI * integralX;
@@ -553,10 +553,24 @@ void AbstractMouseController::tick()
         float pidOutputY = dynamicP * fusionErrorY * speedFactorY + dTermY + integralTermY;
 
         // 输出整体平滑
-        moveX = advPreviousOutputX * (1.0f - config.advOutputSmoothing) + pidOutputX * config.advOutputSmoothing;
-        moveY = advPreviousOutputY * (1.0f - config.advOutputSmoothing) + pidOutputY * config.advOutputSmoothing;
-        advPreviousOutputX = moveX;
-        advPreviousOutputY = moveY;
+        if (config.useOneEuroFilter) {
+            // 一欧元滤波器：自适应平滑
+            oneEuroX.setMinCutoff(config.oneEuroMinCutoff);
+            oneEuroX.setBeta(config.oneEuroBeta);
+            oneEuroX.setDCutoff(config.oneEuroDCutoff);
+            oneEuroY.setMinCutoff(config.oneEuroMinCutoff);
+            oneEuroY.setBeta(config.oneEuroBeta);
+            oneEuroY.setDCutoff(config.oneEuroDCutoff);
+
+            moveX = oneEuroX.filter(pidOutputX, deltaTime);
+            moveY = oneEuroY.filter(pidOutputY, deltaTime);
+        } else {
+            // EMA平滑
+            moveX = advPreviousOutputX * (1.0f - config.advOutputSmoothing) + pidOutputX * config.advOutputSmoothing;
+            moveY = advPreviousOutputY * (1.0f - config.advOutputSmoothing) + pidOutputY * config.advOutputSmoothing;
+            advPreviousOutputX = moveX;
+            advPreviousOutputY = moveY;
+        }
 
         static int logCounter = 0;
         if (++logCounter >= 30) {
@@ -1131,6 +1145,8 @@ void AbstractMouseController::resetPidState()
     advStableCountY = 0;
     advPreviousOutputX = 0.0f;
     advPreviousOutputY = 0.0f;
+    oneEuroX.reset();
+    oneEuroY.reset();
 }
 
 void AbstractMouseController::resetMotionState()

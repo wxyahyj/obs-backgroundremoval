@@ -54,6 +54,10 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.advTransitionMidpoint = 0.3f;
     config.advOutputSmoothing = 0.7f;
     config.advSpeedFactor = 0.5f;
+    config.useOneEuroFilter = false;
+    config.oneEuroMinCutoff = 1.0f;
+    config.oneEuroBeta = 0.0f;
+    config.oneEuroDCutoff = 1.0f;
     config.controllerType = ControllerType::WindowsAPI;
     config.makcuPort = "";
     config.makcuBaudRate = 115200;
@@ -198,6 +202,10 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["advTransitionMidpoint"] = config.advTransitionMidpoint;
     j["advOutputSmoothing"] = config.advOutputSmoothing;
     j["advSpeedFactor"] = config.advSpeedFactor;
+    j["useOneEuroFilter"] = config.useOneEuroFilter;
+    j["oneEuroMinCutoff"] = config.oneEuroMinCutoff;
+    j["oneEuroBeta"] = config.oneEuroBeta;
+    j["oneEuroDCutoff"] = config.oneEuroDCutoff;
     j["controllerType"] = static_cast<int>(config.controllerType);
     j["makcuPort"] = config.makcuPort;
     j["makcuBaudRate"] = config.makcuBaudRate;
@@ -316,6 +324,10 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("advTransitionMidpoint")) config.advTransitionMidpoint = j["advTransitionMidpoint"].get<float>();
         if (j.contains("advOutputSmoothing")) config.advOutputSmoothing = j["advOutputSmoothing"].get<float>();
         if (j.contains("advSpeedFactor")) config.advSpeedFactor = j["advSpeedFactor"].get<float>();
+        if (j.contains("useOneEuroFilter")) config.useOneEuroFilter = j["useOneEuroFilter"].get<bool>();
+        if (j.contains("oneEuroMinCutoff")) config.oneEuroMinCutoff = j["oneEuroMinCutoff"].get<float>();
+        if (j.contains("oneEuroBeta")) config.oneEuroBeta = j["oneEuroBeta"].get<float>();
+        if (j.contains("oneEuroDCutoff")) config.oneEuroDCutoff = j["oneEuroDCutoff"].get<float>();
         if (j.contains("controllerType")) config.controllerType = static_cast<ControllerType>(j["controllerType"].get<int>());
         if (j.contains("makcuPort")) config.makcuPort = j["makcuPort"].get<std::string>();
         if (j.contains("makcuBaudRate")) config.makcuBaudRate = j["makcuBaudRate"].get<int>();

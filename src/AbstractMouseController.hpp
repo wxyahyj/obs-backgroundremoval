@@ -14,6 +14,7 @@
 #include "DerivativePredictor.hpp"
 #include "ChrisPIDController.hpp"
 #include "DynamicPIDController.hpp"
+#include "OneEuroFilter.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -82,6 +83,9 @@ protected:
 
     DynamicPIDAxis dynamicPidX;  // 动态PID X轴控制器
     DynamicPIDAxis dynamicPidY;  // 动态PID Y轴控制器
+
+    OneEuroFilter oneEuroX;  // 高级PID一欧元滤波器X轴
+    OneEuroFilter oneEuroY;  // 高级PID一欧元滤波器Y轴
 
     std::chrono::steady_clock::time_point lastTickTime;
     float deltaTime;

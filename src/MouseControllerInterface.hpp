@@ -101,8 +101,15 @@ struct MouseControllerConfig {
     float advMaxCoefficient = 2.5f;           // 动态阈值最大系数
     float advTransitionSharpness = 5.0f;      // Sigmoid过渡锐度
     float advTransitionMidpoint = 0.3f;       // Sigmoid过渡中点
-    float advOutputSmoothing = 0.7f;          // 输出平滑系数
+    float advOutputSmoothing = 0.7f;          // 输出平滑系数（EMA）
     float advSpeedFactor = 0.5f;              // 未达标时速度因子（半速）
+    
+    // 一欧元滤波器参数（高级PID可选输出平滑）
+    bool useOneEuroFilter = false;            // 是否使用一欧元滤波器替代EMA
+    float oneEuroMinCutoff = 1.0f;            // 最小截止频率
+    float oneEuroBeta = 0.0f;                 // 速度因子（β*|速度|动态调整）
+    float oneEuroDCutoff = 1.0f;              // 微分截止频率（速度平滑）
+    
     ControllerType controllerType = ControllerType::WindowsAPI;
     std::string makcuPort;
     int makcuBaudRate = 115200;
