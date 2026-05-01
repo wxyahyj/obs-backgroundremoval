@@ -15,8 +15,11 @@
 #include <QSlider>
 #include <QGroupBox>
 #include <QScrollArea>
+#include <QSplitter>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+
+class OBSQTDisplay;
 
 class YoloAimSettingsDialog : public QDialog
 {
@@ -64,7 +67,6 @@ private:
     static YoloAimSettingsDialog* dialogInstance;
     
     QWidget* createConfigWidget(int configIndex);
-    QGroupBox* createColorAimGroup(int configIndex);
     QGroupBox* createAutoTriggerGroup(int configIndex);
     QGroupBox* createRecoilGroup(int configIndex);
     QGroupBox* createPredictorGroup(int configIndex);
@@ -73,6 +75,17 @@ private:
     QComboBox* m_sourceCombo;
     QTabWidget* m_tabWidget;
     QComboBox* m_configSelect;
+    OBSQTDisplay* m_previewDisplay;
+    QLabel* m_previewPlaceholder;
+    
+    QCheckBox* m_showDetectionResultsCheck;
+    QCheckBox* m_showFOVCheck;
+    QCheckBox* m_showFOVCircleCheck;
+    QCheckBox* m_showFOVCrossCheck;
+    QSpinBox* m_fovRadiusSpin;
+    QSpinBox* m_fovCrossLineScaleSpin;
+    QSpinBox* m_fovCrossLineThicknessSpin;
+    QSpinBox* m_fovCircleThicknessSpin;
     
     int m_currentConfig;
     QString m_currentSource;
@@ -101,23 +114,6 @@ private:
         QDoubleSpinBox* oneEuroMinCutoffSpin;
         QDoubleSpinBox* oneEuroBetaSpin;
         QDoubleSpinBox* oneEuroDCutoffSpin;
-        
-        QComboBox* detectionModeCombo;
-        QComboBox* presetColorCombo;
-        QSpinBox* colorHMinSpin;
-        QSpinBox* colorHMaxSpin;
-        QSpinBox* colorSMinSpin;
-        QSpinBox* colorSMaxSpin;
-        QSpinBox* colorVMinSpin;
-        QSpinBox* colorVMaxSpin;
-        QSpinBox* morphKernelSizeSpin;
-        QSpinBox* morphIterationsSpin;
-        QSpinBox* subMatrixSizeSpin;
-        QDoubleSpinBox* quantileThresholdSpin;
-        QDoubleSpinBox* templateThresholdSpin;
-        QSpinBox* colorFovWidthSpin;
-        QSpinBox* colorFovHeightSpin;
-        QDoubleSpinBox* minDetectionAreaSpin;
         
         QDoubleSpinBox* aimSmoothingXSpin;
         QDoubleSpinBox* aimSmoothingYSpin;

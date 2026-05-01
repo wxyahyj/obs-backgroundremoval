@@ -311,6 +311,7 @@ if(ENABLE_QT)
     ${CMAKE_PROJECT_NAME}
     PRIVATE
       src/YoloAimSettingsDialog.cpp
+      src/OBSQTDisplay.cpp
   )
 endif()
 target_compile_options(
