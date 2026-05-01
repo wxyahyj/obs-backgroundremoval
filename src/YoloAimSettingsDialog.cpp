@@ -48,9 +48,201 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     , m_previewDisplay(nullptr)
     , m_previewPlaceholder(nullptr)
 {
-    setWindowTitle(QStringLiteral("YOLO自瞄设置"));
+    setWindowTitle(QStringLiteral("🎮 YOLO自瞄系统"));
     setMinimumSize(1000, 600);
     resize(1200, 700);
+    
+    setStyleSheet(R"(
+        QDialog {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #0d0d15, stop:1 #1a1a2e);
+            border: 2px solid #00ffff;
+            border-radius: 10px;
+        }
+        
+        QLabel {
+            color: #e0e0e0;
+            font-size: 13px;
+        }
+        
+        QGroupBox {
+            background-color: rgba(0, 0, 0, 0.2);
+            border: 1px solid #00ffff;
+            border-radius: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            font-weight: bold;
+            color: #00ffff;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 15px;
+            padding: 0 8px;
+            color: #00ffff;
+        }
+        
+        QPushButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1a1a2e, stop:1 #0d0d15);
+            border: 2px solid #00ffff;
+            border-radius: 8px;
+            padding: 10px 25px;
+            color: #00ffff;
+            font-weight: bold;
+            font-size: 13px;
+            min-width: 80px;
+        }
+        
+        QPushButton:hover {
+            background: #00ffff;
+            color: #0d0d15;
+        }
+        
+        QPushButton:pressed {
+            background: #00cccc;
+        }
+        
+        QSpinBox, QDoubleSpinBox {
+            background-color: #1a1a2e;
+            border: 1px solid #00ffff;
+            border-radius: 5px;
+            padding: 6px 10px;
+            color: #00ffff;
+            font-size: 13px;
+            min-width: 80px;
+        }
+        
+        QSpinBox:focus, QDoubleSpinBox:focus {
+            border: 2px solid #00ffff;
+        }
+        
+        QSpinBox::up-button, QDoubleSpinBox::up-button,
+        QSpinBox::down-button, QDoubleSpinBox::down-button {
+            background-color: #1a1a2e;
+            border: none;
+            width: 20px;
+        }
+        
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+            width: 10px;
+            height: 10px;
+        }
+        
+        QComboBox {
+            background-color: #1a1a2e;
+            border: 1px solid #00ffff;
+            border-radius: 5px;
+            padding: 8px 12px;
+            color: #00ffff;
+            font-size: 13px;
+            min-width: 120px;
+        }
+        
+        QComboBox:hover {
+            border: 2px solid #00ffff;
+        }
+        
+        QComboBox::drop-down {
+            border: none;
+            width: 30px;
+        }
+        
+        QComboBox::down-arrow {
+            width: 12px;
+            height: 12px;
+        }
+        
+        QComboBox QAbstractItemView {
+            background-color: #1a1a2e;
+            border: 1px solid #00ffff;
+            color: #00ffff;
+            selection-background-color: #00ffff;
+            selection-color: #0d0d15;
+        }
+        
+        QCheckBox {
+            color: #e0e0e0;
+            spacing: 8px;
+            font-size: 13px;
+        }
+        
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            border: 2px solid #00ffff;
+            background-color: #1a1a2e;
+        }
+        
+        QCheckBox::indicator:checked {
+            background-color: #00ffff;
+            border-color: #00ffff;
+        }
+        
+        QCheckBox::indicator:hover {
+            border: 2px solid #00ffff;
+        }
+        
+        QTabWidget::pane {
+            border: 1px solid #00ffff;
+            border-radius: 8px;
+            background-color: rgba(0, 0, 0, 0.3);
+        }
+        
+        QTabBar::tab {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-bottom: none;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            padding: 10px 20px;
+            color: #888888;
+            font-size: 13px;
+            margin-right: 2px;
+        }
+        
+        QTabBar::tab:hover {
+            color: #00ffff;
+            border-color: #00ffff;
+        }
+        
+        QTabBar::tab:selected {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #00ffff, stop:1 #00cccc);
+            color: #0d0d15;
+            font-weight: bold;
+        }
+        
+        QScrollArea {
+            background-color: transparent;
+            border: none;
+        }
+        
+        QScrollBar:vertical {
+            background: #0d0d15;
+            width: 10px;
+            border-radius: 5px;
+        }
+        
+        QScrollBar::handle:vertical {
+            background: #00ffff;
+            border-radius: 5px;
+            min-height: 30px;
+        }
+        
+        QScrollBar::handle:vertical:hover {
+            background: #00cccc;
+        }
+        
+        QSplitter::handle {
+            background: #00ffff;
+        }
+        
+        QDialogButtonBox QPushButton {
+            min-width: 90px;
+        }
+    )");
     
     setupUI();
     refreshSourceList();
@@ -92,18 +284,19 @@ void YoloAimSettingsDialog::setupUI()
     QVBoxLayout* previewLayout = new QVBoxLayout(previewContainer);
     previewLayout->setContentsMargins(0, 0, 0, 0);
     
-    QLabel* previewLabel = new QLabel(QStringLiteral("视频预览"), this);
+    QLabel* previewLabel = new QLabel(QStringLiteral("📹 视频预览"), this);
     previewLabel->setAlignment(Qt::AlignCenter);
+    previewLabel->setStyleSheet("color: #00ffff; font-size: 14px; font-weight: bold; padding: 5px;");
     previewLayout->addWidget(previewLabel);
     
     m_previewDisplay = new OBSQTDisplay(this);
     m_previewDisplay->setMinimumSize(320, 180);
-    m_previewDisplay->SetBackgroundColor(0x1A1A1A);
+    m_previewDisplay->SetBackgroundColor(0x0d0d15);
     previewLayout->addWidget(m_previewDisplay, 1);
     
     m_previewPlaceholder = new QLabel(QStringLiteral("请选择视频源"), this);
     m_previewPlaceholder->setAlignment(Qt::AlignCenter);
-    m_previewPlaceholder->setStyleSheet("background-color: #1A1A1A; color: #888888; font-size: 16px;");
+    m_previewPlaceholder->setStyleSheet("background-color: #0d0d15; color: #00ffff; font-size: 16px; border: 2px solid #00ffff; border-radius: 10px;");
     m_previewPlaceholder->setMinimumSize(320, 180);
     m_previewPlaceholder->hide();
     previewLayout->addWidget(m_previewPlaceholder, 1);
@@ -166,13 +359,13 @@ void YoloAimSettingsDialog::setupModelPage()
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* modelGroup = new QGroupBox(QStringLiteral("模型设置"), page);
+    QGroupBox* modelGroup = new QGroupBox(QStringLiteral("📦 模型设置"), page);
     QFormLayout* modelLayout = new QFormLayout(modelGroup);
     
     layout->addWidget(modelGroup);
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("模型"));
+    m_tabWidget->addTab(page, QStringLiteral("📦 模型"));
 }
 
 void YoloAimSettingsDialog::setupVisualPage()
@@ -180,7 +373,7 @@ void YoloAimSettingsDialog::setupVisualPage()
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* displayGroup = new QGroupBox(QStringLiteral("显示设置"), page);
+    QGroupBox* displayGroup = new QGroupBox(QStringLiteral("👁 显示设置"), page);
     QGridLayout* displayLayout = new QGridLayout(displayGroup);
     
     int row = 0;
@@ -226,7 +419,7 @@ void YoloAimSettingsDialog::setupVisualPage()
     layout->addWidget(displayGroup);
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("视觉"));
+    m_tabWidget->addTab(page, QStringLiteral("👁 视觉"));
 }
 
 void YoloAimSettingsDialog::setupBasicPage()
@@ -240,7 +433,7 @@ void YoloAimSettingsDialog::setupBasicPage()
         layout->addWidget(configWidget);
     }
     
-    m_tabWidget->addTab(page, QStringLiteral("基础设置"));
+    m_tabWidget->addTab(page, QStringLiteral("⚙️ 基础"));
 }
 
 void YoloAimSettingsDialog::setupAdvancedPIDPage()
@@ -248,7 +441,7 @@ void YoloAimSettingsDialog::setupAdvancedPIDPage()
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* pidGroup = new QGroupBox(QStringLiteral("高级PID参数"), page);
+    QGroupBox* pidGroup = new QGroupBox(QStringLiteral("⚡ PID参数"), page);
     QGridLayout* pidLayout = new QGridLayout(pidGroup);
     
     int row = 0;
@@ -298,7 +491,7 @@ void YoloAimSettingsDialog::setupAdvancedPIDPage()
     
     layout->addWidget(pidGroup);
     
-    QGroupBox* advGroup = new QGroupBox(QStringLiteral("高级参数"), page);
+    QGroupBox* advGroup = new QGroupBox(QStringLiteral("🔧 高级参数"), page);
     QGridLayout* advLayout = new QGridLayout(advGroup);
     
     row = 0;
@@ -338,7 +531,7 @@ void YoloAimSettingsDialog::setupAdvancedPIDPage()
     
     layout->addWidget(advGroup);
     
-    QGroupBox* oneEuroGroup = new QGroupBox(QStringLiteral("One Euro Filter"), page);
+    QGroupBox* oneEuroGroup = new QGroupBox(QStringLiteral("💫 One Euro Filter"), page);
     QHBoxLayout* oneEuroLayout = new QHBoxLayout(oneEuroGroup);
     
     m_configWidgets[0].useOneEuroFilterCheck = new QCheckBox(QStringLiteral("启用"), page);
@@ -365,7 +558,7 @@ void YoloAimSettingsDialog::setupAdvancedPIDPage()
     
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("高级PID"));
+    m_tabWidget->addTab(page, QStringLiteral("⚡ 高级PID"));
 }
 
 void YoloAimSettingsDialog::setupTriggerPage()
@@ -381,7 +574,7 @@ void YoloAimSettingsDialog::setupTriggerPage()
     
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("扳机"));
+    m_tabWidget->addTab(page, QStringLiteral("🎯 扳机"));
 }
 
 void YoloAimSettingsDialog::setupTrackingPage()
@@ -389,13 +582,13 @@ void YoloAimSettingsDialog::setupTrackingPage()
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* trackingGroup = new QGroupBox(QStringLiteral("追踪设置"), page);
+    QGroupBox* trackingGroup = new QGroupBox(QStringLiteral("📍 追踪设置"), page);
     QFormLayout* trackingLayout = new QFormLayout(trackingGroup);
     
     layout->addWidget(trackingGroup);
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("追踪"));
+    m_tabWidget->addTab(page, QStringLiteral("📍 追踪"));
 }
 
 void YoloAimSettingsDialog::setupPredictorPage()
@@ -408,7 +601,7 @@ void YoloAimSettingsDialog::setupPredictorPage()
     
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("预测"));
+    m_tabWidget->addTab(page, QStringLiteral("🔮 预测"));
 }
 
 void YoloAimSettingsDialog::setupBezierPage()
@@ -421,7 +614,7 @@ void YoloAimSettingsDialog::setupBezierPage()
     
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("贝塞尔"));
+    m_tabWidget->addTab(page, QStringLiteral("🌊 贝塞尔"));
 }
 
 QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
@@ -429,7 +622,7 @@ QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
     QWidget* widget = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(widget);
     
-    QGroupBox* basicGroup = new QGroupBox(QStringLiteral("基础参数"), widget);
+    QGroupBox* basicGroup = new QGroupBox(QStringLiteral("⚙️ 基础参数"), widget);
     QGridLayout* basicLayout = new QGridLayout(basicGroup);
     
     int row = 0;
@@ -513,7 +706,7 @@ QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createAutoTriggerGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("自动扳机"), this);
+    QGroupBox* group = new QGroupBox(QStringLiteral("🎯 自动扳机"), this);
     group->setCheckable(true);
     group->setChecked(false);
     
@@ -558,7 +751,7 @@ QGroupBox* YoloAimSettingsDialog::createAutoTriggerGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createRecoilGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("后坐力控制"), this);
+    QGroupBox* group = new QGroupBox(QStringLiteral("💥 后坐力控制"), this);
     group->setCheckable(true);
     group->setChecked(false);
     
@@ -588,7 +781,7 @@ QGroupBox* YoloAimSettingsDialog::createRecoilGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createPredictorGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("预测器"), this);
+    QGroupBox* group = new QGroupBox(QStringLiteral("🔮 预测器"), this);
     group->setCheckable(true);
     group->setChecked(true);
     
@@ -620,7 +813,7 @@ QGroupBox* YoloAimSettingsDialog::createPredictorGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createBezierGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("贝塞尔曲线移动"), this);
+    QGroupBox* group = new QGroupBox(QStringLiteral("🌊 贝塞尔曲线"), this);
     group->setCheckable(true);
     group->setChecked(false);
     
