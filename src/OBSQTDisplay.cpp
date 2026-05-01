@@ -72,8 +72,13 @@ void OBSQTDisplay::CreateDisplay()
     info.format = GS_BGRA;
     info.zsformat = GS_ZS_NONE;
 
-#ifdef _WIN32
+#if defined(_WIN32)
     info.window.hwnd = (HWND)winId();
+#elif defined(__APPLE__)
+    info.window.view = (void*)winId();
+#else
+    info.window.id = winId();
+    info.window.display = nullptr;
 #endif
 
     display = obs_display_create(&info, backgroundColor);

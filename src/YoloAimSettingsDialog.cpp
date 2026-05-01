@@ -55,8 +55,12 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     setupUI();
     refreshSourceList();
     
-    m_previewDisplay->hide();
-    m_previewPlaceholder->show();
+    if (m_previewDisplay) {
+        m_previewDisplay->hide();
+    }
+    if (m_previewPlaceholder) {
+        m_previewPlaceholder->show();
+    }
 }
 
 YoloAimSettingsDialog::~YoloAimSettingsDialog()
