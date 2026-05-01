@@ -4986,8 +4986,16 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	gs_blend_state_push();
 	gs_reset_blend_state();
 
-	// 只渲染源画面，100%保证不会黑屏！检测框、FOV、标签只在悬浮窗显示
+	// 渲染源画面
 	obs_source_process_filter_end(tf->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+
+	// 在源画面上渲染检测框和FOV
+	if (tf->showDetectionResults) {
+		renderDetectionBoxes(tf.get(), width, height);
+	}
+	if (tf->showFOV) {
+		renderFOV(tf.get(), width, height);
+	}
 
 	gs_blend_state_pop();
 
