@@ -4037,21 +4037,14 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 		float w = det.width * frameWidth;
 		float h = det.height * frameHeight;
 
-		// 绘制完整的矩形边框（4条边）
+		// 使用 GS_LINESTRIP 绘制闭合矩形（5个顶点）
 		gs_render_start(true);
-		// 上边
-		gs_vertex2f(x, y);
-		gs_vertex2f(x + w, y);
-		// 下边
-		gs_vertex2f(x, y + h);
-		gs_vertex2f(x + w, y + h);
-		// 左边
-		gs_vertex2f(x, y);
-		gs_vertex2f(x, y + h);
-		// 右边
-		gs_vertex2f(x + w, y);
-		gs_vertex2f(x + w, y + h);
-		gs_render_stop(GS_LINES);
+		gs_vertex2f(x, y);         // 左上
+		gs_vertex2f(x + w, y);     // 右上
+		gs_vertex2f(x + w, y + h); // 右下
+		gs_vertex2f(x, y + h);     // 左下
+		gs_vertex2f(x, y);         // 回到左上，闭合
+		gs_render_stop(GS_LINESTRIP);
 	}
 
 	gs_technique_end_pass(tech);
