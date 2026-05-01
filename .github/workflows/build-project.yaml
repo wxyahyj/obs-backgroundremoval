@@ -97,6 +97,16 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Install Qt6 🎯
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.0'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'msvc2019_64'
+          modules: 'qtbase qtwidgets'
+          cache: true
+
       - name: Set Up Environment 🔧
         id: setup
         run: |
@@ -162,6 +172,16 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Install Qt6 🎯
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.0'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'msvc2019_64'
+          modules: 'qtbase qtwidgets'
+          cache: true
 
       - name: Set Up Environment 🔧
         id: setup
@@ -233,6 +253,16 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Install Qt6 🎯
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.0'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'msvc2019_64'
+          modules: 'qtbase qtwidgets'
+          cache: true
 
       - name: Set Up Environment 🔧
         id: setup

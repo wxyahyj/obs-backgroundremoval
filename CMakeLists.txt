@@ -4,8 +4,8 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 
 project(${_name} VERSION ${_version})
 
-option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
-option(ENABLE_QT "Use Qt functionality" OFF)
+option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
+option(ENABLE_QT "Use Qt functionality" ON)
 option(ENABLE_CUDA "Enable CUDA support for GPU texture preprocessing" ON)
 
 set(VCPKG_TARGET_TRIPLET "" CACHE STRING "Vcpkg target triplet to use")
@@ -27,7 +27,7 @@ if(ENABLE_FRONTEND_API)
 endif()
 
 if(ENABLE_QT)
-  find_package(Qt6 COMPONENTS Widgets Core)
+  find_package(Qt6 COMPONENTS Widgets Core REQUIRED)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
@@ -37,6 +37,9 @@ if(ENABLE_QT)
     ${CMAKE_PROJECT_NAME}
     PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON
   )
+  if(WIN32)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_QT)
+  endif()
 endif()
 
 if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
@@ -300,6 +303,14 @@ if(WIN32)
       src/ChrisPIDController.cpp
       src/DynamicPIDController.cpp
       src/OneEuroFilter.cpp
+  )
+endif()
+
+if(ENABLE_QT)
+  target_sources(
+    ${CMAKE_PROJECT_NAME}
+    PRIVATE
+      src/YoloAimSettingsDialog.cpp
   )
 endif()
 target_compile_options(

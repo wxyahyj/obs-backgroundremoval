@@ -31,9 +31,34 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 extern struct obs_source_info yolo_detector_filter_info;
 
+#ifdef ENABLE_QT
+#include <obs-frontend-api.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void YoloAimSettingsDialog_Show();
+
+#ifdef __cplusplus
+}
+#endif
+
+static void on_tools_menu_clicked(void *data)
+{
+	UNUSED_PARAMETER(data);
+	YoloAimSettingsDialog_Show();
+}
+
+#endif
+
 bool obs_module_load(void)
 {
 	obs_register_source(&yolo_detector_filter_info);
+	
+#ifdef ENABLE_QT
+	obs_frontend_add_tools_menu_item(obs_module_text("YOLO自瞄设置"), on_tools_menu_clicked, NULL);
+#endif
 	
 	obs_log(LOG_INFO, "YOLO Detector Plugin loaded successfully (version %s)", PLUGIN_VERSION);
 
