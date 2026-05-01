@@ -24,7 +24,8 @@ YoloAimSettingsDialog* YoloAimSettingsDialog::dialogInstance = nullptr;
 YoloAimSettingsDialog* YoloAimSettingsDialog::instance()
 {
     if (!dialogInstance) {
-        QMainWindow* mainWindow = (QMainWindow*)obs_frontend_get_main_window();
+        void* obsWindow = obs_frontend_get_main_window();
+        QMainWindow* mainWindow = obsWindow ? reinterpret_cast<QMainWindow*>(obsWindow) : nullptr;
         dialogInstance = new YoloAimSettingsDialog(mainWindow);
     }
     return dialogInstance;

@@ -104,7 +104,6 @@ jobs:
           host: 'windows'
           target: 'desktop'
           arch: 'msvc2019_64'
-          modules: 'qtbase qtwidgets'
           cache: true
 
       - name: Set Up Environment 🔧
@@ -180,7 +179,6 @@ jobs:
           host: 'windows'
           target: 'desktop'
           arch: 'msvc2019_64'
-          modules: 'qtbase qtwidgets'
           cache: true
 
       - name: Set Up Environment 🔧
@@ -261,7 +259,6 @@ jobs:
           host: 'windows'
           target: 'desktop'
           arch: 'msvc2019_64'
-          modules: 'qtbase qtwidgets'
           cache: true
 
       - name: Set Up Environment 🔧
