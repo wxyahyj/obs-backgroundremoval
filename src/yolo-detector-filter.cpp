@@ -4020,8 +4020,16 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
 	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
 
+	struct vec4 color;
+	float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
+	float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
+	float b = (filter->bboxColor & 0xFF) / 255.0f;
+	float a = ((filter->bboxColor >> 24) & 0xFF) / 255.0f;
+	vec4_set(&color, r, g, b, a);
+
 	gs_technique_begin(tech);
 	gs_technique_begin_pass(tech, 0);
+	gs_effect_set_vec4(colorParam, &color);
 
 	for (const auto& det : filter->detections) {
 		float x = det.x * frameWidth;
@@ -4029,20 +4037,20 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 		float w = det.width * frameWidth;
 		float h = det.height * frameHeight;
 
-		struct vec4 color;
-		float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
-		float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
-		float b = (filter->bboxColor & 0xFF) / 255.0f;
-		float a = ((filter->bboxColor >> 24) & 0xFF) / 255.0f;
-		vec4_set(&color, r, g, b, a);
-		gs_effect_set_vec4(colorParam, &color);
-
+		// 绘制完整的矩形边框（4条边）
 		gs_render_start(true);
+		// 上边
 		gs_vertex2f(x, y);
 		gs_vertex2f(x + w, y);
-		gs_vertex2f(x + w, y + h);
+		// 下边
 		gs_vertex2f(x, y + h);
+		gs_vertex2f(x + w, y + h);
+		// 左边
 		gs_vertex2f(x, y);
+		gs_vertex2f(x, y + h);
+		// 右边
+		gs_vertex2f(x + w, y);
+		gs_vertex2f(x + w, y + h);
 		gs_render_stop(GS_LINES);
 	}
 
