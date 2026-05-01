@@ -3733,24 +3733,40 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					bool gpuInferenceSuccess = false;
 #ifdef HAVE_CUDA
 					if (filter->yoloModel->isGpuTextureSupported() && !gpuInferenceSuccess) {
-						newDetections = filter->yoloModel->inferenceFromTexture(
-							filter->cachedD3D11Texture,
-							filter->gpuTextureWidth,
-							filter->gpuTextureHeight,
-							fullWidth, fullHeight
-						);
-						gpuInferenceSuccess = true;
+						try {
+							newDetections = filter->yoloModel->inferenceFromTexture(
+								filter->cachedD3D11Texture,
+								filter->gpuTextureWidth,
+								filter->gpuTextureHeight,
+								fullWidth, fullHeight
+							);
+							gpuInferenceSuccess = true;
+						} catch (const std::exception& e) {
+							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference failed: %s, falling back to CPU", e.what());
+							gpuInferenceSuccess = false;
+						} catch (...) {
+							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference unknown error, falling back to CPU");
+							gpuInferenceSuccess = false;
+						}
 					}
 #endif
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 					if (filter->yoloModel->isDmlTextureSupported() && !gpuInferenceSuccess) {
-						newDetections = filter->yoloModel->inferenceFromTextureDml(
-							filter->cachedD3D11Texture,
-							filter->gpuTextureWidth,
-							filter->gpuTextureHeight,
-							fullWidth, fullHeight
-						);
-						gpuInferenceSuccess = true;
+						try {
+							newDetections = filter->yoloModel->inferenceFromTextureDml(
+								filter->cachedD3D11Texture,
+								filter->gpuTextureWidth,
+								filter->gpuTextureHeight,
+								fullWidth, fullHeight
+							);
+							gpuInferenceSuccess = true;
+						} catch (const std::exception& e) {
+							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference failed: %s, falling back to CPU", e.what());
+							gpuInferenceSuccess = false;
+						} catch (...) {
+							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference unknown error, falling back to CPU");
+							gpuInferenceSuccess = false;
+						}
 					}
 #endif
 					if (!gpuInferenceSuccess) {
