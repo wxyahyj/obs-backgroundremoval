@@ -3727,17 +3727,41 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (filter->yoloModel) {
 #ifdef _WIN32
-				// ⚠️ GPU纹理推理已禁用
-				// 原因：全屏游戏切换时GPU纹理可能变得无效，导致崩溃
-				// 解决方案：使用CPU路径，纹理数据已通过gs_stagesurface_map复制到CPU
-				// TODO: 实现安全的GPU纹理生命周期管理
-				(void)filter->useGpuTextureInference;  // 避免未使用警告
-				(void)filter->cachedD3D11Texture;
-				(void)filter->gpuTextureWidth;
-				(void)filter->gpuTextureHeight;
-				
-				// CPU推理路径
+#if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
+				if (filter->useGpuTextureInference && filter->cachedD3D11Texture &&
+				    filter->gpuTextureWidth > 0 && filter->gpuTextureHeight > 0) {
+					bool gpuInferenceSuccess = false;
+#ifdef HAVE_CUDA
+					if (filter->yoloModel->isGpuTextureSupported() && !gpuInferenceSuccess) {
+						newDetections = filter->yoloModel->inferenceFromTexture(
+							filter->cachedD3D11Texture,
+							filter->gpuTextureWidth,
+							filter->gpuTextureHeight,
+							fullWidth, fullHeight
+						);
+						gpuInferenceSuccess = true;
+					}
+#endif
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+					if (filter->yoloModel->isDmlTextureSupported() && !gpuInferenceSuccess) {
+						newDetections = filter->yoloModel->inferenceFromTextureDml(
+							filter->cachedD3D11Texture,
+							filter->gpuTextureWidth,
+							filter->gpuTextureHeight,
+							fullWidth, fullHeight
+						);
+						gpuInferenceSuccess = true;
+					}
+#endif
+					if (!gpuInferenceSuccess) {
+						newDetections = filter->yoloModel->inference(inferenceFrame);
+					}
+				} else {
+					newDetections = filter->yoloModel->inference(inferenceFrame);
+				}
+#else
 				newDetections = filter->yoloModel->inference(inferenceFrame);
+#endif
 #else
 				newDetections = filter->yoloModel->inference(inferenceFrame);
 #endif
