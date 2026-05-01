@@ -44,8 +44,10 @@ void OBSQTDisplay::SetSource(obs_source_t *newSource)
     source = newSource;
 
     if (source) {
-        obs_source_addref(source);
-        obs_source_inc_showing(source);
+        source = obs_source_get_ref(source);
+        if (source) {
+            obs_source_inc_showing(source);
+        }
     }
 }
 
