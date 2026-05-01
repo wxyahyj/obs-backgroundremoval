@@ -544,6 +544,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 void inferenceThreadWorker(yolo_detector_filter *filter);
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
+static void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
@@ -4061,7 +4062,8 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 
 	float centerX = frameWidth / 2.0f;
 	float centerY = frameHeight / 2.0f;
-	float radius = static_cast<float>(filter->fovRadius);
+	float radius = filter->useDynamicFOV ? filter->currentFovRadius : static_cast<float>(filter->fovRadius);
+	float crossLineLength = static_cast<float>(filter->fovCrossLineScale);
 
 	struct vec4 color;
 	float r = ((filter->fovColor >> 16) & 0xFF) / 255.0f;
@@ -4074,25 +4076,96 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 	gs_technique_begin_pass(tech, 0);
 	gs_effect_set_vec4(colorParam, &color);
 
+	// 渲染十字线
+	if (filter->showFOVCross) {
+		gs_render_start(true);
+		gs_vertex2f(centerX - crossLineLength, centerY);
+		gs_vertex2f(centerX + crossLineLength, centerY);
+		gs_vertex2f(centerX, centerY - crossLineLength);
+		gs_vertex2f(centerX, centerY + crossLineLength);
+		gs_render_stop(GS_LINES);
+	}
+
+	// 渲染圆圈
+	if (filter->showFOVCircle) {
+		const int circleSegments = 64;
+		gs_render_start(true);
+		for (int i = 0; i <= circleSegments; ++i) {
+			float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(circleSegments);
+			float x = centerX + radius * cosf(angle);
+			float y = centerY + radius * sinf(angle);
+			gs_vertex2f(x, y);
+		}
+		gs_render_stop(GS_LINESTRIP);
+	}
+
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+}
+
+static void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+{
+	if (!filter->useRegion) {
+		return;
+	}
+
+	gs_effect_t *solid = filter->solidEffect;
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	// 计算区域边界（归一化坐标转像素坐标）
+	float x = static_cast<float>(filter->regionX);
+	float y = static_cast<float>(filter->regionY);
+	float w = static_cast<float>(filter->regionWidth);
+	float h = static_cast<float>(filter->regionHeight);
+
+	// 使用黄色虚线
+	struct vec4 color;
+	vec4_set(&color, 1.0f, 1.0f, 0.0f, 1.0f); // 黄色
+
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+	gs_effect_set_vec4(colorParam, &color);
+
+	// 绘制虚线矩形边框
+	float dashLength = 10.0f; // 虚线段长度
+	float gapLength = 5.0f;   // 间隔长度
+
+	// 上边
 	gs_render_start(true);
-
-	gs_vertex2f(centerX - radius, centerY);
-	gs_vertex2f(centerX + radius, centerY);
-
-	gs_vertex2f(centerX, centerY - radius);
-	gs_vertex2f(centerX, centerY + radius);
-
+	for (float px = x; px < x + w; px += dashLength + gapLength) {
+		float endX = std::min(px + dashLength, x + w);
+		gs_vertex2f(px, y);
+		gs_vertex2f(endX, y);
+	}
 	gs_render_stop(GS_LINES);
 
-	const int circleSegments = 64;
+	// 下边
 	gs_render_start(true);
-	for (int i = 0; i <= circleSegments; ++i) {
-		float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(circleSegments);
-		float x = centerX + radius * cosf(angle);
-		float y = centerY + radius * sinf(angle);
-		gs_vertex2f(x, y);
+	for (float px = x; px < x + w; px += dashLength + gapLength) {
+		float endX = std::min(px + dashLength, x + w);
+		gs_vertex2f(px, y + h);
+		gs_vertex2f(endX, y + h);
 	}
-	gs_render_stop(GS_LINESTRIP);
+	gs_render_stop(GS_LINES);
+
+	// 左边
+	gs_render_start(true);
+	for (float py = y; py < y + h; py += dashLength + gapLength) {
+		float endY = std::min(py + dashLength, y + h);
+		gs_vertex2f(x, py);
+		gs_vertex2f(x, endY);
+	}
+	gs_render_stop(GS_LINES);
+
+	// 右边
+	gs_render_start(true);
+	for (float py = y; py < y + h; py += dashLength + gapLength) {
+		float endY = std::min(py + dashLength, y + h);
+		gs_vertex2f(x + w, py);
+		gs_vertex2f(x + w, endY);
+	}
+	gs_render_stop(GS_LINES);
 
 	gs_technique_end_pass(tech);
 	gs_technique_end(tech);
@@ -4995,6 +5068,9 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
+	}
+	if (tf->useRegion) {
+		renderRegion(tf.get(), width, height);
 	}
 
 	gs_blend_state_pop();
