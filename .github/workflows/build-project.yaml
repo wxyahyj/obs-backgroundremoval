@@ -100,10 +100,10 @@ jobs:
       - name: Install Qt6 🎯
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.0'
+          version: '6.8.3'
           host: 'windows'
           target: 'desktop'
-          arch: 'msvc2019_64'
+          arch: 'win64_msvc2022_64'
           cache: true
 
       - name: Set Up Environment 🔧
@@ -175,10 +175,10 @@ jobs:
       - name: Install Qt6 🎯
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.0'
+          version: '6.8.3'
           host: 'windows'
           target: 'desktop'
-          arch: 'msvc2019_64'
+          arch: 'win64_msvc2022_64'
           cache: true
 
       - name: Set Up Environment 🔧
@@ -255,10 +255,10 @@ jobs:
       - name: Install Qt6 🎯
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.0'
+          version: '6.8.3'
           host: 'windows'
           target: 'desktop'
-          arch: 'msvc2019_64'
+          arch: 'win64_msvc2022_64'
           cache: true
 
       - name: Set Up Environment 🔧
