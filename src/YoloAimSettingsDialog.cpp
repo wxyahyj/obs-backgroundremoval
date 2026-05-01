@@ -48,6 +48,8 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     , m_previewDisplay(nullptr)
     , m_previewPlaceholder(nullptr)
 {
+    initAllConfigWidgetStructs();
+    
     setWindowTitle(QStringLiteral("🎮 YOLO自瞄系统"));
     setMinimumSize(1000, 600);
     resize(1200, 700);
@@ -55,8 +57,8 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     setStyleSheet(R"(
         QDialog {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #0d0d15, stop:1 #1a1a2e);
-            border: 2px solid #00ffff;
+                stop:0 #0a0a12, stop:1 #1a1025);
+            border: 2px solid #8b5cf6;
             border-radius: 10px;
         }
         
@@ -66,60 +68,60 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
         }
         
         QGroupBox {
-            background-color: rgba(0, 0, 0, 0.2);
-            border: 1px solid #00ffff;
+            background-color: rgba(139, 92, 246, 0.1);
+            border: 1px solid #8b5cf6;
             border-radius: 8px;
             margin-top: 12px;
             padding-top: 12px;
             font-weight: bold;
-            color: #00ffff;
+            color: #a78bfa;
         }
         
         QGroupBox::title {
             subcontrol-origin: margin;
             left: 15px;
             padding: 0 8px;
-            color: #00ffff;
+            color: #a78bfa;
         }
         
         QPushButton {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #1a1a2e, stop:1 #0d0d15);
-            border: 2px solid #00ffff;
+                stop:0 #1a1025, stop:1 #0a0a12);
+            border: 2px solid #8b5cf6;
             border-radius: 8px;
             padding: 10px 25px;
-            color: #00ffff;
+            color: #c4b5fd;
             font-weight: bold;
             font-size: 13px;
             min-width: 80px;
         }
         
         QPushButton:hover {
-            background: #00ffff;
-            color: #0d0d15;
+            background: #8b5cf6;
+            color: #0a0a12;
         }
         
         QPushButton:pressed {
-            background: #00cccc;
+            background: #7c3aed;
         }
         
         QSpinBox, QDoubleSpinBox {
-            background-color: #1a1a2e;
-            border: 1px solid #00ffff;
+            background-color: #1a1025;
+            border: 1px solid #8b5cf6;
             border-radius: 5px;
             padding: 6px 10px;
-            color: #00ffff;
+            color: #c4b5fd;
             font-size: 13px;
             min-width: 80px;
         }
         
         QSpinBox:focus, QDoubleSpinBox:focus {
-            border: 2px solid #00ffff;
+            border: 2px solid #a78bfa;
         }
         
         QSpinBox::up-button, QDoubleSpinBox::up-button,
         QSpinBox::down-button, QDoubleSpinBox::down-button {
-            background-color: #1a1a2e;
+            background-color: #1a1025;
             border: none;
             width: 20px;
         }
@@ -130,17 +132,17 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
         }
         
         QComboBox {
-            background-color: #1a1a2e;
-            border: 1px solid #00ffff;
+            background-color: #1a1025;
+            border: 1px solid #8b5cf6;
             border-radius: 5px;
             padding: 8px 12px;
-            color: #00ffff;
+            color: #c4b5fd;
             font-size: 13px;
             min-width: 120px;
         }
         
         QComboBox:hover {
-            border: 2px solid #00ffff;
+            border: 2px solid #a78bfa;
         }
         
         QComboBox::drop-down {
@@ -154,11 +156,11 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
         }
         
         QComboBox QAbstractItemView {
-            background-color: #1a1a2e;
-            border: 1px solid #00ffff;
-            color: #00ffff;
-            selection-background-color: #00ffff;
-            selection-color: #0d0d15;
+            background-color: #1a1025;
+            border: 1px solid #8b5cf6;
+            color: #c4b5fd;
+            selection-background-color: #8b5cf6;
+            selection-color: #0a0a12;
         }
         
         QCheckBox {
@@ -171,27 +173,27 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
             width: 18px;
             height: 18px;
             border-radius: 4px;
-            border: 2px solid #00ffff;
-            background-color: #1a1a2e;
+            border: 2px solid #8b5cf6;
+            background-color: #1a1025;
         }
         
         QCheckBox::indicator:checked {
-            background-color: #00ffff;
-            border-color: #00ffff;
+            background-color: #8b5cf6;
+            border-color: #8b5cf6;
         }
         
         QCheckBox::indicator:hover {
-            border: 2px solid #00ffff;
+            border: 2px solid #a78bfa;
         }
         
         QTabWidget::pane {
-            border: 1px solid #00ffff;
+            border: 1px solid #8b5cf6;
             border-radius: 8px;
-            background-color: rgba(0, 0, 0, 0.3);
+            background-color: rgba(139, 92, 246, 0.05);
         }
         
         QTabBar::tab {
-            background: #1a1a2e;
+            background: #1a1025;
             border: 1px solid #333;
             border-bottom: none;
             border-top-left-radius: 8px;
@@ -203,14 +205,14 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
         }
         
         QTabBar::tab:hover {
-            color: #00ffff;
-            border-color: #00ffff;
+            color: #a78bfa;
+            border-color: #8b5cf6;
         }
         
         QTabBar::tab:selected {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #00ffff, stop:1 #00cccc);
-            color: #0d0d15;
+                stop:0 #8b5cf6, stop:1 #7c3aed);
+            color: #0a0a12;
             font-weight: bold;
         }
         
@@ -220,23 +222,23 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
         }
         
         QScrollBar:vertical {
-            background: #0d0d15;
+            background: #0a0a12;
             width: 10px;
             border-radius: 5px;
         }
         
         QScrollBar::handle:vertical {
-            background: #00ffff;
+            background: #8b5cf6;
             border-radius: 5px;
             min-height: 30px;
         }
         
         QScrollBar::handle:vertical:hover {
-            background: #00cccc;
+            background: #a78bfa;
         }
         
         QSplitter::handle {
-            background: #00ffff;
+            background: #8b5cf6;
         }
         
         QDialogButtonBox QPushButton {
@@ -286,7 +288,7 @@ void YoloAimSettingsDialog::setupUI()
     
     QLabel* previewLabel = new QLabel(QStringLiteral("📹 视频预览"), this);
     previewLabel->setAlignment(Qt::AlignCenter);
-    previewLabel->setStyleSheet("color: #00ffff; font-size: 14px; font-weight: bold; padding: 5px;");
+    previewLabel->setStyleSheet("color: #a78bfa; font-size: 14px; font-weight: bold; padding: 5px;");
     previewLayout->addWidget(previewLabel);
     
     m_previewDisplay = new OBSQTDisplay(this);
@@ -296,7 +298,7 @@ void YoloAimSettingsDialog::setupUI()
     
     m_previewPlaceholder = new QLabel(QStringLiteral("请选择视频源"), this);
     m_previewPlaceholder->setAlignment(Qt::AlignCenter);
-    m_previewPlaceholder->setStyleSheet("background-color: #0d0d15; color: #00ffff; font-size: 16px; border: 2px solid #00ffff; border-radius: 10px;");
+    m_previewPlaceholder->setStyleSheet("background-color: #0a0a12; color: #a78bfa; font-size: 16px; border: 2px solid #8b5cf6; border-radius: 10px;");
     m_previewPlaceholder->setMinimumSize(320, 180);
     m_previewPlaceholder->hide();
     previewLayout->addWidget(m_previewPlaceholder, 1);
@@ -434,6 +436,80 @@ void YoloAimSettingsDialog::setupBasicPage()
     }
     
     m_tabWidget->addTab(page, QStringLiteral("⚙️ 基础"));
+}
+
+void YoloAimSettingsDialog::initConfigWidgetStruct(int configIndex)
+{
+    if (configIndex < 0 || configIndex >= 5) return;
+    
+    m_configWidgets[configIndex].enabledCheck = nullptr;
+    m_configWidgets[configIndex].hotkeyCombo = nullptr;
+    m_configWidgets[configIndex].controllerTypeCombo = nullptr;
+    m_configWidgets[configIndex].pMinSpin = nullptr;
+    m_configWidgets[configIndex].pMaxSpin = nullptr;
+    m_configWidgets[configIndex].pSlopeSpin = nullptr;
+    m_configWidgets[configIndex].dSpin = nullptr;
+    m_configWidgets[configIndex].iSpin = nullptr;
+    m_configWidgets[configIndex].derivativeFilterAlphaSpin = nullptr;
+    m_configWidgets[configIndex].advTargetThresholdSpin = nullptr;
+    m_configWidgets[configIndex].advMinCoefficientSpin = nullptr;
+    m_configWidgets[configIndex].advMaxCoefficientSpin = nullptr;
+    m_configWidgets[configIndex].advTransitionSharpnessSpin = nullptr;
+    m_configWidgets[configIndex].advTransitionMidpointSpin = nullptr;
+    m_configWidgets[configIndex].advOutputSmoothingSpin = nullptr;
+    m_configWidgets[configIndex].advSpeedFactorSpin = nullptr;
+    m_configWidgets[configIndex].useOneEuroFilterCheck = nullptr;
+    m_configWidgets[configIndex].oneEuroMinCutoffSpin = nullptr;
+    m_configWidgets[configIndex].oneEuroBetaSpin = nullptr;
+    m_configWidgets[configIndex].oneEuroDCutoffSpin = nullptr;
+    m_configWidgets[configIndex].aimSmoothingXSpin = nullptr;
+    m_configWidgets[configIndex].aimSmoothingYSpin = nullptr;
+    m_configWidgets[configIndex].targetYOffsetSpin = nullptr;
+    m_configWidgets[configIndex].maxPixelMoveSpin = nullptr;
+    m_configWidgets[configIndex].deadZonePixelsSpin = nullptr;
+    m_configWidgets[configIndex].screenOffsetXSpin = nullptr;
+    m_configWidgets[configIndex].screenOffsetYSpin = nullptr;
+    m_configWidgets[configIndex].screenWidthSpin = nullptr;
+    m_configWidgets[configIndex].screenHeightSpin = nullptr;
+    m_configWidgets[configIndex].enableYAxisUnlockCheck = nullptr;
+    m_configWidgets[configIndex].yAxisUnlockDelaySpin = nullptr;
+    m_configWidgets[configIndex].autoTriggerGroup = nullptr;
+    m_configWidgets[configIndex].triggerRadiusSpin = nullptr;
+    m_configWidgets[configIndex].triggerCooldownSpin = nullptr;
+    m_configWidgets[configIndex].triggerFireDelaySpin = nullptr;
+    m_configWidgets[configIndex].triggerFireDurationSpin = nullptr;
+    m_configWidgets[configIndex].triggerIntervalSpin = nullptr;
+    m_configWidgets[configIndex].enableTriggerDelayRandomCheck = nullptr;
+    m_configWidgets[configIndex].triggerDelayRandomMinSpin = nullptr;
+    m_configWidgets[configIndex].triggerDelayRandomMaxSpin = nullptr;
+    m_configWidgets[configIndex].enableTriggerDurationRandomCheck = nullptr;
+    m_configWidgets[configIndex].triggerDurationRandomMinSpin = nullptr;
+    m_configWidgets[configIndex].triggerDurationRandomMaxSpin = nullptr;
+    m_configWidgets[configIndex].triggerMoveCompensationSpin = nullptr;
+    m_configWidgets[configIndex].recoilGroup = nullptr;
+    m_configWidgets[configIndex].recoilStrengthSpin = nullptr;
+    m_configWidgets[configIndex].recoilSpeedSpin = nullptr;
+    m_configWidgets[configIndex].recoilPidGainScaleSpin = nullptr;
+    m_configWidgets[configIndex].integralLimitSpin = nullptr;
+    m_configWidgets[configIndex].integralSeparationThresholdSpin = nullptr;
+    m_configWidgets[configIndex].integralDeadZoneSpin = nullptr;
+    m_configWidgets[configIndex].integralRateSpin = nullptr;
+    m_configWidgets[configIndex].pGainRampInitialScaleSpin = nullptr;
+    m_configWidgets[configIndex].pGainRampDurationSpin = nullptr;
+    m_configWidgets[configIndex].predictorGroup = nullptr;
+    m_configWidgets[configIndex].predictionWeightXSpin = nullptr;
+    m_configWidgets[configIndex].predictionWeightYSpin = nullptr;
+    m_configWidgets[configIndex].maxPredictionTimeSpin = nullptr;
+    m_configWidgets[configIndex].bezierGroup = nullptr;
+    m_configWidgets[configIndex].bezierCurvatureSpin = nullptr;
+    m_configWidgets[configIndex].bezierRandomnessSpin = nullptr;
+}
+
+void YoloAimSettingsDialog::initAllConfigWidgetStructs()
+{
+    for (int i = 0; i < 5; i++) {
+        initConfigWidgetStruct(i);
+    }
 }
 
 void YoloAimSettingsDialog::setupAdvancedPIDPage()
@@ -689,6 +765,19 @@ QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
     basicLayout->addWidget(m_configWidgets[configIndex].screenOffsetYSpin, row, 3);
     row++;
     
+    basicLayout->addWidget(new QLabel(QStringLiteral("屏幕宽度:"), widget), row, 0);
+    m_configWidgets[configIndex].screenWidthSpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].screenWidthSpin->setRange(640, 3840);
+    m_configWidgets[configIndex].screenWidthSpin->setValue(1920);
+    basicLayout->addWidget(m_configWidgets[configIndex].screenWidthSpin, row, 1);
+    
+    basicLayout->addWidget(new QLabel(QStringLiteral("屏幕高度:"), widget), row, 2);
+    m_configWidgets[configIndex].screenHeightSpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].screenHeightSpin->setRange(480, 2160);
+    m_configWidgets[configIndex].screenHeightSpin->setValue(1080);
+    basicLayout->addWidget(m_configWidgets[configIndex].screenHeightSpin, row, 3);
+    row++;
+    
     basicLayout->addWidget(new QLabel(QStringLiteral("Y轴解锁:"), widget), row, 0);
     m_configWidgets[configIndex].enableYAxisUnlockCheck = new QCheckBox(widget);
     basicLayout->addWidget(m_configWidgets[configIndex].enableYAxisUnlockCheck, row, 1);
@@ -939,74 +1028,75 @@ void YoloAimSettingsDialog::loadSettings()
     }
     
     int idx = m_currentConfig;
+    auto& w = m_configWidgets[idx];
     
-    m_configWidgets[idx].enabledCheck->setChecked(obs_data_get_bool(settings, QString("enable_config_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].hotkeyCombo->setCurrentIndex(obs_data_get_int(settings, QString("hotkey_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].controllerTypeCombo->setCurrentIndex(obs_data_get_int(settings, QString("controller_type_%1").arg(idx).toUtf8().constData()));
+    if (w.enabledCheck) w.enabledCheck->setChecked(obs_data_get_bool(settings, QString("enable_config_%1").arg(idx).toUtf8().constData()));
+    if (w.hotkeyCombo) w.hotkeyCombo->setCurrentIndex(obs_data_get_int(settings, QString("hotkey_%1").arg(idx).toUtf8().constData()));
+    if (w.controllerTypeCombo) w.controllerTypeCombo->setCurrentIndex(obs_data_get_int(settings, QString("controller_type_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].pMinSpin->setValue(obs_data_get_double(settings, QString("p_min_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].pMaxSpin->setValue(obs_data_get_double(settings, QString("p_max_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].pSlopeSpin->setValue(obs_data_get_double(settings, QString("p_slope_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].dSpin->setValue(obs_data_get_double(settings, QString("d_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].iSpin->setValue(obs_data_get_double(settings, QString("i_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].derivativeFilterAlphaSpin->setValue(obs_data_get_double(settings, QString("derivative_filter_alpha_%1").arg(idx).toUtf8().constData()));
+    if (w.pMinSpin) w.pMinSpin->setValue(obs_data_get_double(settings, QString("p_min_%1").arg(idx).toUtf8().constData()));
+    if (w.pMaxSpin) w.pMaxSpin->setValue(obs_data_get_double(settings, QString("p_max_%1").arg(idx).toUtf8().constData()));
+    if (w.pSlopeSpin) w.pSlopeSpin->setValue(obs_data_get_double(settings, QString("p_slope_%1").arg(idx).toUtf8().constData()));
+    if (w.dSpin) w.dSpin->setValue(obs_data_get_double(settings, QString("d_%1").arg(idx).toUtf8().constData()));
+    if (w.iSpin) w.iSpin->setValue(obs_data_get_double(settings, QString("i_%1").arg(idx).toUtf8().constData()));
+    if (w.derivativeFilterAlphaSpin) w.derivativeFilterAlphaSpin->setValue(obs_data_get_double(settings, QString("derivative_filter_alpha_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].advTargetThresholdSpin->setValue(obs_data_get_double(settings, QString("adv_target_threshold_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].advMinCoefficientSpin->setValue(obs_data_get_double(settings, QString("adv_min_coefficient_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].advMaxCoefficientSpin->setValue(obs_data_get_double(settings, QString("adv_max_coefficient_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].advTransitionSharpnessSpin->setValue(obs_data_get_double(settings, QString("adv_transition_sharpness_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].advTransitionMidpointSpin->setValue(obs_data_get_double(settings, QString("adv_transition_midpoint_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].advSpeedFactorSpin->setValue(obs_data_get_double(settings, QString("adv_speed_factor_%1").arg(idx).toUtf8().constData()));
+    if (w.advTargetThresholdSpin) w.advTargetThresholdSpin->setValue(obs_data_get_double(settings, QString("adv_target_threshold_%1").arg(idx).toUtf8().constData()));
+    if (w.advMinCoefficientSpin) w.advMinCoefficientSpin->setValue(obs_data_get_double(settings, QString("adv_min_coefficient_%1").arg(idx).toUtf8().constData()));
+    if (w.advMaxCoefficientSpin) w.advMaxCoefficientSpin->setValue(obs_data_get_double(settings, QString("adv_max_coefficient_%1").arg(idx).toUtf8().constData()));
+    if (w.advTransitionSharpnessSpin) w.advTransitionSharpnessSpin->setValue(obs_data_get_double(settings, QString("adv_transition_sharpness_%1").arg(idx).toUtf8().constData()));
+    if (w.advTransitionMidpointSpin) w.advTransitionMidpointSpin->setValue(obs_data_get_double(settings, QString("adv_transition_midpoint_%1").arg(idx).toUtf8().constData()));
+    if (w.advSpeedFactorSpin) w.advSpeedFactorSpin->setValue(obs_data_get_double(settings, QString("adv_speed_factor_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].useOneEuroFilterCheck->setChecked(obs_data_get_bool(settings, QString("use_one_euro_filter_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].oneEuroMinCutoffSpin->setValue(obs_data_get_double(settings, QString("one_euro_min_cutoff_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].oneEuroBetaSpin->setValue(obs_data_get_double(settings, QString("one_euro_beta_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].oneEuroDCutoffSpin->setValue(obs_data_get_double(settings, QString("one_euro_d_cutoff_%1").arg(idx).toUtf8().constData()));
+    if (w.useOneEuroFilterCheck) w.useOneEuroFilterCheck->setChecked(obs_data_get_bool(settings, QString("use_one_euro_filter_%1").arg(idx).toUtf8().constData()));
+    if (w.oneEuroMinCutoffSpin) w.oneEuroMinCutoffSpin->setValue(obs_data_get_double(settings, QString("one_euro_min_cutoff_%1").arg(idx).toUtf8().constData()));
+    if (w.oneEuroBetaSpin) w.oneEuroBetaSpin->setValue(obs_data_get_double(settings, QString("one_euro_beta_%1").arg(idx).toUtf8().constData()));
+    if (w.oneEuroDCutoffSpin) w.oneEuroDCutoffSpin->setValue(obs_data_get_double(settings, QString("one_euro_d_cutoff_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].aimSmoothingXSpin->setValue(obs_data_get_double(settings, QString("aim_smoothing_x_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].aimSmoothingYSpin->setValue(obs_data_get_double(settings, QString("aim_smoothing_y_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].targetYOffsetSpin->setValue(obs_data_get_double(settings, QString("target_y_offset_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].maxPixelMoveSpin->setValue(obs_data_get_double(settings, QString("max_pixel_move_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].deadZonePixelsSpin->setValue(obs_data_get_double(settings, QString("dead_zone_pixels_%1").arg(idx).toUtf8().constData()));
+    if (w.aimSmoothingXSpin) w.aimSmoothingXSpin->setValue(obs_data_get_double(settings, QString("aim_smoothing_x_%1").arg(idx).toUtf8().constData()));
+    if (w.aimSmoothingYSpin) w.aimSmoothingYSpin->setValue(obs_data_get_double(settings, QString("aim_smoothing_y_%1").arg(idx).toUtf8().constData()));
+    if (w.targetYOffsetSpin) w.targetYOffsetSpin->setValue(obs_data_get_double(settings, QString("target_y_offset_%1").arg(idx).toUtf8().constData()));
+    if (w.maxPixelMoveSpin) w.maxPixelMoveSpin->setValue(obs_data_get_double(settings, QString("max_pixel_move_%1").arg(idx).toUtf8().constData()));
+    if (w.deadZonePixelsSpin) w.deadZonePixelsSpin->setValue(obs_data_get_double(settings, QString("dead_zone_pixels_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].screenOffsetXSpin->setValue(obs_data_get_int(settings, QString("screen_offset_x_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].screenOffsetYSpin->setValue(obs_data_get_int(settings, QString("screen_offset_y_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].screenWidthSpin->setValue(obs_data_get_int(settings, QString("screen_width_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].screenHeightSpin->setValue(obs_data_get_int(settings, QString("screen_height_%1").arg(idx).toUtf8().constData()));
+    if (w.screenOffsetXSpin) w.screenOffsetXSpin->setValue(obs_data_get_int(settings, QString("screen_offset_x_%1").arg(idx).toUtf8().constData()));
+    if (w.screenOffsetYSpin) w.screenOffsetYSpin->setValue(obs_data_get_int(settings, QString("screen_offset_y_%1").arg(idx).toUtf8().constData()));
+    if (w.screenWidthSpin) w.screenWidthSpin->setValue(obs_data_get_int(settings, QString("screen_width_%1").arg(idx).toUtf8().constData()));
+    if (w.screenHeightSpin) w.screenHeightSpin->setValue(obs_data_get_int(settings, QString("screen_height_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].enableYAxisUnlockCheck->setChecked(obs_data_get_bool(settings, QString("enable_y_axis_unlock_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].yAxisUnlockDelaySpin->setValue(obs_data_get_int(settings, QString("y_axis_unlock_delay_%1").arg(idx).toUtf8().constData()));
+    if (w.enableYAxisUnlockCheck) w.enableYAxisUnlockCheck->setChecked(obs_data_get_bool(settings, QString("enable_y_axis_unlock_%1").arg(idx).toUtf8().constData()));
+    if (w.yAxisUnlockDelaySpin) w.yAxisUnlockDelaySpin->setValue(obs_data_get_int(settings, QString("y_axis_unlock_delay_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].autoTriggerGroup->setChecked(obs_data_get_bool(settings, QString("auto_trigger_group_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].triggerRadiusSpin->setValue(obs_data_get_int(settings, QString("trigger_radius_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].triggerCooldownSpin->setValue(obs_data_get_int(settings, QString("trigger_cooldown_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].triggerFireDelaySpin->setValue(obs_data_get_int(settings, QString("trigger_fire_delay_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].triggerFireDurationSpin->setValue(obs_data_get_int(settings, QString("trigger_fire_duration_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].triggerIntervalSpin->setValue(obs_data_get_int(settings, QString("trigger_interval_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].triggerMoveCompensationSpin->setValue(obs_data_get_int(settings, QString("trigger_move_compensation_%1").arg(idx).toUtf8().constData()));
+    if (w.autoTriggerGroup) w.autoTriggerGroup->setChecked(obs_data_get_bool(settings, QString("auto_trigger_group_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerRadiusSpin) w.triggerRadiusSpin->setValue(obs_data_get_int(settings, QString("trigger_radius_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerCooldownSpin) w.triggerCooldownSpin->setValue(obs_data_get_int(settings, QString("trigger_cooldown_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerFireDelaySpin) w.triggerFireDelaySpin->setValue(obs_data_get_int(settings, QString("trigger_fire_delay_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerFireDurationSpin) w.triggerFireDurationSpin->setValue(obs_data_get_int(settings, QString("trigger_fire_duration_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerIntervalSpin) w.triggerIntervalSpin->setValue(obs_data_get_int(settings, QString("trigger_interval_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerMoveCompensationSpin) w.triggerMoveCompensationSpin->setValue(obs_data_get_int(settings, QString("trigger_move_compensation_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].recoilGroup->setChecked(obs_data_get_bool(settings, QString("recoil_group_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].recoilStrengthSpin->setValue(obs_data_get_double(settings, QString("recoil_strength_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].recoilSpeedSpin->setValue(obs_data_get_int(settings, QString("recoil_speed_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].recoilPidGainScaleSpin->setValue(obs_data_get_double(settings, QString("recoil_pid_gain_scale_%1").arg(idx).toUtf8().constData()));
+    if (w.recoilGroup) w.recoilGroup->setChecked(obs_data_get_bool(settings, QString("recoil_group_%1").arg(idx).toUtf8().constData()));
+    if (w.recoilStrengthSpin) w.recoilStrengthSpin->setValue(obs_data_get_double(settings, QString("recoil_strength_%1").arg(idx).toUtf8().constData()));
+    if (w.recoilSpeedSpin) w.recoilSpeedSpin->setValue(obs_data_get_int(settings, QString("recoil_speed_%1").arg(idx).toUtf8().constData()));
+    if (w.recoilPidGainScaleSpin) w.recoilPidGainScaleSpin->setValue(obs_data_get_double(settings, QString("recoil_pid_gain_scale_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].predictorGroup->setChecked(obs_data_get_bool(settings, QString("derivative_predictor_group_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].predictionWeightXSpin->setValue(obs_data_get_double(settings, QString("prediction_weight_x_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].predictionWeightYSpin->setValue(obs_data_get_double(settings, QString("prediction_weight_y_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].maxPredictionTimeSpin->setValue(obs_data_get_double(settings, QString("max_prediction_time_%1").arg(idx).toUtf8().constData()));
+    if (w.predictorGroup) w.predictorGroup->setChecked(obs_data_get_bool(settings, QString("derivative_predictor_group_%1").arg(idx).toUtf8().constData()));
+    if (w.predictionWeightXSpin) w.predictionWeightXSpin->setValue(obs_data_get_double(settings, QString("prediction_weight_x_%1").arg(idx).toUtf8().constData()));
+    if (w.predictionWeightYSpin) w.predictionWeightYSpin->setValue(obs_data_get_double(settings, QString("prediction_weight_y_%1").arg(idx).toUtf8().constData()));
+    if (w.maxPredictionTimeSpin) w.maxPredictionTimeSpin->setValue(obs_data_get_double(settings, QString("max_prediction_time_%1").arg(idx).toUtf8().constData()));
     
-    m_configWidgets[idx].bezierGroup->setChecked(obs_data_get_bool(settings, QString("bezier_movement_group_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].bezierCurvatureSpin->setValue(obs_data_get_double(settings, QString("bezier_curvature_%1").arg(idx).toUtf8().constData()));
-    m_configWidgets[idx].bezierRandomnessSpin->setValue(obs_data_get_double(settings, QString("bezier_randomness_%1").arg(idx).toUtf8().constData()));
+    if (w.bezierGroup) w.bezierGroup->setChecked(obs_data_get_bool(settings, QString("bezier_movement_group_%1").arg(idx).toUtf8().constData()));
+    if (w.bezierCurvatureSpin) w.bezierCurvatureSpin->setValue(obs_data_get_double(settings, QString("bezier_curvature_%1").arg(idx).toUtf8().constData()));
+    if (w.bezierRandomnessSpin) w.bezierRandomnessSpin->setValue(obs_data_get_double(settings, QString("bezier_randomness_%1").arg(idx).toUtf8().constData()));
     
-    m_showDetectionResultsCheck->setChecked(obs_data_get_bool(settings, "show_detection_results"));
-    m_showFOVCheck->setChecked(obs_data_get_bool(settings, "show_fov"));
-    m_showFOVCircleCheck->setChecked(obs_data_get_bool(settings, "show_fov_circle"));
-    m_showFOVCrossCheck->setChecked(obs_data_get_bool(settings, "show_fov_cross"));
-    m_fovRadiusSpin->setValue(obs_data_get_int(settings, "fov_radius"));
-    m_fovCrossLineScaleSpin->setValue(obs_data_get_int(settings, "fov_cross_line_scale"));
-    m_fovCrossLineThicknessSpin->setValue(obs_data_get_int(settings, "fov_cross_line_thickness"));
-    m_fovCircleThicknessSpin->setValue(obs_data_get_int(settings, "fov_circle_thickness"));
+    if (m_showDetectionResultsCheck) m_showDetectionResultsCheck->setChecked(obs_data_get_bool(settings, "show_detection_results"));
+    if (m_showFOVCheck) m_showFOVCheck->setChecked(obs_data_get_bool(settings, "show_fov"));
+    if (m_showFOVCircleCheck) m_showFOVCircleCheck->setChecked(obs_data_get_bool(settings, "show_fov_circle"));
+    if (m_showFOVCrossCheck) m_showFOVCrossCheck->setChecked(obs_data_get_bool(settings, "show_fov_cross"));
+    if (m_fovRadiusSpin) m_fovRadiusSpin->setValue(obs_data_get_int(settings, "fov_radius"));
+    if (m_fovCrossLineScaleSpin) m_fovCrossLineScaleSpin->setValue(obs_data_get_int(settings, "fov_cross_line_scale"));
+    if (m_fovCrossLineThicknessSpin) m_fovCrossLineThicknessSpin->setValue(obs_data_get_int(settings, "fov_cross_line_thickness"));
+    if (m_fovCircleThicknessSpin) m_fovCircleThicknessSpin->setValue(obs_data_get_int(settings, "fov_circle_thickness"));
     
     obs_data_release(settings);
     obs_source_release(filter);
@@ -1034,74 +1124,75 @@ void YoloAimSettingsDialog::saveSettings()
     }
     
     int idx = m_currentConfig;
+    auto& w = m_configWidgets[idx];
     
-    obs_data_set_bool(settings, QString("enable_config_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].enabledCheck->isChecked());
-    obs_data_set_int(settings, QString("hotkey_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].hotkeyCombo->currentIndex());
-    obs_data_set_int(settings, QString("controller_type_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].controllerTypeCombo->currentIndex());
+    if (w.enabledCheck) obs_data_set_bool(settings, QString("enable_config_%1").arg(idx).toUtf8().constData(), w.enabledCheck->isChecked());
+    if (w.hotkeyCombo) obs_data_set_int(settings, QString("hotkey_%1").arg(idx).toUtf8().constData(), w.hotkeyCombo->currentIndex());
+    if (w.controllerTypeCombo) obs_data_set_int(settings, QString("controller_type_%1").arg(idx).toUtf8().constData(), w.controllerTypeCombo->currentIndex());
     
-    obs_data_set_double(settings, QString("p_min_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].pMinSpin->value());
-    obs_data_set_double(settings, QString("p_max_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].pMaxSpin->value());
-    obs_data_set_double(settings, QString("p_slope_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].pSlopeSpin->value());
-    obs_data_set_double(settings, QString("d_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].dSpin->value());
-    obs_data_set_double(settings, QString("i_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].iSpin->value());
-    obs_data_set_double(settings, QString("derivative_filter_alpha_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].derivativeFilterAlphaSpin->value());
+    if (w.pMinSpin) obs_data_set_double(settings, QString("p_min_%1").arg(idx).toUtf8().constData(), w.pMinSpin->value());
+    if (w.pMaxSpin) obs_data_set_double(settings, QString("p_max_%1").arg(idx).toUtf8().constData(), w.pMaxSpin->value());
+    if (w.pSlopeSpin) obs_data_set_double(settings, QString("p_slope_%1").arg(idx).toUtf8().constData(), w.pSlopeSpin->value());
+    if (w.dSpin) obs_data_set_double(settings, QString("d_%1").arg(idx).toUtf8().constData(), w.dSpin->value());
+    if (w.iSpin) obs_data_set_double(settings, QString("i_%1").arg(idx).toUtf8().constData(), w.iSpin->value());
+    if (w.derivativeFilterAlphaSpin) obs_data_set_double(settings, QString("derivative_filter_alpha_%1").arg(idx).toUtf8().constData(), w.derivativeFilterAlphaSpin->value());
     
-    obs_data_set_double(settings, QString("adv_target_threshold_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].advTargetThresholdSpin->value());
-    obs_data_set_double(settings, QString("adv_min_coefficient_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].advMinCoefficientSpin->value());
-    obs_data_set_double(settings, QString("adv_max_coefficient_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].advMaxCoefficientSpin->value());
-    obs_data_set_double(settings, QString("adv_transition_sharpness_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].advTransitionSharpnessSpin->value());
-    obs_data_set_double(settings, QString("adv_transition_midpoint_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].advTransitionMidpointSpin->value());
-    obs_data_set_double(settings, QString("adv_speed_factor_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].advSpeedFactorSpin->value());
+    if (w.advTargetThresholdSpin) obs_data_set_double(settings, QString("adv_target_threshold_%1").arg(idx).toUtf8().constData(), w.advTargetThresholdSpin->value());
+    if (w.advMinCoefficientSpin) obs_data_set_double(settings, QString("adv_min_coefficient_%1").arg(idx).toUtf8().constData(), w.advMinCoefficientSpin->value());
+    if (w.advMaxCoefficientSpin) obs_data_set_double(settings, QString("adv_max_coefficient_%1").arg(idx).toUtf8().constData(), w.advMaxCoefficientSpin->value());
+    if (w.advTransitionSharpnessSpin) obs_data_set_double(settings, QString("adv_transition_sharpness_%1").arg(idx).toUtf8().constData(), w.advTransitionSharpnessSpin->value());
+    if (w.advTransitionMidpointSpin) obs_data_set_double(settings, QString("adv_transition_midpoint_%1").arg(idx).toUtf8().constData(), w.advTransitionMidpointSpin->value());
+    if (w.advSpeedFactorSpin) obs_data_set_double(settings, QString("adv_speed_factor_%1").arg(idx).toUtf8().constData(), w.advSpeedFactorSpin->value());
     
-    obs_data_set_bool(settings, QString("use_one_euro_filter_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].useOneEuroFilterCheck->isChecked());
-    obs_data_set_double(settings, QString("one_euro_min_cutoff_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].oneEuroMinCutoffSpin->value());
-    obs_data_set_double(settings, QString("one_euro_beta_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].oneEuroBetaSpin->value());
-    obs_data_set_double(settings, QString("one_euro_d_cutoff_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].oneEuroDCutoffSpin->value());
+    if (w.useOneEuroFilterCheck) obs_data_set_bool(settings, QString("use_one_euro_filter_%1").arg(idx).toUtf8().constData(), w.useOneEuroFilterCheck->isChecked());
+    if (w.oneEuroMinCutoffSpin) obs_data_set_double(settings, QString("one_euro_min_cutoff_%1").arg(idx).toUtf8().constData(), w.oneEuroMinCutoffSpin->value());
+    if (w.oneEuroBetaSpin) obs_data_set_double(settings, QString("one_euro_beta_%1").arg(idx).toUtf8().constData(), w.oneEuroBetaSpin->value());
+    if (w.oneEuroDCutoffSpin) obs_data_set_double(settings, QString("one_euro_d_cutoff_%1").arg(idx).toUtf8().constData(), w.oneEuroDCutoffSpin->value());
     
-    obs_data_set_double(settings, QString("aim_smoothing_x_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].aimSmoothingXSpin->value());
-    obs_data_set_double(settings, QString("aim_smoothing_y_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].aimSmoothingYSpin->value());
-    obs_data_set_double(settings, QString("target_y_offset_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].targetYOffsetSpin->value());
-    obs_data_set_double(settings, QString("max_pixel_move_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].maxPixelMoveSpin->value());
-    obs_data_set_double(settings, QString("dead_zone_pixels_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].deadZonePixelsSpin->value());
+    if (w.aimSmoothingXSpin) obs_data_set_double(settings, QString("aim_smoothing_x_%1").arg(idx).toUtf8().constData(), w.aimSmoothingXSpin->value());
+    if (w.aimSmoothingYSpin) obs_data_set_double(settings, QString("aim_smoothing_y_%1").arg(idx).toUtf8().constData(), w.aimSmoothingYSpin->value());
+    if (w.targetYOffsetSpin) obs_data_set_double(settings, QString("target_y_offset_%1").arg(idx).toUtf8().constData(), w.targetYOffsetSpin->value());
+    if (w.maxPixelMoveSpin) obs_data_set_double(settings, QString("max_pixel_move_%1").arg(idx).toUtf8().constData(), w.maxPixelMoveSpin->value());
+    if (w.deadZonePixelsSpin) obs_data_set_double(settings, QString("dead_zone_pixels_%1").arg(idx).toUtf8().constData(), w.deadZonePixelsSpin->value());
     
-    obs_data_set_int(settings, QString("screen_offset_x_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].screenOffsetXSpin->value());
-    obs_data_set_int(settings, QString("screen_offset_y_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].screenOffsetYSpin->value());
-    obs_data_set_int(settings, QString("screen_width_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].screenWidthSpin->value());
-    obs_data_set_int(settings, QString("screen_height_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].screenHeightSpin->value());
+    if (w.screenOffsetXSpin) obs_data_set_int(settings, QString("screen_offset_x_%1").arg(idx).toUtf8().constData(), w.screenOffsetXSpin->value());
+    if (w.screenOffsetYSpin) obs_data_set_int(settings, QString("screen_offset_y_%1").arg(idx).toUtf8().constData(), w.screenOffsetYSpin->value());
+    if (w.screenWidthSpin) obs_data_set_int(settings, QString("screen_width_%1").arg(idx).toUtf8().constData(), w.screenWidthSpin->value());
+    if (w.screenHeightSpin) obs_data_set_int(settings, QString("screen_height_%1").arg(idx).toUtf8().constData(), w.screenHeightSpin->value());
     
-    obs_data_set_bool(settings, QString("enable_y_axis_unlock_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].enableYAxisUnlockCheck->isChecked());
-    obs_data_set_int(settings, QString("y_axis_unlock_delay_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].yAxisUnlockDelaySpin->value());
+    if (w.enableYAxisUnlockCheck) obs_data_set_bool(settings, QString("enable_y_axis_unlock_%1").arg(idx).toUtf8().constData(), w.enableYAxisUnlockCheck->isChecked());
+    if (w.yAxisUnlockDelaySpin) obs_data_set_int(settings, QString("y_axis_unlock_delay_%1").arg(idx).toUtf8().constData(), w.yAxisUnlockDelaySpin->value());
     
-    obs_data_set_bool(settings, QString("auto_trigger_group_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].autoTriggerGroup->isChecked());
-    obs_data_set_int(settings, QString("trigger_radius_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].triggerRadiusSpin->value());
-    obs_data_set_int(settings, QString("trigger_cooldown_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].triggerCooldownSpin->value());
-    obs_data_set_int(settings, QString("trigger_fire_delay_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].triggerFireDelaySpin->value());
-    obs_data_set_int(settings, QString("trigger_fire_duration_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].triggerFireDurationSpin->value());
-    obs_data_set_int(settings, QString("trigger_interval_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].triggerIntervalSpin->value());
-    obs_data_set_int(settings, QString("trigger_move_compensation_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].triggerMoveCompensationSpin->value());
+    if (w.autoTriggerGroup) obs_data_set_bool(settings, QString("auto_trigger_group_%1").arg(idx).toUtf8().constData(), w.autoTriggerGroup->isChecked());
+    if (w.triggerRadiusSpin) obs_data_set_int(settings, QString("trigger_radius_%1").arg(idx).toUtf8().constData(), w.triggerRadiusSpin->value());
+    if (w.triggerCooldownSpin) obs_data_set_int(settings, QString("trigger_cooldown_%1").arg(idx).toUtf8().constData(), w.triggerCooldownSpin->value());
+    if (w.triggerFireDelaySpin) obs_data_set_int(settings, QString("trigger_fire_delay_%1").arg(idx).toUtf8().constData(), w.triggerFireDelaySpin->value());
+    if (w.triggerFireDurationSpin) obs_data_set_int(settings, QString("trigger_fire_duration_%1").arg(idx).toUtf8().constData(), w.triggerFireDurationSpin->value());
+    if (w.triggerIntervalSpin) obs_data_set_int(settings, QString("trigger_interval_%1").arg(idx).toUtf8().constData(), w.triggerIntervalSpin->value());
+    if (w.triggerMoveCompensationSpin) obs_data_set_int(settings, QString("trigger_move_compensation_%1").arg(idx).toUtf8().constData(), w.triggerMoveCompensationSpin->value());
     
-    obs_data_set_bool(settings, QString("recoil_group_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].recoilGroup->isChecked());
-    obs_data_set_double(settings, QString("recoil_strength_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].recoilStrengthSpin->value());
-    obs_data_set_int(settings, QString("recoil_speed_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].recoilSpeedSpin->value());
-    obs_data_set_double(settings, QString("recoil_pid_gain_scale_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].recoilPidGainScaleSpin->value());
+    if (w.recoilGroup) obs_data_set_bool(settings, QString("recoil_group_%1").arg(idx).toUtf8().constData(), w.recoilGroup->isChecked());
+    if (w.recoilStrengthSpin) obs_data_set_double(settings, QString("recoil_strength_%1").arg(idx).toUtf8().constData(), w.recoilStrengthSpin->value());
+    if (w.recoilSpeedSpin) obs_data_set_int(settings, QString("recoil_speed_%1").arg(idx).toUtf8().constData(), w.recoilSpeedSpin->value());
+    if (w.recoilPidGainScaleSpin) obs_data_set_double(settings, QString("recoil_pid_gain_scale_%1").arg(idx).toUtf8().constData(), w.recoilPidGainScaleSpin->value());
     
-    obs_data_set_bool(settings, QString("derivative_predictor_group_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].predictorGroup->isChecked());
-    obs_data_set_double(settings, QString("prediction_weight_x_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].predictionWeightXSpin->value());
-    obs_data_set_double(settings, QString("prediction_weight_y_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].predictionWeightYSpin->value());
-    obs_data_set_double(settings, QString("max_prediction_time_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].maxPredictionTimeSpin->value());
+    if (w.predictorGroup) obs_data_set_bool(settings, QString("derivative_predictor_group_%1").arg(idx).toUtf8().constData(), w.predictorGroup->isChecked());
+    if (w.predictionWeightXSpin) obs_data_set_double(settings, QString("prediction_weight_x_%1").arg(idx).toUtf8().constData(), w.predictionWeightXSpin->value());
+    if (w.predictionWeightYSpin) obs_data_set_double(settings, QString("prediction_weight_y_%1").arg(idx).toUtf8().constData(), w.predictionWeightYSpin->value());
+    if (w.maxPredictionTimeSpin) obs_data_set_double(settings, QString("max_prediction_time_%1").arg(idx).toUtf8().constData(), w.maxPredictionTimeSpin->value());
     
-    obs_data_set_bool(settings, QString("bezier_movement_group_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].bezierGroup->isChecked());
-    obs_data_set_double(settings, QString("bezier_curvature_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].bezierCurvatureSpin->value());
-    obs_data_set_double(settings, QString("bezier_randomness_%1").arg(idx).toUtf8().constData(), m_configWidgets[idx].bezierRandomnessSpin->value());
+    if (w.bezierGroup) obs_data_set_bool(settings, QString("bezier_movement_group_%1").arg(idx).toUtf8().constData(), w.bezierGroup->isChecked());
+    if (w.bezierCurvatureSpin) obs_data_set_double(settings, QString("bezier_curvature_%1").arg(idx).toUtf8().constData(), w.bezierCurvatureSpin->value());
+    if (w.bezierRandomnessSpin) obs_data_set_double(settings, QString("bezier_randomness_%1").arg(idx).toUtf8().constData(), w.bezierRandomnessSpin->value());
     
-    obs_data_set_bool(settings, "show_detection_results", m_showDetectionResultsCheck->isChecked());
-    obs_data_set_bool(settings, "show_fov", m_showFOVCheck->isChecked());
-    obs_data_set_bool(settings, "show_fov_circle", m_showFOVCircleCheck->isChecked());
-    obs_data_set_bool(settings, "show_fov_cross", m_showFOVCrossCheck->isChecked());
-    obs_data_set_int(settings, "fov_radius", m_fovRadiusSpin->value());
-    obs_data_set_int(settings, "fov_cross_line_scale", m_fovCrossLineScaleSpin->value());
-    obs_data_set_int(settings, "fov_cross_line_thickness", m_fovCrossLineThicknessSpin->value());
-    obs_data_set_int(settings, "fov_circle_thickness", m_fovCircleThicknessSpin->value());
+    if (m_showDetectionResultsCheck) obs_data_set_bool(settings, "show_detection_results", m_showDetectionResultsCheck->isChecked());
+    if (m_showFOVCheck) obs_data_set_bool(settings, "show_fov", m_showFOVCheck->isChecked());
+    if (m_showFOVCircleCheck) obs_data_set_bool(settings, "show_fov_circle", m_showFOVCircleCheck->isChecked());
+    if (m_showFOVCrossCheck) obs_data_set_bool(settings, "show_fov_cross", m_showFOVCrossCheck->isChecked());
+    if (m_fovRadiusSpin) obs_data_set_int(settings, "fov_radius", m_fovRadiusSpin->value());
+    if (m_fovCrossLineScaleSpin) obs_data_set_int(settings, "fov_cross_line_scale", m_fovCrossLineScaleSpin->value());
+    if (m_fovCrossLineThicknessSpin) obs_data_set_int(settings, "fov_cross_line_thickness", m_fovCrossLineThicknessSpin->value());
+    if (m_fovCircleThicknessSpin) obs_data_set_int(settings, "fov_circle_thickness", m_fovCircleThicknessSpin->value());
     
     obs_source_update(filter, settings);
     

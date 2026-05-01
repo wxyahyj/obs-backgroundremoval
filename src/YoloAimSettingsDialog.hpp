@@ -71,6 +71,8 @@ private:
     QGroupBox* createRecoilGroup(int configIndex);
     QGroupBox* createPredictorGroup(int configIndex);
     QGroupBox* createBezierGroup(int configIndex);
+    void initConfigWidgetStruct(int configIndex);
+    void initAllConfigWidgetStructs();
     
     QComboBox* m_sourceCombo;
     QTabWidget* m_tabWidget;
