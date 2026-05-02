@@ -935,6 +935,8 @@ void AbstractMouseController::tick()
     }
     else if (config.algorithmType == AlgorithmType::AdaptivePID) {
         // AdaptivePID：自适应PID控制器（P_PID）
+        double currentTime = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         float outX, outY;
         adaptiveController_.update(errorX, errorY, currentTime, outX, outY);
         moveX = outX;

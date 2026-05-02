@@ -181,8 +181,9 @@ void AdaptiveAimController::update(float rawDx, float rawDy, double currentTime,
     lastDebugTerms_.fusionErrorX = fusionErrorX;
     lastDebugTerms_.fusionErrorY = fusionErrorY;
     
+#ifdef ADAPTIVE_PID_DEBUG_LOG
     static int logCounter = 0;
-    if (++logCounter >= 30) {
+    if (++logCounter >= 100) {
         logCounter = 0;
         blog(LOG_INFO, "[AdaptivePID] dt=%.4f | raw=(%.1f,%.1f) | fusion=(%.1f,%.1f) | pred=(%.1f,%.1f)",
              dt, rawDx, rawDy, fusionErrorX, fusionErrorY, predX, predY);
@@ -196,6 +197,7 @@ void AdaptiveAimController::update(float rawDx, float rawDy, double currentTime,
              lastDebugTerms_.iGainX, lastDebugTerms_.iGainY,
              config_.outputSmoothing);
     }
+#endif
 }
 
 void AdaptiveAimController::reset()
@@ -213,4 +215,4 @@ void AdaptiveAimController::resetPredictor()
     predictor_.reset();
 }
 
-#endif
+#endif // _WIN32

@@ -109,6 +109,6 @@ private:
     DebugTerms lastDebugTerms_;
 };
 
-#endif
+#endif // _WIN32
 
-#endif
+#endif // ADAPTIVE_PID_CONTROLLER_HPP
