@@ -16,7 +16,65 @@ AimProfile profile_for_class(const ChainConfig& config, int class_id) {
     return class_id == config.profile_a.class_id ? config.profile_a : config.profile_b;
 }
 
-}
+// 一欧元滤波器实现
+class OneEuroFilter {
+public:
+    OneEuroFilter(float min_cutoff = 1.0f, float beta = 0.0f, float d_cutoff = 1.0f)
+        : min_cutoff_(min_cutoff), beta_(beta), d_cutoff_(d_cutoff) {}
+
+    float filter(float value, float dt) {
+        if (dt <= 0.0f) return value;
+
+        // 首次初始化
+        if (!initialized_) {
+            x_prev_ = value;
+            dx_prev_ = 0.0f;
+            initialized_ = true;
+            return value;
+        }
+
+        // 计算导数（速度）
+        float dx = (value - x_prev_) / dt;
+
+        // 平滑导数
+        float edx = exponential_smoothing(dx, dx_prev_, alpha(dt, d_cutoff_));
+        dx_prev_ = edx;
+
+        // 动态截止频率
+        float cutoff = min_cutoff_ + beta_ * std::abs(edx);
+
+        // 平滑信号
+        float result = exponential_smoothing(value, x_prev_, alpha(dt, cutoff));
+        x_prev_ = result;
+
+        return result;
+    }
+
+    void reset() {
+        initialized_ = false;
+        x_prev_ = 0.0f;
+        dx_prev_ = 0.0f;
+    }
+
+private:
+    float min_cutoff_;
+    float beta_;
+    float d_cutoff_;
+    bool initialized_ = false;
+    float x_prev_ = 0.0f;
+    float dx_prev_ = 0.0f;
+
+    static float alpha(float dt, float cutoff) {
+        float tau = 1.0f / (2.0f * static_cast<float>(M_PI) * cutoff);
+        return 1.0f / (1.0f + tau / dt);
+    }
+
+    static float exponential_smoothing(float value, float prev, float alpha) {
+        return alpha * value + (1.0f - alpha) * prev;
+    }
+};
+
+} // namespace
 
 void IncrementalPid::configure(float kp, float ki, float kd) {
     kp_ = kp;
@@ -32,9 +90,36 @@ void IncrementalPid::reset(float output) {
 }
 
 float IncrementalPid::update(float error) {
-    output_ += kp_ * (error - previous_error_) +
-               ki_ * error +
-               kd_ * (error - 2.0f * previous_error_ + previous_previous_error_);
+    // 计算增量
+    float p_term = kp_ * (error - previous_error_);
+    float i_term = ki_ * error;
+    float d_term = kd_ * (error - 2.0f * previous_error_ + previous_previous_error_);
+
+    // 输出变化量
+    float delta = p_term + i_term + d_term;
+
+    // 限制最大变化量（防止突变）
+    const float max_delta = 50.0f;
+    delta = std::clamp(delta, -max_delta, max_delta);
+
+    // 更新输出
+    output_ += delta;
+
+    // 输出衰减：防止累积过冲
+    // 当误差减小时，加速衰减
+    float error_trend = error - previous_error_;
+    float decay_factor = 0.85f; // 基础衰减
+
+    // 如果误差在减小（接近目标），增加衰减
+    if (std::abs(error) < std::abs(previous_error_) && std::signbit(error) == std::signbit(previous_error_)) {
+        decay_factor = 0.7f; // 更强的衰减
+    }
+
+    output_ *= decay_factor;
+
+    // 限制输出范围
+    const float max_output = 100.0f;
+    output_ = std::clamp(output_, -max_output, max_output);
 
     previous_previous_error_ = previous_error_;
     previous_error_ = error;
@@ -253,4 +338,4 @@ int PidControlChain::distance_from_center(int dx, int dy) {
     return static_cast<int>(std::sqrt(x * x + y * y));
 }
 
-}
+} // namespace mist::reconstructed
