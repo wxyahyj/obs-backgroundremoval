@@ -15,6 +15,8 @@
 #include "ChrisPIDController.hpp"
 #include "DynamicPIDController.hpp"
 #include "OneEuroFilter.hpp"
+#include "MotionSimulator.hpp"
+#include "curve.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -115,6 +117,20 @@ protected:
     float bezierPhase;
     
     PidDataCallback pidDataCallback_;
+    
+    // MotionSimulator 人类行为模拟器
+    MotionSimulator motionSimulator_;
+    bool enableMotionSimulator_;
+    bool motionSimInitialized_;
+    
+    // 神经网络轨迹生成器
+    MMousePredictor neuralPathPredictor_;
+    bool enableNeuralPath_;
+    bool neuralPathInitialized_;
+    std::vector<std::pair<double, double>> neuralPathPoints_;
+    size_t neuralPathIndex_;
+    float lastNeuralTargetX_;  // 上一个目标X坐标
+    float lastNeuralTargetY_;  // 上一个目标Y坐标
 
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;

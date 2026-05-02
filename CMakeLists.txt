@@ -303,6 +303,8 @@ if(WIN32)
       src/ChrisPIDController.cpp
       src/DynamicPIDController.cpp
       src/OneEuroFilter.cpp
+      src/MotionSimulator.cpp
+      src/curve.cpp
   )
 endif()
 

@@ -346,24 +346,37 @@ void YoloAimSettingsDialog::setupUI()
     )");
     connect(m_toggleInferenceBtn, &QPushButton::clicked, this, [this]() {
         bool isInferencing = m_toggleInferenceBtn->isChecked();
-        m_toggleInferenceBtn->setText(isInferencing ? QStringLiteral("⏹ 停止推理") : QStringLiteral("▶ 开始推理"));
-        m_inferenceStatusLabel->setText(isInferencing ? QStringLiteral("状态: 推理运行中") : QStringLiteral("状态: 已停止"));
         
         if (!m_currentSource.isEmpty()) {
             obs_source_t* source = obs_get_source_by_name(m_currentSource.toUtf8().constData());
-            if (source) {
-                obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
-                if (filter) {
-                    obs_data_t* settings = obs_source_get_settings(filter);
-                    if (settings) {
-                        obs_data_set_bool(settings, "is_inferencing", isInferencing);
-                        obs_source_update(filter, settings);
-                        obs_data_release(settings);
-                    }
-                    obs_source_release(filter);
-                }
-                obs_source_release(source);
+            if (!source) {
+                QMessageBox::warning(this, QStringLiteral("错误"), QStringLiteral("未找到视频源: ") + m_currentSource);
+                m_toggleInferenceBtn->setChecked(false);
+                return;
             }
+            
+            obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
+            if (!filter) {
+                QMessageBox::warning(this, QStringLiteral("错误"), QStringLiteral("未找到视觉辅助过滤器，请确保已添加过滤器到视频源"));
+                obs_source_release(source);
+                m_toggleInferenceBtn->setChecked(false);
+                return;
+            }
+            
+            obs_data_t* settings = obs_source_get_settings(filter);
+            if (settings) {
+                obs_data_set_bool(settings, "is_inferencing", isInferencing);
+                obs_source_update(filter, settings);
+                obs_data_release(settings);
+            }
+            obs_source_release(filter);
+            obs_source_release(source);
+            
+            m_toggleInferenceBtn->setText(isInferencing ? QStringLiteral("⏹ 停止推理") : QStringLiteral("▶ 开始推理"));
+            m_inferenceStatusLabel->setText(isInferencing ? QStringLiteral("状态: 推理运行中") : QStringLiteral("状态: 已停止"));
+        } else {
+            QMessageBox::warning(this, QStringLiteral("错误"), QStringLiteral("请先选择视频源"));
+            m_toggleInferenceBtn->setChecked(false);
         }
     });
     topLayout->addWidget(m_toggleInferenceBtn);
@@ -416,6 +429,8 @@ void YoloAimSettingsDialog::setupUI()
     setupTrackingPage();
     setupPredictorPage();
     setupBezierPage();
+    setupMotionSimulatorPage();
+    setupNeuralPathPage();
     
     settingsLayout->addWidget(m_tabWidget);
     
@@ -978,10 +993,26 @@ void YoloAimSettingsDialog::setupTrackingPage()
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* trackingGroup = new QGroupBox(QStringLiteral("📍 追踪设置"), page);
-    QFormLayout* trackingLayout = new QFormLayout(trackingGroup);
+    QGroupBox* kalmanGroup = new QGroupBox(QStringLiteral("🎯 卡尔曼追踪"), page);
+    QFormLayout* kalmanLayout = new QFormLayout(kalmanGroup);
     
-    layout->addWidget(trackingGroup);
+    m_useKalmanTrackerCheck = new QCheckBox(QStringLiteral("启用卡尔曼追踪"), page);
+    m_useKalmanTrackerCheck->setToolTip(QStringLiteral("启用卡尔曼滤波器进行目标追踪，提供更稳定的目标ID和预测能力"));
+    kalmanLayout->addRow(m_useKalmanTrackerCheck);
+    
+    m_kalmanGenerateThresholdSpin = new QSpinBox(page);
+    m_kalmanGenerateThresholdSpin->setRange(1, 10);
+    m_kalmanGenerateThresholdSpin->setValue(2);
+    m_kalmanGenerateThresholdSpin->setToolTip(QStringLiteral("目标需要连续检测到的帧数才能被确认追踪"));
+    kalmanLayout->addRow(QStringLiteral("追踪确认阈值:"), m_kalmanGenerateThresholdSpin);
+    
+    m_kalmanTerminateCountSpin = new QSpinBox(page);
+    m_kalmanTerminateCountSpin->setRange(1, 10);
+    m_kalmanTerminateCountSpin->setValue(5);
+    m_kalmanTerminateCountSpin->setToolTip(QStringLiteral("目标丢失多少帧后停止追踪"));
+    kalmanLayout->addRow(QStringLiteral("追踪丢失阈值:"), m_kalmanTerminateCountSpin);
+    
+    layout->addWidget(kalmanGroup);
     layout->addStretch();
     
     m_tabWidget->addTab(page, QStringLiteral("📍 追踪"));
@@ -1011,6 +1042,165 @@ void YoloAimSettingsDialog::setupBezierPage()
     layout->addStretch();
     
     m_tabWidget->addTab(page, QStringLiteral("🌊 贝塞尔"));
+}
+
+void YoloAimSettingsDialog::setupMotionSimulatorPage()
+{
+    QWidget* page = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(page);
+    
+    // 启用开关
+    m_enableMotionSimulatorCheck = new QCheckBox(QStringLiteral("🎮 启用人类行为模拟"), page);
+    m_enableMotionSimulatorCheck->setToolTip(QStringLiteral("启用人类行为模拟器，使鼠标移动更自然"));
+    layout->addWidget(m_enableMotionSimulatorCheck);
+    
+    // 功能开关组
+    QGroupBox* featureGroup = new QGroupBox(QStringLiteral("🔧 功能开关"), page);
+    QGridLayout* featureLayout = new QGridLayout(featureGroup);
+    
+    int row = 0;
+    m_motionSimRandomPosCheck = new QCheckBox(QStringLiteral("随机落点"), page);
+    m_motionSimRandomPosCheck->setToolTip(QStringLiteral("在目标范围内随机选择落点"));
+    featureLayout->addWidget(m_motionSimRandomPosCheck, row, 0);
+    
+    m_motionSimOvershootCheck = new QCheckBox(QStringLiteral("过冲"), page);
+    m_motionSimOvershootCheck->setToolTip(QStringLiteral("模拟人类移动时的过冲行为"));
+    featureLayout->addWidget(m_motionSimOvershootCheck, row, 1);
+    row++;
+    
+    m_motionSimMicroOvershootCheck = new QCheckBox(QStringLiteral("微过冲"), page);
+    m_motionSimMicroOvershootCheck->setToolTip(QStringLiteral("模拟人类移动时的微小过冲"));
+    featureLayout->addWidget(m_motionSimMicroOvershootCheck, row, 0);
+    
+    m_motionSimInertiaCheck = new QCheckBox(QStringLiteral("惯性停止"), page);
+    m_motionSimInertiaCheck->setToolTip(QStringLiteral("模拟人类移动时的惯性停止效果"));
+    featureLayout->addWidget(m_motionSimInertiaCheck, row, 1);
+    row++;
+    
+    m_motionSimLeftBtnAdaptiveCheck = new QCheckBox(QStringLiteral("左键自适应"), page);
+    m_motionSimLeftBtnAdaptiveCheck->setToolTip(QStringLiteral("根据左键状态调整移动行为"));
+    featureLayout->addWidget(m_motionSimLeftBtnAdaptiveCheck, row, 0);
+    
+    m_motionSimSprayModeCheck = new QCheckBox(QStringLiteral("连射模式"), page);
+    m_motionSimSprayModeCheck->setToolTip(QStringLiteral("启用连射模式下的特殊行为"));
+    featureLayout->addWidget(m_motionSimSprayModeCheck, row, 1);
+    row++;
+    
+    m_motionSimTapPauseCheck = new QCheckBox(QStringLiteral("点击暂停"), page);
+    m_motionSimTapPauseCheck->setToolTip(QStringLiteral("点击时暂停移动"));
+    featureLayout->addWidget(m_motionSimTapPauseCheck, row, 0);
+    
+    m_motionSimRetryCheck = new QCheckBox(QStringLiteral("重试"), page);
+    m_motionSimRetryCheck->setToolTip(QStringLiteral("未命中时自动重试"));
+    featureLayout->addWidget(m_motionSimRetryCheck, row, 1);
+    
+    layout->addWidget(featureGroup);
+    
+    // 参数设置组
+    QGroupBox* paramsGroup = new QGroupBox(QStringLiteral("📊 参数设置"), page);
+    QFormLayout* paramsLayout = new QFormLayout(paramsGroup);
+    
+    m_motionSimMaxRetrySpin = new QSpinBox(page);
+    m_motionSimMaxRetrySpin->setRange(0, 5);
+    m_motionSimMaxRetrySpin->setValue(2);
+    m_motionSimMaxRetrySpin->setToolTip(QStringLiteral("未命中时的最大重试次数"));
+    paramsLayout->addRow(QStringLiteral("最大重试次数:"), m_motionSimMaxRetrySpin);
+    
+    m_motionSimDelayMsSpin = new QSpinBox(page);
+    m_motionSimDelayMsSpin->setRange(0, 500);
+    m_motionSimDelayMsSpin->setValue(80);
+    m_motionSimDelayMsSpin->setSuffix(QStringLiteral(" ms"));
+    m_motionSimDelayMsSpin->setToolTip(QStringLiteral("目标延迟时间（毫秒）"));
+    paramsLayout->addRow(QStringLiteral("目标延迟:"), m_motionSimDelayMsSpin);
+    
+    m_motionSimDirectProbSpin = new QDoubleSpinBox(page);
+    m_motionSimDirectProbSpin->setRange(0.0, 1.0);
+    m_motionSimDirectProbSpin->setDecimals(2);
+    m_motionSimDirectProbSpin->setSingleStep(0.01);
+    m_motionSimDirectProbSpin->setValue(0.85);
+    m_motionSimDirectProbSpin->setToolTip(QStringLiteral("直接移动到目标的概率"));
+    paramsLayout->addRow(QStringLiteral("直线移动概率:"), m_motionSimDirectProbSpin);
+    
+    m_motionSimOvershootProbSpin = new QDoubleSpinBox(page);
+    m_motionSimOvershootProbSpin->setRange(0.0, 1.0);
+    m_motionSimOvershootProbSpin->setDecimals(2);
+    m_motionSimOvershootProbSpin->setSingleStep(0.01);
+    m_motionSimOvershootProbSpin->setValue(0.10);
+    m_motionSimOvershootProbSpin->setToolTip(QStringLiteral("过冲移动的概率"));
+    paramsLayout->addRow(QStringLiteral("过冲概率:"), m_motionSimOvershootProbSpin);
+    
+    m_motionSimMicroOvshootProbSpin = new QDoubleSpinBox(page);
+    m_motionSimMicroOvshootProbSpin->setRange(0.0, 1.0);
+    m_motionSimMicroOvshootProbSpin->setDecimals(2);
+    m_motionSimMicroOvshootProbSpin->setSingleStep(0.01);
+    m_motionSimMicroOvshootProbSpin->setValue(0.05);
+    m_motionSimMicroOvshootProbSpin->setToolTip(QStringLiteral("微过冲移动的概率"));
+    paramsLayout->addRow(QStringLiteral("微过冲概率:"), m_motionSimMicroOvshootProbSpin);
+    
+    layout->addWidget(paramsGroup);
+    layout->addStretch();
+    
+    m_tabWidget->addTab(page, QStringLiteral("🎮 运动仿真"));
+}
+
+void YoloAimSettingsDialog::setupNeuralPathPage()
+{
+    QWidget* page = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(page);
+    
+    // 启用开关
+    m_enableNeuralPathCheck = new QCheckBox(QStringLiteral("🧠 启用神经网络轨迹"), page);
+    m_enableNeuralPathCheck->setToolTip(QStringLiteral("启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹"));
+    layout->addWidget(m_enableNeuralPathCheck);
+    
+    // 说明文字
+    QLabel* descLabel = new QLabel(QStringLiteral(
+        "神经网络轨迹生成器使用预训练模型生成类人鼠标移动轨迹。\n"
+        "相比贝塞尔曲线，神经网络生成的轨迹更自然、更难被检测。"
+    ), page);
+    descLabel->setWordWrap(true);
+    descLabel->setStyleSheet(QStringLiteral("color: #a78bfa; padding: 10px; background: rgba(139, 92, 246, 0.1); border-radius: 5px;"));
+    layout->addWidget(descLabel);
+    
+    // 参数设置组
+    QGroupBox* paramsGroup = new QGroupBox(QStringLiteral("📊 参数设置"), page);
+    QFormLayout* paramsLayout = new QFormLayout(paramsGroup);
+    
+    m_neuralPathPointsSpin = new QSpinBox(page);
+    m_neuralPathPointsSpin->setRange(10, 100);
+    m_neuralPathPointsSpin->setValue(25);
+    m_neuralPathPointsSpin->setSuffix(QStringLiteral(" 点"));
+    m_neuralPathPointsSpin->setToolTip(QStringLiteral("轨迹点数量，越多越平滑但移动越慢"));
+    paramsLayout->addRow(QStringLiteral("轨迹点数量:"), m_neuralPathPointsSpin);
+    
+    m_neuralMouseStepSizeSpin = new QDoubleSpinBox(page);
+    m_neuralMouseStepSizeSpin->setRange(1.0, 20.0);
+    m_neuralMouseStepSizeSpin->setDecimals(1);
+    m_neuralMouseStepSizeSpin->setSingleStep(0.5);
+    m_neuralMouseStepSizeSpin->setValue(4.0);
+    m_neuralMouseStepSizeSpin->setToolTip(QStringLiteral("每次移动的步长大小"));
+    paramsLayout->addRow(QStringLiteral("鼠标步长:"), m_neuralMouseStepSizeSpin);
+    
+    m_neuralTargetRadiusSpin = new QSpinBox(page);
+    m_neuralTargetRadiusSpin->setRange(1, 50);
+    m_neuralTargetRadiusSpin->setValue(8);
+    m_neuralTargetRadiusSpin->setSuffix(QStringLiteral(" px"));
+    m_neuralTargetRadiusSpin->setToolTip(QStringLiteral("到达目标的判定半径"));
+    paramsLayout->addRow(QStringLiteral("目标半径:"), m_neuralTargetRadiusSpin);
+    
+    layout->addWidget(paramsGroup);
+    
+    // 注意事项
+    QLabel* noteLabel = new QLabel(QStringLiteral(
+        "⚠️ 注意：神经网络轨迹与运动仿真模式互斥，启用其中一个会自动禁用另一个。"
+    ), page);
+    noteLabel->setWordWrap(true);
+    noteLabel->setStyleSheet(QStringLiteral("color: #f59e0b; padding: 10px; background: rgba(245, 158, 11, 0.1); border-radius: 5px;"));
+    layout->addWidget(noteLabel);
+    
+    layout->addStretch();
+    
+    m_tabWidget->addTab(page, QStringLiteral("🧠 神经轨迹"));
 }
 
 QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
@@ -1473,6 +1663,33 @@ void YoloAimSettingsDialog::loadSettings()
     if (m_detectionSmoothingCheck) m_detectionSmoothingCheck->setChecked(obs_data_get_bool(settings, "detection_smoothing_enabled"));
     if (m_detectionSmoothingAlphaSpin) m_detectionSmoothingAlphaSpin->setValue(obs_data_get_double(settings, "detection_smoothing_alpha"));
     
+    // KalmanFilter 追踪设置
+    if (m_useKalmanTrackerCheck) m_useKalmanTrackerCheck->setChecked(obs_data_get_bool(settings, "use_kalman_tracker"));
+    if (m_kalmanGenerateThresholdSpin) m_kalmanGenerateThresholdSpin->setValue(obs_data_get_int(settings, "kalman_generate_threshold"));
+    if (m_kalmanTerminateCountSpin) m_kalmanTerminateCountSpin->setValue(obs_data_get_int(settings, "kalman_terminate_count"));
+    
+    // MotionSimulator 人类行为模拟器设置
+    if (m_enableMotionSimulatorCheck) m_enableMotionSimulatorCheck->setChecked(obs_data_get_bool(settings, "enable_motion_simulator"));
+    if (m_motionSimRandomPosCheck) m_motionSimRandomPosCheck->setChecked(obs_data_get_bool(settings, "motion_sim_random_pos"));
+    if (m_motionSimOvershootCheck) m_motionSimOvershootCheck->setChecked(obs_data_get_bool(settings, "motion_sim_overshoot"));
+    if (m_motionSimMicroOvershootCheck) m_motionSimMicroOvershootCheck->setChecked(obs_data_get_bool(settings, "motion_sim_micro_overshoot"));
+    if (m_motionSimInertiaCheck) m_motionSimInertiaCheck->setChecked(obs_data_get_bool(settings, "motion_sim_inertia"));
+    if (m_motionSimLeftBtnAdaptiveCheck) m_motionSimLeftBtnAdaptiveCheck->setChecked(obs_data_get_bool(settings, "motion_sim_left_btn_adaptive"));
+    if (m_motionSimSprayModeCheck) m_motionSimSprayModeCheck->setChecked(obs_data_get_bool(settings, "motion_sim_spray_mode"));
+    if (m_motionSimTapPauseCheck) m_motionSimTapPauseCheck->setChecked(obs_data_get_bool(settings, "motion_sim_tap_pause"));
+    if (m_motionSimRetryCheck) m_motionSimRetryCheck->setChecked(obs_data_get_bool(settings, "motion_sim_retry"));
+    if (m_motionSimMaxRetrySpin) m_motionSimMaxRetrySpin->setValue(obs_data_get_int(settings, "motion_sim_max_retry"));
+    if (m_motionSimDelayMsSpin) m_motionSimDelayMsSpin->setValue(obs_data_get_int(settings, "motion_sim_delay_ms"));
+    if (m_motionSimDirectProbSpin) m_motionSimDirectProbSpin->setValue(obs_data_get_double(settings, "motion_sim_direct_prob"));
+    if (m_motionSimOvershootProbSpin) m_motionSimOvershootProbSpin->setValue(obs_data_get_double(settings, "motion_sim_overshoot_prob"));
+    if (m_motionSimMicroOvshootProbSpin) m_motionSimMicroOvshootProbSpin->setValue(obs_data_get_double(settings, "motion_sim_micro_ovshoot_prob"));
+    
+    // 神经网络轨迹生成器设置
+    if (m_enableNeuralPathCheck) m_enableNeuralPathCheck->setChecked(obs_data_get_bool(settings, "enable_neural_path"));
+    if (m_neuralPathPointsSpin) m_neuralPathPointsSpin->setValue(obs_data_get_int(settings, "neural_path_points"));
+    if (m_neuralMouseStepSizeSpin) m_neuralMouseStepSizeSpin->setValue(obs_data_get_double(settings, "neural_mouse_step_size"));
+    if (m_neuralTargetRadiusSpin) m_neuralTargetRadiusSpin->setValue(obs_data_get_int(settings, "neural_target_radius"));
+    
     // 高级配置
     if (m_exportCoordinatesCheck) m_exportCoordinatesCheck->setChecked(obs_data_get_bool(settings, "export_coordinates"));
     if (m_coordinateOutputPathEdit) m_coordinateOutputPathEdit->setText(QString::fromUtf8(obs_data_get_string(settings, "coordinate_output_path")));
@@ -1612,6 +1829,33 @@ void YoloAimSettingsDialog::saveSettings()
     // 检测框平滑
     if (m_detectionSmoothingCheck) obs_data_set_bool(settings, "detection_smoothing_enabled", m_detectionSmoothingCheck->isChecked());
     if (m_detectionSmoothingAlphaSpin) obs_data_set_double(settings, "detection_smoothing_alpha", m_detectionSmoothingAlphaSpin->value());
+    
+    // KalmanFilter 追踪设置
+    if (m_useKalmanTrackerCheck) obs_data_set_bool(settings, "use_kalman_tracker", m_useKalmanTrackerCheck->isChecked());
+    if (m_kalmanGenerateThresholdSpin) obs_data_set_int(settings, "kalman_generate_threshold", m_kalmanGenerateThresholdSpin->value());
+    if (m_kalmanTerminateCountSpin) obs_data_set_int(settings, "kalman_terminate_count", m_kalmanTerminateCountSpin->value());
+    
+    // MotionSimulator 人类行为模拟器设置
+    if (m_enableMotionSimulatorCheck) obs_data_set_bool(settings, "enable_motion_simulator", m_enableMotionSimulatorCheck->isChecked());
+    if (m_motionSimRandomPosCheck) obs_data_set_bool(settings, "motion_sim_random_pos", m_motionSimRandomPosCheck->isChecked());
+    if (m_motionSimOvershootCheck) obs_data_set_bool(settings, "motion_sim_overshoot", m_motionSimOvershootCheck->isChecked());
+    if (m_motionSimMicroOvershootCheck) obs_data_set_bool(settings, "motion_sim_micro_overshoot", m_motionSimMicroOvershootCheck->isChecked());
+    if (m_motionSimInertiaCheck) obs_data_set_bool(settings, "motion_sim_inertia", m_motionSimInertiaCheck->isChecked());
+    if (m_motionSimLeftBtnAdaptiveCheck) obs_data_set_bool(settings, "motion_sim_left_btn_adaptive", m_motionSimLeftBtnAdaptiveCheck->isChecked());
+    if (m_motionSimSprayModeCheck) obs_data_set_bool(settings, "motion_sim_spray_mode", m_motionSimSprayModeCheck->isChecked());
+    if (m_motionSimTapPauseCheck) obs_data_set_bool(settings, "motion_sim_tap_pause", m_motionSimTapPauseCheck->isChecked());
+    if (m_motionSimRetryCheck) obs_data_set_bool(settings, "motion_sim_retry", m_motionSimRetryCheck->isChecked());
+    if (m_motionSimMaxRetrySpin) obs_data_set_int(settings, "motion_sim_max_retry", m_motionSimMaxRetrySpin->value());
+    if (m_motionSimDelayMsSpin) obs_data_set_int(settings, "motion_sim_delay_ms", m_motionSimDelayMsSpin->value());
+    if (m_motionSimDirectProbSpin) obs_data_set_double(settings, "motion_sim_direct_prob", m_motionSimDirectProbSpin->value());
+    if (m_motionSimOvershootProbSpin) obs_data_set_double(settings, "motion_sim_overshoot_prob", m_motionSimOvershootProbSpin->value());
+    if (m_motionSimMicroOvshootProbSpin) obs_data_set_double(settings, "motion_sim_micro_ovshoot_prob", m_motionSimMicroOvshootProbSpin->value());
+    
+    // 神经网络轨迹生成器设置
+    if (m_enableNeuralPathCheck) obs_data_set_bool(settings, "enable_neural_path", m_enableNeuralPathCheck->isChecked());
+    if (m_neuralPathPointsSpin) obs_data_set_int(settings, "neural_path_points", m_neuralPathPointsSpin->value());
+    if (m_neuralMouseStepSizeSpin) obs_data_set_double(settings, "neural_mouse_step_size", m_neuralMouseStepSizeSpin->value());
+    if (m_neuralTargetRadiusSpin) obs_data_set_int(settings, "neural_target_radius", m_neuralTargetRadiusSpin->value());
     
     // 高级配置
     if (m_exportCoordinatesCheck) obs_data_set_bool(settings, "export_coordinates", m_exportCoordinatesCheck->isChecked());

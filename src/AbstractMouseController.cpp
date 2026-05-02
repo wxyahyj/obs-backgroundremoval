@@ -63,11 +63,22 @@ AbstractMouseController::AbstractMouseController()
     , currentTargetScore(0.0f)
     , bezierPhase(0.0f)
     , pidDataCallback_(nullptr)
+    , enableMotionSimulator_(false)
+    , motionSimInitialized_(false)
+    , enableNeuralPath_(false)
+    , neuralPathInitialized_(false)
+    , neuralPathIndex_(0)
+    , lastNeuralTargetX_(0.0f)
+    , lastNeuralTargetY_(0.0f)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+    
+    // 初始化 MotionSimulator
+    motionSimulator_.initializeImage(cachedScreenWidth, cachedScreenHeight);
+    motionSimulator_.setImageCenter(cachedScreenWidth / 2.0, cachedScreenHeight / 2.0);
 }
 
 void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfig)
@@ -85,6 +96,41 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     // 更新DerivativePredictor参数
     predictor.setMaxPredictionTime(config.maxPredictionTime);
+    
+    // 更新MotionSimulator配置
+    enableMotionSimulator_ = config.enableMotionSimulator;
+    if (enableMotionSimulator_) {
+        motionSimulator_.configSwitches(
+            config.motionSimRandomPos,
+            config.motionSimOvershoot,
+            config.motionSimMicroOvershoot,
+            config.motionSimInertia,
+            config.motionSimLeftBtnAdaptive,
+            config.motionSimSprayMode,
+            config.motionSimTapPause,
+            config.motionSimRetry
+        );
+        motionSimulator_.configParams(
+            config.motionSimMaxRetry,
+            config.motionSimDelayMs,
+            config.motionSimDirectProb,
+            config.motionSimOvershootProb,
+            config.motionSimMicroOvshootProb
+        );
+    }
+    
+    // 更新神经网络轨迹生成器配置
+    enableNeuralPath_ = config.enableNeuralPath;
+    if (enableNeuralPath_ && !neuralPathInitialized_) {
+        neuralPathPredictor_.init(
+            config.inferenceFrameWidth > 0 ? config.inferenceFrameWidth : 1920,
+            config.inferenceFrameHeight > 0 ? config.inferenceFrameHeight : 1080,
+            config.neuralTargetRadius,
+            config.neuralMouseStepSize,
+            config.neuralPathPoints
+        );
+        neuralPathInitialized_ = true;
+    }
     
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
@@ -202,6 +248,99 @@ void AbstractMouseController::tick()
     float targetPixelX = target->centerX * config.inferenceFrameWidth;
     float yOffsetPixels = config.targetYOffset * 0.01f * target->height * config.inferenceFrameHeight;
     float targetPixelY = target->centerY * config.inferenceFrameHeight - yOffsetPixels;
+    float targetPixelW = target->width * config.inferenceFrameWidth;
+    float targetPixelH = target->height * config.inferenceFrameHeight;
+    
+    // 神经网络轨迹生成
+    if (enableNeuralPath_) {
+        if (!neuralPathInitialized_) {
+            neuralPathPredictor_.init(
+                config.inferenceFrameWidth > 0 ? config.inferenceFrameWidth : 1920,
+                config.inferenceFrameHeight > 0 ? config.inferenceFrameHeight : 1080,
+                config.neuralTargetRadius,
+                config.neuralMouseStepSize,
+                config.neuralPathPoints
+            );
+            neuralPathInitialized_ = true;
+        }
+        
+        // 计算目标相对位置
+        double relativeTargetX = targetPixelX - fovCenterX;
+        double relativeTargetY = targetPixelY - fovCenterY;
+        
+        // 检查目标是否变化（阈值判断）
+        float targetChangeThreshold = 5.0f; // 目标变化阈值
+        bool targetChanged = std::abs(targetPixelX - lastNeuralTargetX_) > targetChangeThreshold ||
+                            std::abs(targetPixelY - lastNeuralTargetY_) > targetChangeThreshold;
+        
+        // 如果目标变化或轨迹已执行完毕，重新生成轨迹
+        if (targetChanged || neuralPathIndex_ >= neuralPathPoints_.size()) {
+            neuralPathPoints_ = neuralPathPredictor_.moveTo(relativeTargetX, relativeTargetY);
+            neuralPathIndex_ = 0;
+            lastNeuralTargetX_ = targetPixelX;
+            lastNeuralTargetY_ = targetPixelY;
+        }
+        
+        // 执行轨迹移动
+        if (!neuralPathPoints_.empty() && neuralPathIndex_ < neuralPathPoints_.size()) {
+            int dx = static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].first));
+            int dy = static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].second));
+            neuralPathIndex_++;
+            
+            if (pidDataCallback_) {
+                PidDebugData data;
+                data.errorX = static_cast<float>(relativeTargetX);
+                data.errorY = static_cast<float>(relativeTargetY);
+                data.outputX = static_cast<float>(dx);
+                data.outputY = static_cast<float>(dy);
+                data.targetX = targetPixelX;
+                data.targetY = targetPixelY;
+                data.algorithmType = 5; // NeuralPath
+                pidDataCallback_(data);
+            }
+            
+            moveMouse(dx, dy);
+            return;
+        }
+    }
+    
+    // MotionSimulator 人类行为模拟
+    if (enableMotionSimulator_) {
+        if (!motionSimInitialized_) {
+            motionSimulator_.initializeImage(config.inferenceFrameWidth, config.inferenceFrameHeight);
+            motionSimulator_.setImageCenter(fovCenterX, fovCenterY);
+            motionSimInitialized_ = true;
+        }
+        
+        bool leftBtnPressed = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        
+        motionSimulator_.tick(
+            targetPixelX - targetPixelW / 2.0,
+            targetPixelY - targetPixelH / 2.0,
+            targetPixelW,
+            targetPixelH,
+            leftBtnPressed
+        );
+        
+        int dx = motionSimulator_.lastDx();
+        int dy = motionSimulator_.lastDy();
+        
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = targetPixelX - fovCenterX;
+            data.errorY = targetPixelY - fovCenterY;
+            data.outputX = static_cast<float>(dx);
+            data.outputY = static_cast<float>(dy);
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.algorithmType = 4; // MotionSimulator
+            data.isFiring = leftBtnPressed;
+            pidDataCallback_(data);
+        }
+        
+        moveMouse(dx, dy);
+        return;
+    }
 
     if (deltaTime > 0.001f) {
         targetVelocityX = (targetPixelX - previousTargetX) / deltaTime;

@@ -199,6 +199,28 @@ struct MouseControllerConfig {
     float trackingWeightCenter = 0.3f;    // 中心点距离权重
     float trackingWeightAspect = 0.15f;   // 宽高比距离权重
     float trackingWeightArea = 0.15f;     // 面积距离权重
+    
+    // MotionSimulator 人类行为模拟器配置
+    bool enableMotionSimulator = false;        // 是否启用人类行为模拟
+    bool motionSimRandomPos = true;            // 随机落点
+    bool motionSimOvershoot = true;            // 过冲
+    bool motionSimMicroOvershoot = true;       // 微过冲
+    bool motionSimInertia = true;              // 惯性停止
+    bool motionSimLeftBtnAdaptive = true;      // 左键自适应
+    bool motionSimSprayMode = true;            // 连射模式
+    bool motionSimTapPause = true;             // 点击暂停
+    bool motionSimRetry = true;                // 重试
+    int motionSimMaxRetry = 2;                 // 最大重试次数
+    int motionSimDelayMs = 80;                 // 目标延迟(毫秒)
+    float motionSimDirectProb = 0.85f;         // 直线移动概率
+    float motionSimOvershootProb = 0.10f;      // 过冲概率
+    float motionSimMicroOvshootProb = 0.05f;   // 微过冲概率
+    
+    // 神经网络轨迹生成器配置
+    bool enableNeuralPath = false;             // 是否启用神经网络轨迹
+    int neuralPathPoints = 25;                 // 轨迹点数量
+    double neuralMouseStepSize = 4.0;          // 鼠标步长
+    int neuralTargetRadius = 8;                // 目标半径（到达判定）
 };
 
 class MouseControllerInterface {

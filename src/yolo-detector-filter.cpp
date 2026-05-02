@@ -42,6 +42,7 @@
 #include "FilterData.h"
 #include "obs-utils/obs-utils.h"
 #include "consts.h"
+#include "KalmanFilter.hpp"
 
 // 目标重识别结构体
 struct LostTarget {
@@ -65,6 +66,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int nextTrackId;
 	int maxLostFrames;
 	float iouThreshold;
+	
+	// KalmanFilter 增强追踪
+	bool useKalmanTracker = false;
+	int kalmanGenerateThreshold = 2;
+	int kalmanTerminateCount = 5;
+	KalmanP kalmanTracker;
 	
 	// 多指标融合追踪权重
 	float trackingWeightIou;
@@ -415,6 +422,26 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool enableBezierMovement;
 		float bezierCurvature;
 		float bezierRandomness;
+		// MotionSimulator 人类行为模拟器参数
+		bool enableMotionSimulator;
+		bool motionSimRandomPos;
+		bool motionSimOvershoot;
+		bool motionSimMicroOvershoot;
+		bool motionSimInertia;
+		bool motionSimLeftBtnAdaptive;
+		bool motionSimSprayMode;
+		bool motionSimTapPause;
+		bool motionSimRetry;
+		int motionSimMaxRetry;
+		int motionSimDelayMs;
+		float motionSimDirectProb;
+		float motionSimOvershootProb;
+		float motionSimMicroOvshootProb;
+		// 神经网络轨迹生成器参数
+		bool enableNeuralPath;
+		int neuralPathPoints;
+		double neuralMouseStepSize;
+		int neuralTargetRadius;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -489,6 +516,26 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
 			bezierRandomness = 0.2f;
+			// MotionSimulator 人类行为模拟器默认值
+			enableMotionSimulator = false;
+			motionSimRandomPos = true;
+			motionSimOvershoot = true;
+			motionSimMicroOvershoot = true;
+			motionSimInertia = true;
+			motionSimLeftBtnAdaptive = true;
+			motionSimSprayMode = true;
+			motionSimTapPause = true;
+			motionSimRetry = true;
+			motionSimMaxRetry = 2;
+			motionSimDelayMs = 80;
+			motionSimDirectProb = 0.85f;
+			motionSimOvershootProb = 0.10f;
+			motionSimMicroOvshootProb = 0.05f;
+			// 神经网络轨迹生成器默认值
+			enableNeuralPath = false;
+			neuralPathPoints = 25;
+			neuralMouseStepSize = 4.0;
+			neuralTargetRadius = 8;
 		}
 	};
 
@@ -717,6 +764,54 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(detectionSmoothingEnabledProp, "启用检测框平滑，减少检测框抖动");
 	obs_property_t *detectionSmoothingAlphaProp = obs_properties_add_float_slider(props, "detection_smoothing_alpha", "平滑系数", 0.01, 1.0, 0.01);
 	 obs_property_set_long_description(detectionSmoothingAlphaProp, "平滑系数，值越小越平滑但延迟越高，值越大响应越快但平滑效果减弱");
+
+	// KalmanFilter 追踪设置
+	obs_property_t *useKalmanTrackerProp = obs_properties_add_bool(props, "use_kalman_tracker", "启用卡尔曼追踪");
+	obs_property_set_long_description(useKalmanTrackerProp, "启用卡尔曼滤波器进行目标追踪，提供更稳定的目标ID和预测能力");
+	obs_property_t *kalmanGenerateThresholdProp = obs_properties_add_int_slider(props, "kalman_generate_threshold", "追踪确认阈值", 1, 10, 1);
+	obs_property_set_long_description(kalmanGenerateThresholdProp, "目标需要连续检测到的帧数才能被确认追踪");
+	obs_property_t *kalmanTerminateCountProp = obs_properties_add_int_slider(props, "kalman_terminate_count", "追踪丢失阈值", 1, 10, 1);
+	obs_property_set_long_description(kalmanTerminateCountProp, "目标丢失多少帧后停止追踪");
+
+	// MotionSimulator 人类行为模拟器设置
+	obs_property_t *enableMotionSimulatorProp = obs_properties_add_bool(props, "enable_motion_simulator", "启用人类行为模拟");
+	obs_property_set_long_description(enableMotionSimulatorProp, "启用人类行为模拟器，使鼠标移动更自然");
+	obs_property_t *motionSimRandomPosProp = obs_properties_add_bool(props, "motion_sim_random_pos", "随机落点");
+	obs_property_set_long_description(motionSimRandomPosProp, "在目标范围内随机选择落点");
+	obs_property_t *motionSimOvershootProp = obs_properties_add_bool(props, "motion_sim_overshoot", "过冲");
+	obs_property_set_long_description(motionSimOvershootProp, "模拟人类移动时的过冲行为");
+	obs_property_t *motionSimMicroOvershootProp = obs_properties_add_bool(props, "motion_sim_micro_overshoot", "微过冲");
+	obs_property_set_long_description(motionSimMicroOvershootProp, "模拟人类移动时的微小过冲");
+	obs_property_t *motionSimInertiaProp = obs_properties_add_bool(props, "motion_sim_inertia", "惯性停止");
+	obs_property_set_long_description(motionSimInertiaProp, "模拟人类移动时的惯性停止效果");
+	obs_property_t *motionSimLeftBtnAdaptiveProp = obs_properties_add_bool(props, "motion_sim_left_btn_adaptive", "左键自适应");
+	obs_property_set_long_description(motionSimLeftBtnAdaptiveProp, "根据左键状态调整移动行为");
+	obs_property_t *motionSimSprayModeProp = obs_properties_add_bool(props, "motion_sim_spray_mode", "连射模式");
+	obs_property_set_long_description(motionSimSprayModeProp, "启用连射模式下的特殊行为");
+	obs_property_t *motionSimTapPauseProp = obs_properties_add_bool(props, "motion_sim_tap_pause", "点击暂停");
+	obs_property_set_long_description(motionSimTapPauseProp, "点击时暂停移动");
+	obs_property_t *motionSimRetryProp = obs_properties_add_bool(props, "motion_sim_retry", "重试");
+	obs_property_set_long_description(motionSimRetryProp, "未命中时自动重试");
+	obs_property_t *motionSimMaxRetryProp = obs_properties_add_int_slider(props, "motion_sim_max_retry", "最大重试次数", 0, 5, 1);
+	obs_property_set_long_description(motionSimMaxRetryProp, "未命中时的最大重试次数");
+	obs_property_t *motionSimDelayMsProp = obs_properties_add_int_slider(props, "motion_sim_delay_ms", "目标延迟(ms)", 0, 500, 10);
+	obs_property_set_long_description(motionSimDelayMsProp, "目标延迟时间（毫秒）");
+	obs_property_t *motionSimDirectProbProp = obs_properties_add_float_slider(props, "motion_sim_direct_prob", "直线移动概率", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(motionSimDirectProbProp, "直接移动到目标的概率");
+	obs_property_t *motionSimOvershootProbProp = obs_properties_add_float_slider(props, "motion_sim_overshoot_prob", "过冲概率", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(motionSimOvershootProbProp, "过冲移动的概率");
+	obs_property_t *motionSimMicroOvshootProbProp = obs_properties_add_float_slider(props, "motion_sim_micro_ovshoot_prob", "微过冲概率", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(motionSimMicroOvshootProbProp, "微过冲移动的概率");
+
+	// 神经网络轨迹生成器设置
+	obs_property_t *enableNeuralPathProp = obs_properties_add_bool(props, "enable_neural_path", "启用神经网络轨迹");
+	obs_property_set_long_description(enableNeuralPathProp, "启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹");
+	obs_property_t *neuralPathPointsProp = obs_properties_add_int_slider(props, "neural_path_points", "轨迹点数量", 10, 100, 5);
+	obs_property_set_long_description(neuralPathPointsProp, "轨迹点数量，越多越平滑但移动越慢");
+	obs_property_t *neuralMouseStepSizeProp = obs_properties_add_float_slider(props, "neural_mouse_step_size", "鼠标步长", 1.0, 20.0, 0.5);
+	obs_property_set_long_description(neuralMouseStepSizeProp, "每次移动的步长大小");
+	obs_property_t *neuralTargetRadiusProp = obs_properties_add_int_slider(props, "neural_target_radius", "目标半径", 1, 50, 1);
+	obs_property_set_long_description(neuralTargetRadiusProp, "到达目标的判定半径");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1484,6 +1579,33 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_bool(settings, "detection_smoothing_enabled", true);
     obs_data_set_default_double(settings, "detection_smoothing_alpha", 0.3);
     
+    // KalmanFilter 追踪参数
+    obs_data_set_default_bool(settings, "use_kalman_tracker", false);
+    obs_data_set_default_int(settings, "kalman_generate_threshold", 2);
+    obs_data_set_default_int(settings, "kalman_terminate_count", 5);
+    
+    // MotionSimulator 人类行为模拟器参数
+    obs_data_set_default_bool(settings, "enable_motion_simulator", false);
+    obs_data_set_default_bool(settings, "motion_sim_random_pos", true);
+    obs_data_set_default_bool(settings, "motion_sim_overshoot", true);
+    obs_data_set_default_bool(settings, "motion_sim_micro_overshoot", true);
+    obs_data_set_default_bool(settings, "motion_sim_inertia", true);
+    obs_data_set_default_bool(settings, "motion_sim_left_btn_adaptive", true);
+    obs_data_set_default_bool(settings, "motion_sim_spray_mode", true);
+    obs_data_set_default_bool(settings, "motion_sim_tap_pause", true);
+    obs_data_set_default_bool(settings, "motion_sim_retry", true);
+    obs_data_set_default_int(settings, "motion_sim_max_retry", 2);
+    obs_data_set_default_int(settings, "motion_sim_delay_ms", 80);
+    obs_data_set_default_double(settings, "motion_sim_direct_prob", 0.85);
+    obs_data_set_default_double(settings, "motion_sim_overshoot_prob", 0.10);
+    obs_data_set_default_double(settings, "motion_sim_micro_ovshoot_prob", 0.05);
+    
+    // 神经网络轨迹生成器默认值
+    obs_data_set_default_bool(settings, "enable_neural_path", false);
+    obs_data_set_default_int(settings, "neural_path_points", 25);
+    obs_data_set_default_double(settings, "neural_mouse_step_size", 4.0);
+    obs_data_set_default_int(settings, "neural_target_radius", 8);
+    
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
 	obs_data_set_default_int(settings, "region_x", 0);
@@ -1869,6 +1991,47 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	// 检测框平滑参数
 	tf->detectionSmoothingEnabled = obs_data_get_bool(settings, "detection_smoothing_enabled");
 	tf->detectionSmoothingAlpha = (float)obs_data_get_double(settings, "detection_smoothing_alpha");
+
+	// KalmanFilter 追踪参数
+	bool newUseKalmanTracker = obs_data_get_bool(settings, "use_kalman_tracker");
+	int newKalmanGenerateThreshold = (int)obs_data_get_int(settings, "kalman_generate_threshold");
+	int newKalmanTerminateCount = (int)obs_data_get_int(settings, "kalman_terminate_count");
+	
+	if (tf->useKalmanTracker != newUseKalmanTracker || 
+	    tf->kalmanGenerateThreshold != newKalmanGenerateThreshold ||
+	    tf->kalmanTerminateCount != newKalmanTerminateCount) {
+		tf->useKalmanTracker = newUseKalmanTracker;
+		tf->kalmanGenerateThreshold = newKalmanGenerateThreshold;
+		tf->kalmanTerminateCount = newKalmanTerminateCount;
+		if (tf->useKalmanTracker) {
+			tf->kalmanTracker.init(tf->kalmanGenerateThreshold, tf->kalmanTerminateCount);
+		} else {
+			tf->kalmanTracker.reset();
+		}
+	}
+
+	// MotionSimulator 人类行为模拟器参数（全局设置，应用到所有配置）
+	for (int i = 0; i < MAX_CONFIGS; i++) {
+		tf->mouseConfigs[i].enableMotionSimulator = obs_data_get_bool(settings, "enable_motion_simulator");
+		tf->mouseConfigs[i].motionSimRandomPos = obs_data_get_bool(settings, "motion_sim_random_pos");
+		tf->mouseConfigs[i].motionSimOvershoot = obs_data_get_bool(settings, "motion_sim_overshoot");
+		tf->mouseConfigs[i].motionSimMicroOvershoot = obs_data_get_bool(settings, "motion_sim_micro_overshoot");
+		tf->mouseConfigs[i].motionSimInertia = obs_data_get_bool(settings, "motion_sim_inertia");
+		tf->mouseConfigs[i].motionSimLeftBtnAdaptive = obs_data_get_bool(settings, "motion_sim_left_btn_adaptive");
+		tf->mouseConfigs[i].motionSimSprayMode = obs_data_get_bool(settings, "motion_sim_spray_mode");
+		tf->mouseConfigs[i].motionSimTapPause = obs_data_get_bool(settings, "motion_sim_tap_pause");
+		tf->mouseConfigs[i].motionSimRetry = obs_data_get_bool(settings, "motion_sim_retry");
+		tf->mouseConfigs[i].motionSimMaxRetry = (int)obs_data_get_int(settings, "motion_sim_max_retry");
+		tf->mouseConfigs[i].motionSimDelayMs = (int)obs_data_get_int(settings, "motion_sim_delay_ms");
+		tf->mouseConfigs[i].motionSimDirectProb = (float)obs_data_get_double(settings, "motion_sim_direct_prob");
+		tf->mouseConfigs[i].motionSimOvershootProb = (float)obs_data_get_double(settings, "motion_sim_overshoot_prob");
+		tf->mouseConfigs[i].motionSimMicroOvshootProb = (float)obs_data_get_double(settings, "motion_sim_micro_ovshoot_prob");
+		// 神经网络轨迹生成器参数（全局设置，应用到所有配置）
+		tf->mouseConfigs[i].enableNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
+		tf->mouseConfigs[i].neuralPathPoints = (int)obs_data_get_int(settings, "neural_path_points");
+		tf->mouseConfigs[i].neuralMouseStepSize = obs_data_get_double(settings, "neural_mouse_step_size");
+		tf->mouseConfigs[i].neuralTargetRadius = (int)obs_data_get_int(settings, "neural_target_radius");
+	}
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -3820,7 +3983,42 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			{
 				std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
 				
-				std::vector<Detection>& trackedTargets = filter->trackedTargets;
+				// 使用 KalmanFilter 追踪
+				if (filter->useKalmanTracker) {
+					std::vector<KalmanDetail::DetectionObject> kalmanDets;
+					for (const auto& det : newDetections) {
+						KalmanDetail::DetectionObject kdet;
+						kdet.bbox.x = det.x;
+						kdet.bbox.y = det.y;
+						kdet.bbox.width = det.width;
+						kdet.bbox.height = det.height;
+						kdet.label = det.label;
+						kdet.prob = det.confidence;
+						kdet.track_id = -1;
+						kalmanDets.push_back(kdet);
+					}
+					
+					std::vector<KalmanDetail::DetectionObject> kalmanTracked = filter->kalmanTracker.predict(kalmanDets);
+					
+					for (const auto& kt : kalmanTracked) {
+						Detection det;
+						det.x = kt.bbox.x;
+						det.y = kt.bbox.y;
+						det.width = kt.bbox.width;
+						det.height = kt.bbox.height;
+						det.centerX = det.x + det.width / 2.0f;
+						det.centerY = det.y + det.height / 2.0f;
+						det.label = kt.label;
+						det.confidence = kt.prob;
+						det.trackId = kt.track_id;
+						det.lostFrames = 0;
+						trackedDetections.push_back(det);
+					}
+					
+					filter->trackedTargets = trackedDetections;
+				} else {
+					// 原有追踪逻辑
+					std::vector<Detection>& trackedTargets = filter->trackedTargets;
 				
 				if (trackedTargets.empty()) {
 					for (auto& det : newDetections) {
@@ -3957,6 +4155,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						}
 					}
 				}
+				}  // end of else (原有追踪逻辑)
 				
 				filter->trackedTargets = std::move(trackedDetections);
 			}
@@ -4708,6 +4907,26 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.dynamicMinDataPoints = tf->dynamicMinDataPoints;
 		mcConfig.dynamicErrorTolerance = tf->dynamicErrorTolerance;
 		mcConfig.dynamicSmoothingFactor = tf->dynamicSmoothingFactor;
+		// MotionSimulator 人类行为模拟器参数
+		mcConfig.enableMotionSimulator = cfg.enableMotionSimulator;
+		mcConfig.motionSimRandomPos = cfg.motionSimRandomPos;
+		mcConfig.motionSimOvershoot = cfg.motionSimOvershoot;
+		mcConfig.motionSimMicroOvershoot = cfg.motionSimMicroOvershoot;
+		mcConfig.motionSimInertia = cfg.motionSimInertia;
+		mcConfig.motionSimLeftBtnAdaptive = cfg.motionSimLeftBtnAdaptive;
+		mcConfig.motionSimSprayMode = cfg.motionSimSprayMode;
+		mcConfig.motionSimTapPause = cfg.motionSimTapPause;
+		mcConfig.motionSimRetry = cfg.motionSimRetry;
+		mcConfig.motionSimMaxRetry = cfg.motionSimMaxRetry;
+		mcConfig.motionSimDelayMs = cfg.motionSimDelayMs;
+		mcConfig.motionSimDirectProb = cfg.motionSimDirectProb;
+		mcConfig.motionSimOvershootProb = cfg.motionSimOvershootProb;
+		mcConfig.motionSimMicroOvshootProb = cfg.motionSimMicroOvshootProb;
+		// 神经网络轨迹生成器参数
+		mcConfig.enableNeuralPath = cfg.enableNeuralPath;
+		mcConfig.neuralPathPoints = cfg.neuralPathPoints;
+		mcConfig.neuralMouseStepSize = cfg.neuralMouseStepSize;
+		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
