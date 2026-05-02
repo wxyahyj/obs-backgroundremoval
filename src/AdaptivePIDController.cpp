@@ -186,15 +186,13 @@ void AdaptiveAimController::update(float rawDx, float rawDy, double currentTime,
     static int logCounter = 0;
     if (++logCounter >= 30) {
         logCounter = 0;
-        blog(LOG_INFO, "[AdaptivePID] === DT DEBUG === currentTime=%.3f lastTime=%.3f rawDt=%.4f clampedDt=%.4f",
-             currentTime, lastTime_ - rawDt, rawDt, dt);
+        blog(LOG_INFO, "[AdaptivePID] === DT DEBUG === rawDt=%.4f clampedDt=%.4f",
+             rawDt, dt);
         blog(LOG_INFO, "[AdaptivePID] INPUT: rawDx=%.1f rawDy=%.1f | predX=%.1f predY=%.1f",
              rawDx, rawDy, predX, predY);
         blog(LOG_INFO, "[AdaptivePID] FUSION: fusionX=%.1f fusionY=%.1f | rawOutX=%.1f rawOutY=%.1f",
              fusionErrorX, fusionErrorY, rawOutputX, rawOutputY);
-        blog(LOG_INFO, "[AdaptivePID] OUTPUT: lastOutX=%.1f lastOutY=%.1f | smooth=%.2f | finalX=%.1f finalY=%.1f",
-             lastOutputX_ - outX * config_.outputSmoothing / (1.0f - config_.outputSmoothing + 0.001f),
-             lastOutputY_ - outY * config_.outputSmoothing / (1.0f - config_.outputSmoothing + 0.001f),
+        blog(LOG_INFO, "[AdaptivePID] OUTPUT: smooth=%.2f | finalX=%.1f finalY=%.1f",
              config_.outputSmoothing, outX, outY);
         blog(LOG_INFO, "[AdaptivePID] GAINS: kpGain=(%.3f,%.3f) iGain=(%.3f,%.3f)",
              lastDebugTerms_.kpGainX, lastDebugTerms_.kpGainY,
