@@ -4022,7 +4022,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						filter->kalmanPredictions.clear();
 						std::vector<KalmanDetail::DetectionObject> predictions = filter->kalmanTracker.getPredictions();
 						for (const auto& pred : predictions) {
-							KalmanPrediction kp;
+							yolo_detector_filter::KalmanPrediction kp;
 							kp.x = pred.bbox.x;
 							kp.y = pred.bbox.y;
 							kp.width = pred.bbox.width;
