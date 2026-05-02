@@ -35,8 +35,8 @@ void IncrementalPIDAdapter::setConfig(const IncrementalPIDConfig& config)
 void IncrementalPIDAdapter::update(float errorX, float errorY, float& outX, float& outY)
 {
     mist::reconstructed::Detection det;
-    det.x = static_cast<int>(-errorX);
-    det.y = static_cast<int>(-errorY);
+    det.x = static_cast<int>(errorX);
+    det.y = static_cast<int>(errorY);
     det.width = 1;
     det.height = 1;
     det.class_id = 0;
