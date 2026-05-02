@@ -125,6 +125,14 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
+    // 更新稳定性检测器配置
+    stabilityAnalyzer_.setEnabled(config.enableStabilityCheck);
+    stabilityAnalyzer_.setConfig(
+        config.stabilityRequiredFrames,
+        config.stabilityPositionThreshold,
+        config.stabilitySizeThreshold
+    );
+    
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
                 getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 
@@ -179,12 +187,20 @@ void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detec
     config.inferenceFrameHeight = frameHeight;
     config.cropOffsetX = cropX;
     config.cropOffsetY = cropY;
+    currentFrameWidth_ = frameWidth;
+    currentFrameHeight_ = frameHeight;
 }
 
 void AbstractMouseController::tick()
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::unique_lock<std::mutex> lock(mutex);
+    dataReady_.store(true);
+    lock.unlock();
+    controlCv_.notify_one();
+}
 
+void AbstractMouseController::tickInternal()
+{
     if (!config.enableMouseControl) {
         if (autoTriggerHolding) {
             performClickUp();
@@ -252,6 +268,8 @@ void AbstractMouseController::tick()
             chrisController_.resetPredictor();
             resetMotionState();
         }
+        // 目标丢失时重置稳定性检测器
+        stabilityAnalyzer_.reset();
         if (autoTriggerHolding) {
             auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
             if (fireElapsed >= currentFireDuration) {
@@ -294,6 +312,22 @@ void AbstractMouseController::tick()
         obs_log(LOG_INFO, "[%s] NEURAL PATH STATUS: enabled=%d, initialized=%d, hasDetections=%zu",
                 getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0,
                 currentDetections.size());
+    }
+
+    // 稳定性检测：目标不稳定时跳过追踪
+    auto stabilityResult = stabilityAnalyzer_.analyze(target, config.inferenceFrameWidth, config.inferenceFrameHeight);
+    if (!stabilityResult.isStable) {
+        // 目标不稳定，使用平滑后的目标但降低响应
+        if (stabilityResult.stableFrameCount > 0 && enableNeuralPathDebug_) {
+            obs_log(LOG_INFO, "[%s] TARGET UNSTABLE: stableFrames=%d/%d, score=%.2f",
+                    getLogPrefix(), stabilityResult.stableFrameCount, 
+                    stabilityAnalyzer_.getRequiredStableFrames(),
+                    stabilityResult.stabilityScore);
+        }
+        // 使用平滑后的目标坐标
+        if (stabilityResult.stableFrameCount > 0) {
+            *target = stabilityResult.smoothedTarget;
+        }
     }
 
     float targetPixelX = target->centerX * config.inferenceFrameWidth;
@@ -1448,6 +1482,57 @@ void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 const char* AbstractMouseController::getLogPrefix() const
 {
     return "";
+}
+
+AbstractMouseController::~AbstractMouseController()
+{
+    stop();
+}
+
+void AbstractMouseController::start()
+{
+    if (running_.load()) return;
+    
+    running_.store(true);
+    controlThread_ = std::thread(&AbstractMouseController::controlLoop, this);
+    obs_log(LOG_INFO, "[%s] Control thread started", getLogPrefix());
+}
+
+void AbstractMouseController::stop()
+{
+    if (!running_.load()) return;
+    
+    running_.store(false);
+    controlCv_.notify_all();
+    
+    if (controlThread_.joinable()) {
+        controlThread_.join();
+    }
+    obs_log(LOG_INFO, "[%s] Control thread stopped", getLogPrefix());
+}
+
+bool AbstractMouseController::isRunning() const
+{
+    return running_.load();
+}
+
+void AbstractMouseController::controlLoop()
+{
+    obs_log(LOG_INFO, "[%s] Control loop entering", getLogPrefix());
+    
+    while (running_.load()) {
+        std::unique_lock<std::mutex> lock(mutex);
+        controlCv_.wait_for(lock, std::chrono::milliseconds(1), 
+            [this] { return dataReady_.load() || !running_.load(); });
+        
+        if (!running_.load()) break;
+        
+        dataReady_.store(false);
+        
+        tickInternal();
+    }
+    
+    obs_log(LOG_INFO, "[%s] Control loop exiting", getLogPrefix());
 }
 
 #endif

@@ -178,25 +178,25 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int inputCropWidth[BUFFER_COUNT] = {0};
 	int inputCropHeight[BUFFER_COUNT] = {0};
 
-	// 输出结果缓冲区（推理线程 → 主线程）
-	std::vector<Detection> outputDetections[BUFFER_COUNT];
-	std::vector<Detection> outputTrackedTargets[BUFFER_COUNT];
-	int outputFrameWidths[BUFFER_COUNT] = {0};
-	int outputFrameHeights[BUFFER_COUNT] = {0};
-	int outputCropX[BUFFER_COUNT] = {0};
-	int outputCropY[BUFFER_COUNT] = {0};
-
 	// 无锁索引管理
 	std::atomic<int> inputWriteIdx{0};      // 主线程写入位置
 	std::atomic<int> inputReadIdx{0};       // 推理线程读取位置
-	std::atomic<int> outputReadyIdx{-1};    // 推理完成位置（-1表示无新结果）
-	std::atomic<int64_t> outputSequence{0};  // 输出序列号，用于判断结果是否更新
-	std::atomic<int64_t> lastConsumedSeq{-1}; // 上次消费的序列号
 	std::atomic<int64_t> lastResultTimestamp{0}; // 上次有新结果的时刻
 
 	// 缓冲区状态：0=空闲, 1=有数据待推理, 2=正在推理, 3=推理完成
 	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
-	std::atomic<uint8_t> outputState[BUFFER_COUNT] = {};
+
+	// === 原子指针数据传递（替代输出缓冲区） ===
+	struct InferenceResult {
+		std::vector<Detection> detections;
+		std::vector<Detection> trackedTargets;
+		int frameWidth = 0;
+		int frameHeight = 0;
+		int cropX = 0;
+		int cropY = 0;
+		int64_t timestamp = 0;
+	};
+	std::atomic<std::shared_ptr<InferenceResult>> atomicInferenceResult{nullptr};
 
 	std::chrono::high_resolution_clock::time_point lastFpsTime;
 	int fpsFrameCount;
@@ -459,6 +459,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int neuralPathPoints;
 		double neuralMouseStepSize;
 		int neuralTargetRadius;
+		bool enableNeuralPathDebug;
+		// 稳定性检测参数
+		bool enableStabilityCheck;
+		int stabilityRequiredFrames;
+		float stabilityPositionThreshold;
+		float stabilitySizeThreshold;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -553,6 +559,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			neuralPathPoints = 25;
 			neuralMouseStepSize = 4.0;
 			neuralTargetRadius = 8;
+			enableNeuralPathDebug = false;
+			// 稳定性检测默认值
+			enableStabilityCheck = false;
+			stabilityRequiredFrames = 3;
+			stabilityPositionThreshold = 5.0f;
+			stabilitySizeThreshold = 0.1f;
 		}
 	};
 
@@ -845,6 +857,17 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(neuralTargetRadiusProp, "到达目标的判定半径");
 	obs_property_t *enableNeuralPathDebugProp = obs_properties_add_bool(props, "enable_neural_path_debug", "神经网络调试日志");
 	obs_property_set_long_description(enableNeuralPathDebugProp, "开启后会输出详细的神经网络轨迹运行日志，用于调试");
+
+	// 稳定性检测设置
+	obs_property_t *enableStabilityProp = obs_properties_add_bool(props, "enable_stability_check", "启用稳定性检测");
+	obs_property_set_long_description(enableStabilityProp, "启用后只有目标稳定才会开始追踪，减少抖动");
+	obs_property_set_modified_callback(enableStabilityProp, onStabilityCheckChanged);
+	obs_property_t *stabilityFramesProp = obs_properties_add_int_slider(props, "stability_required_frames", "稳定帧数", 1, 10, 1);
+	obs_property_set_long_description(stabilityFramesProp, "需要连续多少帧目标位置稳定才开始追踪");
+	obs_property_t *stabilityPosThresholdProp = obs_properties_add_float_slider(props, "stability_position_threshold", "位置阈值(像素)", 1.0, 20.0, 0.5);
+	obs_property_set_long_description(stabilityPosThresholdProp, "目标位置变化小于此阈值才认为稳定");
+	obs_property_t *stabilitySizeThresholdProp = obs_properties_add_float_slider(props, "stability_size_threshold", "尺寸阈值", 0.01, 0.5, 0.01);
+	obs_property_set_long_description(stabilitySizeThresholdProp, "目标尺寸相对变化小于此阈值才认为稳定");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1452,6 +1475,17 @@ static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *propert
 	return true;
 }
 
+static bool onStabilityCheckChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	bool useStability = obs_data_get_bool(settings, "enable_stability_check");
+	
+	obs_property_set_visible(obs_properties_get(props, "stability_required_frames"), useStability);
+	obs_property_set_visible(obs_properties_get(props, "stability_position_threshold"), useStability);
+	obs_property_set_visible(obs_properties_get(props, "stability_size_threshold"), useStability);
+	
+	return true;
+}
+
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	int page = (int)obs_data_get_int(settings, "settings_page");
@@ -1572,6 +1606,13 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), page == 5 && useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), page == 5 && useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), page == 5 && useNeuralPath);
+	
+	// 稳定性检测设置（页面5）
+	bool useStability = obs_data_get_bool(settings, "enable_stability_check");
+	obs_property_set_visible(obs_properties_get(props, "enable_stability_check"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "stability_required_frames"), page == 5 && useStability);
+	obs_property_set_visible(obs_properties_get(props, "stability_position_threshold"), page == 5 && useStability);
+	obs_property_set_visible(obs_properties_get(props, "stability_size_threshold"), page == 5 && useStability);
 	
 	// 多指标融合追踪权重（页面5）
 	obs_property_set_visible(obs_properties_get(props, "tracking_weight_iou"), page == 5);
@@ -1722,6 +1763,12 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "neural_mouse_step_size", 4.0);
     obs_data_set_default_int(settings, "neural_target_radius", 8);
     obs_data_set_default_bool(settings, "enable_neural_path_debug", false);
+    
+    // 稳定性检测默认值
+    obs_data_set_default_bool(settings, "enable_stability_check", false);
+    obs_data_set_default_int(settings, "stability_required_frames", 3);
+    obs_data_set_default_double(settings, "stability_position_threshold", 5.0);
+    obs_data_set_default_double(settings, "stability_size_threshold", 0.1);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -2154,6 +2201,11 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].neuralMouseStepSize = obs_data_get_double(settings, "neural_mouse_step_size");
 		tf->mouseConfigs[i].neuralTargetRadius = (int)obs_data_get_int(settings, "neural_target_radius");
 		tf->mouseConfigs[i].enableNeuralPathDebug = obs_data_get_bool(settings, "enable_neural_path_debug");
+		// 稳定性检测参数（全局设置，应用到所有配置）
+		tf->mouseConfigs[i].enableStabilityCheck = obs_data_get_bool(settings, "enable_stability_check");
+		tf->mouseConfigs[i].stabilityRequiredFrames = (int)obs_data_get_int(settings, "stability_required_frames");
+		tf->mouseConfigs[i].stabilityPositionThreshold = (float)obs_data_get_double(settings, "stability_position_threshold");
+		tf->mouseConfigs[i].stabilitySizeThreshold = (float)obs_data_get_double(settings, "stability_size_threshold");
 	}
 	
 	// 日志：神经网络配置读取结果
@@ -4334,31 +4386,32 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			}
 		}
 
-		// 写入输出缓冲区（总是执行，确保主线程能收到空结果通知）
+		// 写入原子指针（替代四缓冲区）
 		{
-			std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
-			filter->outputDetections[readIdx] = filter->trackedTargets;
-			filter->outputTrackedTargets[readIdx] = filter->trackedTargets;
+			auto result = std::make_shared<InferenceResult>();
+			{
+				std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
+				result->detections = filter->trackedTargets;
+				result->trackedTargets = filter->trackedTargets;
+			}
+			result->frameWidth = fullWidth;
+			result->frameHeight = fullHeight;
+			result->cropX = cropX;
+			result->cropY = cropY;
+			result->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+			
+			filter->atomicInferenceResult.store(result, std::memory_order_release);
 		}
-		filter->outputFrameWidths[readIdx] = fullWidth;
-		filter->outputFrameHeights[readIdx] = fullHeight;
-		filter->outputCropX[readIdx] = cropX;
-		filter->outputCropY[readIdx] = cropY;
 
 		// 更新统计信息
 		filter->inferenceCount++;
 		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
 		filter->framesInferred.fetch_add(1, std::memory_order_relaxed);
 
-		// 标记输出缓冲区为完成，递增序列号
-		int64_t currentSeq = filter->outputSequence.fetch_add(1, std::memory_order_relaxed);
-		filter->outputState[readIdx].store(1, std::memory_order_release);
-		
-		// 只有序列号更新时才更新就绪索引（防止重复消费）
-		int64_t lastSeq = filter->lastConsumedSeq.load(std::memory_order_acquire);
-		if (currentSeq > lastSeq) {
-			filter->outputReadyIdx.store(readIdx, std::memory_order_release);
-		}
+		// 更新最后有结果的时刻
+		filter->lastResultTimestamp.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::high_resolution_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
 
 		// 导出坐标（如果有检测结果）
 		if (filter->exportCoordinates && !newDetections.empty()) {
@@ -4895,6 +4948,11 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->inferenceRunning = true;
 		instance->inferenceThread = std::thread(inferenceThreadWorker, instance.get());
 
+		// Start mouse control thread (async mode)
+		if (instance->mouseController) {
+			instance->mouseController->start();
+		}
+
 		return ptr;
 	} catch (const std::exception &e) {
 		obs_log(LOG_ERROR, "[YOLO Detector] Failed to create filter: %s", e.what());
@@ -4919,6 +4977,11 @@ void yolo_detector_filter_destroy(void *data)
 
 	// Mark as disabled to prevent further processing
 	tf->isDisabled = true;
+
+	// Stop mouse control thread (async mode)
+	if (tf->mouseController) {
+		tf->mouseController->stop();
+	}
 
 	// Stop inference thread
 	tf->inferenceRunning = false;
@@ -5022,45 +5085,31 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		tf->lastFpsTime = now;
 	}
 
-	// === 四缓冲区：消费推理结果（带序列号防重复） ===
-	int readyIdx = tf->outputReadyIdx.load(std::memory_order_acquire);
-	if (readyIdx >= 0 && readyIdx < tf->BUFFER_COUNT && 
-		tf->outputState[readyIdx].load(std::memory_order_acquire) == 1) {
-		
-		// 检查是否是新的结果（防止重复消费）
-		int64_t currentSeq = tf->outputSequence.load(std::memory_order_acquire);
-		int64_t lastSeq = tf->lastConsumedSeq.load(std::memory_order_acquire);
-		
-		if (currentSeq > lastSeq) {
+	// === 原子指针：消费推理结果 ===
+	auto inferenceResult = tf->atomicInferenceResult.load(std::memory_order_acquire);
+	if (inferenceResult) {
+		{
 			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-			tf->detections = tf->outputDetections[readyIdx];
-			
+			tf->detections = inferenceResult->detections;
+		}
+		{
 			std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
-			tf->inferenceFrameWidth = tf->outputFrameWidths[readyIdx];
-			tf->inferenceFrameHeight = tf->outputFrameHeights[readyIdx];
-			tf->cropOffsetX = tf->outputCropX[readyIdx];
-			tf->cropOffsetY = tf->outputCropY[readyIdx];
-
-			// 标记输出缓冲区为已消费，更新已消费序列号
-			tf->outputState[readyIdx].store(0, std::memory_order_release);
-			tf->lastConsumedSeq.store(currentSeq, std::memory_order_release);
-			tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
-			
-			// 更新最后有结果的时刻
-			auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-			tf->lastResultTimestamp.store(nowMs, std::memory_order_relaxed);
-		} else {
-			// 没有新结果，检查是否超时需要清空
-			auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-			int64_t lastTs = tf->lastResultTimestamp.load(std::memory_order_acquire);
-			
-			// 超过500ms没有新结果，自动清空检测框
-			if (nowMs - lastTs > 500 && !tf->detections.empty()) {
-				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-				tf->detections.clear();
-			}
+			tf->inferenceFrameWidth = inferenceResult->frameWidth;
+			tf->inferenceFrameHeight = inferenceResult->frameHeight;
+			tf->cropOffsetX = inferenceResult->cropX;
+			tf->cropOffsetY = inferenceResult->cropY;
+		}
+		tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
+	} else {
+		// 没有结果，检查是否超时需要清空
+		auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+		int64_t lastTs = tf->lastResultTimestamp.load(std::memory_order_acquire);
+		
+		// 超过500ms没有新结果，自动清空检测框
+		if (nowMs - lastTs > 500 && !tf->detections.empty()) {
+			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+			tf->detections.clear();
 		}
 	}
 
@@ -5229,6 +5278,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.neuralMouseStepSize = cfg.neuralMouseStepSize;
 		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
 		mcConfig.enableNeuralPathDebug = cfg.enableNeuralPathDebug;
+		// 稳定性检测参数
+		mcConfig.enableStabilityCheck = cfg.enableStabilityCheck;
+		mcConfig.stabilityRequiredFrames = cfg.stabilityRequiredFrames;
+		mcConfig.stabilityPositionThreshold = cfg.stabilityPositionThreshold;
+		mcConfig.stabilitySizeThreshold = cfg.stabilitySizeThreshold;
 		
 		static int syncCount = 0;
 		syncCount++;

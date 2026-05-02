@@ -222,6 +222,12 @@ struct MouseControllerConfig {
     double neuralMouseStepSize = 4.0;          // 鼠标步长
     int neuralTargetRadius = 8;                // 目标半径（到达判定）
     bool enableNeuralPathDebug = false;        // 是否输出神经网络调试日志
+
+    // 目标稳定性检测配置
+    bool enableStabilityCheck = false;         // 是否启用稳定性检测
+    int stabilityRequiredFrames = 3;           // 需要连续稳定的帧数
+    float stabilityPositionThreshold = 5.0f;   // 位置稳定性阈值（像素）
+    float stabilitySizeThreshold = 0.1f;       // 尺寸稳定性阈值（相对变化）
 };
 
 class MouseControllerInterface {
@@ -246,6 +252,11 @@ public:
 
     // 设置PID数据回调函数（用于调试可视化）
     virtual void setPidDataCallback(PidDataCallback callback) = 0;
+
+    // 线程控制接口（异步鼠标控制）
+    virtual void start() = 0;   // 启动控制线程
+    virtual void stop() = 0;    // 停止控制线程
+    virtual bool isRunning() const = 0;  // 检查线程状态
 };
 
 #endif
