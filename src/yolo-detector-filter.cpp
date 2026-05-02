@@ -196,7 +196,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int cropY = 0;
 		int64_t timestamp = 0;
 	};
-	std::atomic<std::shared_ptr<InferenceResult>> atomicInferenceResult{nullptr};
+	// 使用 mutex 保护的 shared_ptr 替代 atomic<shared_ptr>（MSVC兼容性）
+	std::shared_ptr<InferenceResult> inferenceResultPtr_{nullptr};
+	mutable std::mutex inferenceResultMutex_;
 
 	std::chrono::high_resolution_clock::time_point lastFpsTime;
 	int fpsFrameCount;
@@ -655,6 +657,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onMotionSimulatorChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
+static bool onStabilityCheckChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
@@ -4386,9 +4389,9 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			}
 		}
 
-		// 写入原子指针（替代四缓冲区）
+		// 写入共享指针（替代四缓冲区）
 		{
-			auto result = std::make_shared<InferenceResult>();
+			auto result = std::make_shared<yolo_detector_filter::InferenceResult>();
 			{
 				std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
 				result->detections = filter->trackedTargets;
@@ -4401,7 +4404,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			result->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
 				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 			
-			filter->atomicInferenceResult.store(result, std::memory_order_release);
+			std::lock_guard<std::mutex> resultLock(filter->inferenceResultMutex_);
+			filter->inferenceResultPtr_ = result;
 		}
 
 		// 更新统计信息
@@ -5085,8 +5089,12 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		tf->lastFpsTime = now;
 	}
 
-	// === 原子指针：消费推理结果 ===
-	auto inferenceResult = tf->atomicInferenceResult.load(std::memory_order_acquire);
+	// === 共享指针：消费推理结果 ===
+	std::shared_ptr<yolo_detector_filter::InferenceResult> inferenceResult;
+	{
+		std::lock_guard<std::mutex> resultLock(tf->inferenceResultMutex_);
+		inferenceResult = tf->inferenceResultPtr_;
+	}
 	if (inferenceResult) {
 		{
 			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
