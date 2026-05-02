@@ -272,6 +272,9 @@ public:
     }
 
     const float* state_prior_5() const { return X_pri_; }
+    const float* state_prior_7() const { return X_pri_; }  // 完整状态（包括速度）
+    float get_velocity_x() const { return X_pri_[5]; }
+    float get_velocity_y() const { return X_pri_[6]; }
     bool has_z() const { return has_z_; }
     const float* last_z6() const { return last_z6_; }
     int id() const { return id_; }
@@ -445,6 +448,39 @@ public:
             predictions.push_back(o);
         }
         return predictions;
+    }
+
+    // 获取多帧预测位置（用于渲染预测轨迹）
+    // frames: 预测帧数
+    // 返回: 每个追踪目标的多帧预测位置列表（中心点坐标）
+    std::vector<std::vector<std::pair<float, float>>> getMultiFramePredictions(int frames) const {
+        std::vector<std::vector<std::pair<float, float>>> result;
+        result.reserve(tracks_.size());
+        
+        for (const auto& t : tracks_) {
+            if (!t->is_confirmed()) continue;
+            
+            float cx = t->state_prior_5()[1];
+            float cy = t->state_prior_5()[2];
+            float vx = t->get_velocity_x();
+            float vy = t->get_velocity_y();
+            
+            std::vector<std::pair<float, float>> trajectory;
+            trajectory.reserve(frames + 1);
+            
+            // 当前位置
+            trajectory.push_back({cx, cy});
+            
+            // 预测未来帧
+            for (int i = 1; i <= frames; ++i) {
+                float pred_x = cx + vx * i;
+                float pred_y = cy + vy * i;
+                trajectory.push_back({pred_x, pred_y});
+            }
+            
+            result.push_back(trajectory);
+        }
+        return result;
     }
 
 private:

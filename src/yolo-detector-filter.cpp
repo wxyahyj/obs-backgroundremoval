@@ -83,6 +83,13 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	bool showKalmanPredictions = true;
 	uint32_t kalmanPredictionColor = 0xFF00FFFF; // 青色 (ARGB)
 	
+	// 多帧预测轨迹
+	int kalmanPredictionFrames = 5;  // 预测帧数
+	std::vector<std::vector<std::pair<float, float>>> kalmanTrajectories;  // 多帧预测轨迹
+	std::mutex kalmanTrajectoriesMutex;
+	bool showKalmanTrajectories = true;  // 是否显示预测轨迹
+	uint32_t kalmanTrajectoryColor = 0xFFFFFF00; // 黄色 (ARGB)
+	
 	// 多指标融合追踪权重
 	float trackingWeightIou;
 	float trackingWeightCenter;
@@ -601,6 +608,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 void inferenceThreadWorker(yolo_detector_filter *filter);
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
+static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
@@ -789,6 +797,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(kalmanTerminateCountProp, "目标丢失多少帧后停止追踪");
 	obs_property_t *showKalmanPredictionsProp = obs_properties_add_bool(props, "show_kalman_predictions", "显示预测位置");
 	obs_property_set_long_description(showKalmanPredictionsProp, "在画面上显示卡尔曼滤波器预测的目标位置（青色虚线框）");
+	obs_property_t *kalmanPredictionFramesProp = obs_properties_add_int_slider(props, "kalman_prediction_frames", "预测帧数", 1, 20, 1);
+	obs_property_set_long_description(kalmanPredictionFramesProp, "卡尔曼滤波器预测的未来帧数，用于显示预测轨迹");
+	obs_property_t *showKalmanTrajectoriesProp = obs_properties_add_bool(props, "show_kalman_trajectories", "显示预测轨迹");
+	obs_property_set_long_description(showKalmanTrajectoriesProp, "在画面上显示卡尔曼滤波器预测的轨迹线（黄色）");
 
 	// MotionSimulator 人类行为模拟器设置
 	obs_property_t *enableMotionSimulatorProp = obs_properties_add_bool(props, "enable_motion_simulator", "启用人类行为模拟");
@@ -1399,6 +1411,8 @@ static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *prop
 	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), useKalman);
 	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), useKalman);
 	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_frames"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_trajectories"), useKalman);
 	
 	return true;
 }
@@ -1528,6 +1542,8 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), page == 5 && useKalman);
 	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), page == 5 && useKalman);
 	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_frames"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_trajectories"), page == 5 && useKalman);
 	
 	// MotionSimulator 人类行为模拟器设置（页面5）
 	bool useMotionSim = obs_data_get_bool(settings, "enable_motion_simulator");
@@ -1677,6 +1693,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "kalman_generate_threshold", 2);
     obs_data_set_default_int(settings, "kalman_terminate_count", 5);
     obs_data_set_default_bool(settings, "show_kalman_predictions", true);
+    obs_data_set_default_int(settings, "kalman_prediction_frames", 5);
+    obs_data_set_default_bool(settings, "show_kalman_trajectories", true);
     
     // MotionSimulator 人类行为模拟器参数
     obs_data_set_default_bool(settings, "enable_motion_simulator", false);
@@ -2093,6 +2111,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	int newKalmanGenerateThreshold = (int)obs_data_get_int(settings, "kalman_generate_threshold");
 	int newKalmanTerminateCount = (int)obs_data_get_int(settings, "kalman_terminate_count");
 	tf->showKalmanPredictions = obs_data_get_bool(settings, "show_kalman_predictions");
+	tf->kalmanPredictionFrames = (int)obs_data_get_int(settings, "kalman_prediction_frames");
+	tf->showKalmanTrajectories = obs_data_get_bool(settings, "show_kalman_trajectories");
 	
 	if (tf->useKalmanTracker != newUseKalmanTracker || 
 	    tf->kalmanGenerateThreshold != newKalmanGenerateThreshold ||
@@ -4114,6 +4134,12 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						}
 					}
 					
+					// 保存多帧预测轨迹用于渲染
+					{
+						std::lock_guard<std::mutex> trajLock(filter->kalmanTrajectoriesMutex);
+						filter->kalmanTrajectories = filter->kalmanTracker.getMultiFramePredictions(filter->kalmanPredictionFrames);
+					}
+					
 					for (const auto& kt : kalmanTracked) {
 						Detection det;
 						det.x = kt.bbox.x;
@@ -4441,6 +4467,70 @@ static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frame
 			gs_vertex2f(x + w, endY);
 		}
 		gs_render_stop(GS_LINES);
+	}
+
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+}
+
+static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+{
+	if (!filter->useKalmanTracker || !filter->showKalmanTrajectories) {
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock(filter->kalmanTrajectoriesMutex);
+
+	if (filter->kalmanTrajectories.empty()) {
+		return;
+	}
+
+	gs_effect_t *solid = filter->solidEffect;
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	// 使用黄色绘制预测轨迹
+	struct vec4 color;
+	float r = ((filter->kalmanTrajectoryColor >> 16) & 0xFF) / 255.0f;
+	float g = ((filter->kalmanTrajectoryColor >> 8) & 0xFF) / 255.0f;
+	float b = (filter->kalmanTrajectoryColor & 0xFF) / 255.0f;
+	float a = ((filter->kalmanTrajectoryColor >> 24) & 0xFF) / 255.0f;
+	vec4_set(&color, r, g, b, a);
+
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+	gs_effect_set_vec4(colorParam, &color);
+
+	for (const auto& trajectory : filter->kalmanTrajectories) {
+		if (trajectory.size() < 2) continue;
+
+		gs_render_start(true);
+		for (size_t i = 0; i < trajectory.size() - 1; ++i) {
+			float x1 = trajectory[i].first * frameWidth;
+			float y1 = trajectory[i].second * frameHeight;
+			float x2 = trajectory[i + 1].first * frameWidth;
+			float y2 = trajectory[i + 1].second * frameHeight;
+
+			gs_vertex2f(x1, y1);
+			gs_vertex2f(x2, y2);
+		}
+		gs_render_stop(GS_LINES);
+
+		// 在预测点位置绘制小圆点
+		for (size_t i = 1; i < trajectory.size(); ++i) {
+			float cx = trajectory[i].first * frameWidth;
+			float cy = trajectory[i].second * frameHeight;
+			float radius = 3.0f;
+
+			gs_render_start(true);
+			for (int a = 0; a < 16; ++a) {
+				float angle1 = (a / 16.0f) * 2.0f * 3.14159f;
+				float angle2 = ((a + 1) / 16.0f) * 2.0f * 3.14159f;
+				gs_vertex2f(cx + radius * cosf(angle1), cy + radius * sinf(angle1));
+				gs_vertex2f(cx + radius * cosf(angle2), cy + radius * sinf(angle2));
+			}
+			gs_render_stop(GS_LINES);
+		}
 	}
 
 	gs_technique_end_pass(tech);
@@ -5485,6 +5575,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 	// 渲染卡尔曼预测位置（虚线青色框）
 	renderKalmanPredictions(tf.get(), width, height);
+	// 渲染卡尔曼多帧预测轨迹（黄色轨迹线）
+	renderKalmanTrajectories(tf.get(), width, height);
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
 	}
