@@ -451,8 +451,11 @@ public:
     }
 
     // 获取多帧预测位置（用于渲染预测轨迹）
-    // frames: 预测帧数
-    // 返回: 每个追踪目标的多帧预测位置列表（中心点坐标）
+    // 注意：这是简化版本的预测，仅用于可视化目的
+    // 使用与卡尔曼滤波器相同的线性速度模型：pos' = pos + vel * dt
+    // 完整的卡尔曼预测还会更新协方差矩阵（不确定性增长），但对于轨迹可视化来说不需要
+    // 参数：frames - 预测帧数
+    // 返回：每个追踪目标的多帧预测位置列表（中心点坐标）
     std::vector<std::vector<std::pair<float, float>>> getMultiFramePredictions(int frames) const {
         std::vector<std::vector<std::pair<float, float>>> result;
         result.reserve(tracks_.size());
@@ -471,7 +474,7 @@ public:
             // 当前位置
             trajectory.push_back({cx, cy});
             
-            // 预测未来帧
+            // 预测未来帧（使用卡尔曼状态转移模型：cx' = cx + vx * dt, cy' = cy + vy * dt）
             for (int i = 1; i <= frames; ++i) {
                 float pred_x = cx + vx * i;
                 float pred_y = cy + vy * i;
