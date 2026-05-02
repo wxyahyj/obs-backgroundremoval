@@ -352,12 +352,12 @@ void AbstractMouseController::tick()
         }
         
         // 检查目标是否变化（阈值判断）
-        float targetChangeThreshold = 5.0f; // 目标变化阈值
+        float targetChangeThreshold = 15.0f; // 目标变化阈值（像素）
         bool targetChanged = std::abs(targetPixelX - lastNeuralTargetX_) > targetChangeThreshold ||
                             std::abs(targetPixelY - lastNeuralTargetY_) > targetChangeThreshold;
         
         // 检查是否已到达目标（相对位置接近0）
-        float reachThreshold = 1.0f; // 到达判定阈值（像素）
+        float reachThreshold = static_cast<float>(config.neuralTargetRadius); // 使用配置的目标半径
         bool targetReached = std::abs(relativeTargetX) < reachThreshold &&
                             std::abs(relativeTargetY) < reachThreshold;
         
