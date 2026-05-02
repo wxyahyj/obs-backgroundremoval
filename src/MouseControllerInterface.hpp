@@ -15,7 +15,8 @@ enum class AlgorithmType {
     AdvancedPID,      // 高级PID（当前使用的自适应PID）
     StandardPID,      // 标准PID（经典PID）
     ChrisPID,         // ChrisPID（克里斯控制器）
-    DynamicPID        // 动态PID（动态阈值状态机）
+    DynamicPID,       // 动态PID（动态阈值状态机）
+    AdaptivePID       // 自适应PID（P_PID控制器）
 };
 
 // PID数据回调函数类型
@@ -193,6 +194,24 @@ struct MouseControllerConfig {
     int   dynamicMinDataPoints = 2;            // 最小数据量
     float dynamicErrorTolerance = 3.0f;        // 误差变化容限
     float dynamicSmoothingFactor = 0.8f;       // 平滑因子
+    
+    // AdaptivePID参数（自适应PID控制器 - P_PID）
+    float adaptiveBaseKp = 0.5f;               // 基础比例系数
+    float adaptiveBaseKi = 0.1f;               // 基础积分系数
+    float adaptiveBaseKd = 0.05f;              // 基础微分系数
+    float adaptiveIntegralThreshold = 5.0f;    // 积分增益调整阈值
+    float adaptiveKpThreshold = 5.0f;          // Kp增益调整阈值
+    float adaptiveIntegralRate = 0.1f;         // 积分增益变化速率
+    float adaptiveKpRate = 0.1f;               // Kp增益变化速率
+    float adaptiveLargeErrorRate = 0.1f;       // 大误差变化速率
+    float adaptiveMaxOutput = 1000.0f;         // 最大输出限幅
+    float adaptiveMaxIntegral = 1000.0f;       // 最大积分限幅
+    bool adaptiveUsePredictor = true;          // 是否启用预测器
+    float adaptivePredWeightX = 0.5f;          // X轴预测权重
+    float adaptivePredWeightY = 0.1f;          // Y轴预测权重
+    float adaptiveMaxPredTime = 0.1f;          // 最大预测时间
+    float adaptiveOutputSmoothing = 0.7f;      // 输出平滑系数
+    float adaptiveDerivativeFilterAlpha = 0.3f; // 微分滤波系数
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重

@@ -606,6 +606,24 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float dynamicErrorTolerance;
 	float dynamicSmoothingFactor;
 	
+	// AdaptivePID参数
+	float adaptiveBaseKp;
+	float adaptiveBaseKi;
+	float adaptiveBaseKd;
+	float adaptiveIntegralThreshold;
+	float adaptiveKpThreshold;
+	float adaptiveIntegralRate;
+	float adaptiveKpRate;
+	float adaptiveLargeErrorRate;
+	float adaptiveMaxOutput;
+	float adaptiveMaxIntegral;
+	bool adaptiveUsePredictor;
+	float adaptivePredWeightX;
+	float adaptivePredWeightY;
+	float adaptiveMaxPredTime;
+	float adaptiveOutputSmoothing;
+	float adaptiveDerivativeFilterAlpha;
+	
 #endif
 
 	~yolo_detector_filter() {
@@ -1199,7 +1217,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "标准PID (经典)", 1);
 	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 2);
 	obs_property_list_add_int(algorithmTypeList, "动态PID (动态阈值)", 3);
-	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机");
+	obs_property_list_add_int(algorithmTypeList, "AdaptivePID (自适应PID)", 4);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机；AdaptivePID是P_PID自适应控制器");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 标准PID配置分组
@@ -1275,6 +1294,41 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(dynamicToleranceProp, "误差变化小于此值时认为稳定");
 	obs_property_t *dynamicSmoothingProp = obs_properties_add_float_slider(props, "dynamic_smoothing_factor", "输出平滑因子", 0.0, 1.0, 0.05);
 	obs_property_set_long_description(dynamicSmoothingProp, "输出EMA平滑系数，1.0=不平滑");
+
+	// AdaptivePID参数（自适应PID控制器 - P_PID）
+	obs_properties_add_group(props, "adaptive_pid_group", "AdaptivePID配置", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *adaptiveBaseKpProp = obs_properties_add_float_slider(props, "adaptive_base_kp", "基础Kp", 0.0, 2.0, 0.01);
+	obs_property_set_long_description(adaptiveBaseKpProp, "AdaptivePID基础比例系数");
+	obs_property_t *adaptiveBaseKiProp = obs_properties_add_float_slider(props, "adaptive_base_ki", "基础Ki", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(adaptiveBaseKiProp, "AdaptivePID基础积分系数");
+	obs_property_t *adaptiveBaseKdProp = obs_properties_add_float_slider(props, "adaptive_base_kd", "基础Kd", 0.0, 0.5, 0.001);
+	obs_property_set_long_description(adaptiveBaseKdProp, "AdaptivePID基础微分系数");
+	obs_property_t *adaptiveIntegralThresholdProp = obs_properties_add_float_slider(props, "adaptive_integral_threshold", "积分增益阈值", 1.0, 50.0, 0.5);
+	obs_property_set_long_description(adaptiveIntegralThresholdProp, "积分增益调整阈值，误差小于此值时增大积分增益");
+	obs_property_t *adaptiveKpThresholdProp = obs_properties_add_float_slider(props, "adaptive_kp_threshold", "Kp增益阈值", 1.0, 50.0, 0.5);
+	obs_property_set_long_description(adaptiveKpThresholdProp, "Kp增益调整阈值，误差小于此值时增大Kp增益");
+	obs_property_t *adaptiveIntegralRateProp = obs_properties_add_float_slider(props, "adaptive_integral_rate", "积分增益变化率", 0.01, 0.5, 0.01);
+	obs_property_set_long_description(adaptiveIntegralRateProp, "积分增益的变化速率");
+	obs_property_t *adaptiveKpRateProp = obs_properties_add_float_slider(props, "adaptive_kp_rate", "Kp增益变化率", 0.01, 0.5, 0.01);
+	obs_property_set_long_description(adaptiveKpRateProp, "Kp增益的变化速率");
+	obs_property_t *adaptiveLargeErrorRateProp = obs_properties_add_float_slider(props, "adaptive_large_error_rate", "大误差变化率", 0.01, 0.5, 0.01);
+	obs_property_set_long_description(adaptiveLargeErrorRateProp, "大误差时增益衰减速率");
+	obs_property_t *adaptiveMaxOutputProp = obs_properties_add_float_slider(props, "adaptive_max_output", "最大输出", 100.0, 2000.0, 10.0);
+	obs_property_set_long_description(adaptiveMaxOutputProp, "输出最大值限制");
+	obs_property_t *adaptiveMaxIntegralProp = obs_properties_add_float_slider(props, "adaptive_max_integral", "最大积分", 100.0, 2000.0, 10.0);
+	obs_property_set_long_description(adaptiveMaxIntegralProp, "积分项最大值限制");
+	obs_property_t *adaptiveUsePredictorProp = obs_properties_add_bool(props, "adaptive_use_predictor", "启用预测器");
+	obs_property_set_long_description(adaptiveUsePredictorProp, "是否启用导数预测器");
+	obs_property_t *adaptivePredWeightXProp = obs_properties_add_float_slider(props, "adaptive_pred_weight_x", "X轴预测权重", 0.0, 2.0, 0.05);
+	obs_property_set_long_description(adaptivePredWeightXProp, "X轴预测融合权重");
+	obs_property_t *adaptivePredWeightYProp = obs_properties_add_float_slider(props, "adaptive_pred_weight_y", "Y轴预测权重", 0.0, 2.0, 0.05);
+	obs_property_set_long_description(adaptivePredWeightYProp, "Y轴预测融合权重");
+	obs_property_t *adaptiveMaxPredTimeProp = obs_properties_add_float_slider(props, "adaptive_max_pred_time", "最大预测时间", 0.01, 0.5, 0.01);
+	obs_property_set_long_description(adaptiveMaxPredTimeProp, "预测器最大预测时间（秒）");
+	obs_property_t *adaptiveOutputSmoothingProp = obs_properties_add_float_slider(props, "adaptive_output_smoothing", "输出平滑", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(adaptiveOutputSmoothingProp, "输出EMA平滑系数，0=完全平滑，1=不平滑");
+	obs_property_t *adaptiveDerivativeFilterProp = obs_properties_add_float_slider(props, "adaptive_derivative_filter", "微分滤波系数", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(adaptiveDerivativeFilterProp, "微分项低通滤波系数");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -1684,6 +1738,25 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "dynamic_error_tolerance"), page == 3 && algorithm == 3);
 	obs_property_set_visible(obs_properties_get(props, "dynamic_smoothing_factor"), page == 3 && algorithm == 3);
 
+	// AdaptivePID参数组（选择4时显示）
+	obs_property_set_visible(obs_properties_get(props, "adaptive_pid_group"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_base_kp"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_base_ki"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_base_kd"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_integral_threshold"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_kp_threshold"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_integral_rate"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_kp_rate"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_large_error_rate"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_max_output"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_max_integral"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_use_predictor"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_pred_weight_x"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_pred_weight_y"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_max_pred_time"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_output_smoothing"), page == 3 && algorithm == 4);
+	obs_property_set_visible(obs_properties_get(props, "adaptive_derivative_filter"), page == 3 && algorithm == 4);
+
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
@@ -2003,6 +2076,24 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "dynamic_min_data_points", 2);
     obs_data_set_default_double(settings, "dynamic_error_tolerance", 3.0);
     obs_data_set_default_double(settings, "dynamic_smoothing_factor", 0.8);
+    
+    // AdaptivePID默认值
+    obs_data_set_default_double(settings, "adaptive_base_kp", 0.5);
+    obs_data_set_default_double(settings, "adaptive_base_ki", 0.1);
+    obs_data_set_default_double(settings, "adaptive_base_kd", 0.05);
+    obs_data_set_default_double(settings, "adaptive_integral_threshold", 5.0);
+    obs_data_set_default_double(settings, "adaptive_kp_threshold", 5.0);
+    obs_data_set_default_double(settings, "adaptive_integral_rate", 0.1);
+    obs_data_set_default_double(settings, "adaptive_kp_rate", 0.1);
+    obs_data_set_default_double(settings, "adaptive_large_error_rate", 0.1);
+    obs_data_set_default_double(settings, "adaptive_max_output", 1000.0);
+    obs_data_set_default_double(settings, "adaptive_max_integral", 1000.0);
+    obs_data_set_default_bool(settings, "adaptive_use_predictor", true);
+    obs_data_set_default_double(settings, "adaptive_pred_weight_x", 0.5);
+    obs_data_set_default_double(settings, "adaptive_pred_weight_y", 0.1);
+    obs_data_set_default_double(settings, "adaptive_max_pred_time", 0.1);
+    obs_data_set_default_double(settings, "adaptive_output_smoothing", 0.7);
+    obs_data_set_default_double(settings, "adaptive_derivative_filter", 0.3);
 #endif
 }
 
@@ -2462,6 +2553,24 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->dynamicMinDataPoints = (int)obs_data_get_int(settings, "dynamic_min_data_points");
 	tf->dynamicErrorTolerance = (float)obs_data_get_double(settings, "dynamic_error_tolerance");
 	tf->dynamicSmoothingFactor = (float)obs_data_get_double(settings, "dynamic_smoothing_factor");
+
+	// AdaptivePID参数
+	tf->adaptiveBaseKp = (float)obs_data_get_double(settings, "adaptive_base_kp");
+	tf->adaptiveBaseKi = (float)obs_data_get_double(settings, "adaptive_base_ki");
+	tf->adaptiveBaseKd = (float)obs_data_get_double(settings, "adaptive_base_kd");
+	tf->adaptiveIntegralThreshold = (float)obs_data_get_double(settings, "adaptive_integral_threshold");
+	tf->adaptiveKpThreshold = (float)obs_data_get_double(settings, "adaptive_kp_threshold");
+	tf->adaptiveIntegralRate = (float)obs_data_get_double(settings, "adaptive_integral_rate");
+	tf->adaptiveKpRate = (float)obs_data_get_double(settings, "adaptive_kp_rate");
+	tf->adaptiveLargeErrorRate = (float)obs_data_get_double(settings, "adaptive_large_error_rate");
+	tf->adaptiveMaxOutput = (float)obs_data_get_double(settings, "adaptive_max_output");
+	tf->adaptiveMaxIntegral = (float)obs_data_get_double(settings, "adaptive_max_integral");
+	tf->adaptiveUsePredictor = obs_data_get_bool(settings, "adaptive_use_predictor");
+	tf->adaptivePredWeightX = (float)obs_data_get_double(settings, "adaptive_pred_weight_x");
+	tf->adaptivePredWeightY = (float)obs_data_get_double(settings, "adaptive_pred_weight_y");
+	tf->adaptiveMaxPredTime = (float)obs_data_get_double(settings, "adaptive_max_pred_time");
+	tf->adaptiveOutputSmoothing = (float)obs_data_get_double(settings, "adaptive_output_smoothing");
+	tf->adaptiveDerivativeFilterAlpha = (float)obs_data_get_double(settings, "adaptive_derivative_filter");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -5255,6 +5364,23 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.dynamicMinDataPoints = tf->dynamicMinDataPoints;
 		mcConfig.dynamicErrorTolerance = tf->dynamicErrorTolerance;
 		mcConfig.dynamicSmoothingFactor = tf->dynamicSmoothingFactor;
+		// AdaptivePID参数
+		mcConfig.adaptiveBaseKp = tf->adaptiveBaseKp;
+		mcConfig.adaptiveBaseKi = tf->adaptiveBaseKi;
+		mcConfig.adaptiveBaseKd = tf->adaptiveBaseKd;
+		mcConfig.adaptiveIntegralThreshold = tf->adaptiveIntegralThreshold;
+		mcConfig.adaptiveKpThreshold = tf->adaptiveKpThreshold;
+		mcConfig.adaptiveIntegralRate = tf->adaptiveIntegralRate;
+		mcConfig.adaptiveKpRate = tf->adaptiveKpRate;
+		mcConfig.adaptiveLargeErrorRate = tf->adaptiveLargeErrorRate;
+		mcConfig.adaptiveMaxOutput = tf->adaptiveMaxOutput;
+		mcConfig.adaptiveMaxIntegral = tf->adaptiveMaxIntegral;
+		mcConfig.adaptiveUsePredictor = tf->adaptiveUsePredictor;
+		mcConfig.adaptivePredWeightX = tf->adaptivePredWeightX;
+		mcConfig.adaptivePredWeightY = tf->adaptivePredWeightY;
+		mcConfig.adaptiveMaxPredTime = tf->adaptiveMaxPredTime;
+		mcConfig.adaptiveOutputSmoothing = tf->adaptiveOutputSmoothing;
+		mcConfig.adaptiveDerivativeFilterAlpha = tf->adaptiveDerivativeFilterAlpha;
 		// MotionSimulator 人类行为模拟器参数
 		mcConfig.enableMotionSimulator = cfg.enableMotionSimulator;
 		mcConfig.motionSimRandomPos = cfg.motionSimRandomPos;

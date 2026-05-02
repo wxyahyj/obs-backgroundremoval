@@ -280,6 +280,24 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["dynamicErrorTolerance"] = config.dynamicErrorTolerance;
     j["dynamicSmoothingFactor"] = config.dynamicSmoothingFactor;
     
+    // AdaptivePID参数
+    j["adaptiveBaseKp"] = config.adaptiveBaseKp;
+    j["adaptiveBaseKi"] = config.adaptiveBaseKi;
+    j["adaptiveBaseKd"] = config.adaptiveBaseKd;
+    j["adaptiveIntegralThreshold"] = config.adaptiveIntegralThreshold;
+    j["adaptiveKpThreshold"] = config.adaptiveKpThreshold;
+    j["adaptiveIntegralRate"] = config.adaptiveIntegralRate;
+    j["adaptiveKpRate"] = config.adaptiveKpRate;
+    j["adaptiveLargeErrorRate"] = config.adaptiveLargeErrorRate;
+    j["adaptiveMaxOutput"] = config.adaptiveMaxOutput;
+    j["adaptiveMaxIntegral"] = config.adaptiveMaxIntegral;
+    j["adaptiveUsePredictor"] = config.adaptiveUsePredictor;
+    j["adaptivePredWeightX"] = config.adaptivePredWeightX;
+    j["adaptivePredWeightY"] = config.adaptivePredWeightY;
+    j["adaptiveMaxPredTime"] = config.adaptiveMaxPredTime;
+    j["adaptiveOutputSmoothing"] = config.adaptiveOutputSmoothing;
+    j["adaptiveDerivativeFilterAlpha"] = config.adaptiveDerivativeFilterAlpha;
+    
     return j;
 }
 
@@ -401,6 +419,24 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("dynamicMinDataPoints")) config.dynamicMinDataPoints = j["dynamicMinDataPoints"].get<int>();
         if (j.contains("dynamicErrorTolerance")) config.dynamicErrorTolerance = j["dynamicErrorTolerance"].get<float>();
         if (j.contains("dynamicSmoothingFactor")) config.dynamicSmoothingFactor = j["dynamicSmoothingFactor"].get<float>();
+        
+        // AdaptivePID参数
+        if (j.contains("adaptiveBaseKp")) config.adaptiveBaseKp = j["adaptiveBaseKp"].get<float>();
+        if (j.contains("adaptiveBaseKi")) config.adaptiveBaseKi = j["adaptiveBaseKi"].get<float>();
+        if (j.contains("adaptiveBaseKd")) config.adaptiveBaseKd = j["adaptiveBaseKd"].get<float>();
+        if (j.contains("adaptiveIntegralThreshold")) config.adaptiveIntegralThreshold = j["adaptiveIntegralThreshold"].get<float>();
+        if (j.contains("adaptiveKpThreshold")) config.adaptiveKpThreshold = j["adaptiveKpThreshold"].get<float>();
+        if (j.contains("adaptiveIntegralRate")) config.adaptiveIntegralRate = j["adaptiveIntegralRate"].get<float>();
+        if (j.contains("adaptiveKpRate")) config.adaptiveKpRate = j["adaptiveKpRate"].get<float>();
+        if (j.contains("adaptiveLargeErrorRate")) config.adaptiveLargeErrorRate = j["adaptiveLargeErrorRate"].get<float>();
+        if (j.contains("adaptiveMaxOutput")) config.adaptiveMaxOutput = j["adaptiveMaxOutput"].get<float>();
+        if (j.contains("adaptiveMaxIntegral")) config.adaptiveMaxIntegral = j["adaptiveMaxIntegral"].get<float>();
+        if (j.contains("adaptiveUsePredictor")) config.adaptiveUsePredictor = j["adaptiveUsePredictor"].get<bool>();
+        if (j.contains("adaptivePredWeightX")) config.adaptivePredWeightX = j["adaptivePredWeightX"].get<float>();
+        if (j.contains("adaptivePredWeightY")) config.adaptivePredWeightY = j["adaptivePredWeightY"].get<float>();
+        if (j.contains("adaptiveMaxPredTime")) config.adaptiveMaxPredTime = j["adaptiveMaxPredTime"].get<float>();
+        if (j.contains("adaptiveOutputSmoothing")) config.adaptiveOutputSmoothing = j["adaptiveOutputSmoothing"].get<float>();
+        if (j.contains("adaptiveDerivativeFilterAlpha")) config.adaptiveDerivativeFilterAlpha = j["adaptiveDerivativeFilterAlpha"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {

@@ -133,6 +133,26 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         config.stabilitySizeThreshold
     );
     
+    // 更新AdaptivePID控制器配置
+    AdaptivePIDConfig adaptiveConfig;
+    adaptiveConfig.baseKp = config.adaptiveBaseKp;
+    adaptiveConfig.baseKi = config.adaptiveBaseKi;
+    adaptiveConfig.baseKd = config.adaptiveBaseKd;
+    adaptiveConfig.integralGainThreshold = config.adaptiveIntegralThreshold;
+    adaptiveConfig.kpGainThreshold = config.adaptiveKpThreshold;
+    adaptiveConfig.integralGainRate = config.adaptiveIntegralRate;
+    adaptiveConfig.kpGainRate = config.adaptiveKpRate;
+    adaptiveConfig.largeErrorRate = config.adaptiveLargeErrorRate;
+    adaptiveConfig.maxOutput = config.adaptiveMaxOutput;
+    adaptiveConfig.maxIntegral = config.adaptiveMaxIntegral;
+    adaptiveConfig.usePredictor = config.adaptiveUsePredictor;
+    adaptiveConfig.predWeightX = config.adaptivePredWeightX;
+    adaptiveConfig.predWeightY = config.adaptivePredWeightY;
+    adaptiveConfig.maxPredTime = config.adaptiveMaxPredTime;
+    adaptiveConfig.outputSmoothing = config.adaptiveOutputSmoothing;
+    adaptiveConfig.derivativeFilterAlpha = config.adaptiveDerivativeFilterAlpha;
+    adaptiveController_.setConfig(adaptiveConfig);
+    
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
                 getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 
@@ -912,6 +932,80 @@ void AbstractMouseController::tick()
         stdLastErrorY = errorY;
         stdFilteredDeltaErrorX = 0.0f;
         stdFilteredDeltaErrorY = 0.0f;
+    }
+    else if (config.algorithmType == AlgorithmType::AdaptivePID) {
+        // AdaptivePID：自适应PID控制器（P_PID）
+        float outX, outY;
+        adaptiveController_.update(errorX, errorY, currentTime, outX, outY);
+        moveX = outX;
+        moveY = outY;
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.adaptiveBaseKp;
+            data.currentKi = config.adaptiveBaseKi;
+            data.currentKd = config.adaptiveBaseKd;
+
+            auto debugTerms = adaptiveController_.getLastDebugTerms();
+            data.pTermX = debugTerms.pTermX;
+            data.pTermY = debugTerms.pTermY;
+            data.iTermX = debugTerms.iTermX;
+            data.iTermY = debugTerms.iTermY;
+            data.dTermX = debugTerms.dTermX;
+            data.dTermY = debugTerms.dTermY;
+
+            data.integralAbsX = std::abs(data.iTermX);
+            data.integralAbsY = std::abs(data.iTermY);
+            data.integralLimitX = config.adaptiveMaxIntegral;
+            data.integralLimitY = config.adaptiveMaxIntegral;
+            data.integralRatioX = std::min(1.0f, data.integralAbsX / config.adaptiveMaxIntegral);
+            data.integralRatioY = std::min(1.0f, data.integralAbsY / config.adaptiveMaxIntegral);
+
+            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
+            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
+            if (!hasTarget) {
+                data.controlMode = 0;
+            } else if (errDist < 10.0f) {
+                data.controlMode = 2;
+            } else {
+                data.controlMode = 1;
+            }
+
+            data.algorithmType = 4;
+            data.isFiring = isFiring;
+            data.smoothingFactorX = config.adaptiveOutputSmoothing;
+            data.smoothingFactorY = config.adaptiveOutputSmoothing;
+
+            pidDataCallback_(data);
+        }
+
+        // 重置其他算法状态
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
+        integralGainX = 0.0f;
+        integralGainY = 0.0f;
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 0.0f;
+        stdLastErrorX = errorX;
+        stdLastErrorY = errorY;
+        stdFilteredDeltaErrorX = 0.0f;
+        stdFilteredDeltaErrorY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::DynamicPID) {
         // 动态PID：基于动态阈值和状态机的PID控制器
         dynamicPidX.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
@@ -1393,6 +1487,7 @@ void AbstractMouseController::resetPidState()
     chrisController_.reset();
     dynamicPidX.reset();
     dynamicPidY.reset();
+    adaptiveController_.reset();
     advHasReachedX = false;
     advHasReachedY = false;
     advStableCountX = 0;
