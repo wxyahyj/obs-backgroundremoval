@@ -53,16 +53,26 @@ void IncrementalPIDAdapter::update(float errorX, float errorY, float& outX, floa
         outY = 0.0f;
     }
     
-    lastDebugTerms_.pidOutput = chain_.pid().output();
-    lastDebugTerms_.previousError = chain_.pid().previous_error();
+    // 计算增量式PID的各项：output += Kp*(e - e1) + Ki*e + Kd*(e - 2*e1 + e2)
+    const auto& pid = chain_.pid();
+    float e = static_cast<float>(result.selected_error.x);
+    float e1 = pid.previous_error();
+    float e2 = pid.previous_previous_error();
+    
+    lastDebugTerms_.pTerm = pid.kp() * (e - e1);
+    lastDebugTerms_.iTerm = pid.ki() * e;
+    lastDebugTerms_.dTerm = pid.kd() * (e - 2.0f * e1 + e2);
+    lastDebugTerms_.pidOutput = pid.output();
     lastDebugTerms_.lastDistance = chain_.last_distance();
     lastDebugTerms_.previousOutputX = chain_.previous_output_x();
     
     static int logCounter = 0;
     if (++logCounter >= 30) {
         logCounter = 0;
-        blog(LOG_INFO, "[IncrementalPID] error=(%.1f,%.1f) | out=(%.1f,%.1f) | pidOut=%.2f | dist=%d",
-             errorX, errorY, outX, outY, lastDebugTerms_.pidOutput, lastDebugTerms_.lastDistance);
+        blog(LOG_INFO, "[IncrementalPID] error=(%.1f,%.1f) | out=(%.1f,%.1f) | P=%.2f I=%.2f D=%.2f | dist=%d",
+             errorX, errorY, outX, outY, 
+             lastDebugTerms_.pTerm, lastDebugTerms_.iTerm, lastDebugTerms_.dTerm,
+             lastDebugTerms_.lastDistance);
     }
 }
 

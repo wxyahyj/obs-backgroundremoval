@@ -30,8 +30,10 @@ public:
     void reset();
     
     struct DebugTerms {
-        float pidOutput = 0;
-        float previousError = 0;
+        float pTerm = 0;        // 比例项 Kp*(e - e1)
+        float iTerm = 0;        // 积分项 Ki*e
+        float dTerm = 0;        // 微分项 Kd*(e - 2*e1 + e2)
+        float pidOutput = 0;    // PID总输出
         int lastDistance = 0;
         int previousOutputX = 0;
     };

@@ -1046,11 +1046,11 @@ void AbstractMouseController::tick()
             data.currentKd = config.incrementalKd;
 
             auto debugTerms = incrementalController_.getLastDebugTerms();
-            data.pTermX = debugTerms.pidOutput;
+            data.pTermX = debugTerms.pTerm;
             data.pTermY = 0;
-            data.iTermX = debugTerms.previousError;
+            data.iTermX = debugTerms.iTerm;
             data.iTermY = 0;
-            data.dTermX = 0;
+            data.dTermX = debugTerms.dTerm;
             data.dTermY = 0;
 
             data.integralAbsX = 0;
