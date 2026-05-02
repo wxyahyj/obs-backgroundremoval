@@ -2149,6 +2149,17 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].neuralMouseStepSize = obs_data_get_double(settings, "neural_mouse_step_size");
 		tf->mouseConfigs[i].neuralTargetRadius = (int)obs_data_get_int(settings, "neural_target_radius");
 	}
+	
+	// 日志：神经网络配置读取结果
+	static int configReadCount = 0;
+	configReadCount++;
+	if (configReadCount <= 3 || tf->mouseConfigs[0].enableNeuralPath) {
+		obs_log(LOG_INFO, "[NeuralPath-Config] READ: enableNeuralPath=%d, neuralPathPoints=%d, neuralMouseStepSize=%.1f, neuralTargetRadius=%d",
+				tf->mouseConfigs[0].enableNeuralPath ? 1 : 0,
+				tf->mouseConfigs[0].neuralPathPoints,
+				tf->mouseConfigs[0].neuralMouseStepSize,
+				tf->mouseConfigs[0].neuralTargetRadius);
+	}
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
 
@@ -5210,6 +5221,17 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.neuralPathPoints = cfg.neuralPathPoints;
 		mcConfig.neuralMouseStepSize = cfg.neuralMouseStepSize;
 		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
+		
+		static int syncCount = 0;
+		syncCount++;
+		if (syncCount <= 3 || cfg.enableNeuralPath) {
+			obs_log(LOG_INFO, "[NeuralPath-Sync] PASS TO CONTROLLER: enableNeuralPath=%d, neuralPathPoints=%d, neuralMouseStepSize=%.1f, neuralTargetRadius=%d",
+					mcConfig.enableNeuralPath ? 1 : 0,
+					mcConfig.neuralPathPoints,
+					mcConfig.neuralMouseStepSize,
+					mcConfig.neuralTargetRadius);
+		}
+		
 		tf->mouseController->updateConfig(mcConfig);
 	};
 
