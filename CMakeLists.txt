@@ -302,6 +302,7 @@ if(WIN32)
       src/RecoilPatternManager.cpp
       src/ChrisPIDController.cpp
       src/DynamicPIDController.cpp
+      src/AdaptivePIDController.cpp
       src/OneEuroFilter.cpp
       src/MotionSimulator.cpp
       src/curve.cpp
