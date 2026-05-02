@@ -110,7 +110,7 @@ float IncrementalPid::update(float error) {
     float decay_factor = 0.85f; // 基础衰减
 
     // 如果误差在减小（接近目标）且方向一致，增加衰减
-    if (std::abs(error) < std::abs(previous_error_) && error * previous_error_ > 0) {
+    if (std::abs(error) < std::abs(previous_error_) && (error > 0) == (previous_error_ > 0)) {
         decay_factor = 0.7f; // 更强的衰减
     }
 
