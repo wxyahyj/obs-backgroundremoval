@@ -142,8 +142,10 @@ void AdaptiveAimController::setConfig(const AdaptivePIDConfig& config)
 void AdaptiveAimController::update(float rawDx, float rawDy, double currentTime, float& outX, float& outY)
 {
     float dt = 0.01f;
+    double rawDt = 0.0;
     if (lastTime_ > 0.0) {
-        dt = static_cast<float>(currentTime - lastTime_);
+        rawDt = currentTime - lastTime_;
+        dt = static_cast<float>(rawDt);
     }
     dt = std::clamp(dt, 0.001f, 0.05f);
     lastTime_ = currentTime;
@@ -181,23 +183,23 @@ void AdaptiveAimController::update(float rawDx, float rawDy, double currentTime,
     lastDebugTerms_.fusionErrorX = fusionErrorX;
     lastDebugTerms_.fusionErrorY = fusionErrorY;
     
-#ifdef ADAPTIVE_PID_DEBUG_LOG
     static int logCounter = 0;
-    if (++logCounter >= 100) {
+    if (++logCounter >= 30) {
         logCounter = 0;
-        blog(LOG_INFO, "[AdaptivePID] dt=%.4f | raw=(%.1f,%.1f) | fusion=(%.1f,%.1f) | pred=(%.1f,%.1f)",
-             dt, rawDx, rawDy, fusionErrorX, fusionErrorY, predX, predY);
-        blog(LOG_INFO, "[AdaptivePID] P=(%.2f,%.2f) | I=(%.4f,%.4f) | D=(%.2f,%.2f) | out=(%.1f,%.1f)",
-             lastDebugTerms_.pTermX, lastDebugTerms_.pTermY,
-             lastDebugTerms_.iTermX, lastDebugTerms_.iTermY,
-             lastDebugTerms_.dTermX, lastDebugTerms_.dTermY,
-             outX, outY);
-        blog(LOG_INFO, "[AdaptivePID] kpGain=(%.3f,%.3f) | iGain=(%.3f,%.3f) | smooth=%.2f",
+        blog(LOG_INFO, "[AdaptivePID] === DT DEBUG === currentTime=%.3f lastTime=%.3f rawDt=%.4f clampedDt=%.4f",
+             currentTime, lastTime_ - rawDt, rawDt, dt);
+        blog(LOG_INFO, "[AdaptivePID] INPUT: rawDx=%.1f rawDy=%.1f | predX=%.1f predY=%.1f",
+             rawDx, rawDy, predX, predY);
+        blog(LOG_INFO, "[AdaptivePID] FUSION: fusionX=%.1f fusionY=%.1f | rawOutX=%.1f rawOutY=%.1f",
+             fusionErrorX, fusionErrorY, rawOutputX, rawOutputY);
+        blog(LOG_INFO, "[AdaptivePID] OUTPUT: lastOutX=%.1f lastOutY=%.1f | smooth=%.2f | finalX=%.1f finalY=%.1f",
+             lastOutputX_ - outX * config_.outputSmoothing / (1.0f - config_.outputSmoothing + 0.001f),
+             lastOutputY_ - outY * config_.outputSmoothing / (1.0f - config_.outputSmoothing + 0.001f),
+             config_.outputSmoothing, outX, outY);
+        blog(LOG_INFO, "[AdaptivePID] GAINS: kpGain=(%.3f,%.3f) iGain=(%.3f,%.3f)",
              lastDebugTerms_.kpGainX, lastDebugTerms_.kpGainY,
-             lastDebugTerms_.iGainX, lastDebugTerms_.iGainY,
-             config_.outputSmoothing);
+             lastDebugTerms_.iGainX, lastDebugTerms_.iGainY);
     }
-#endif
 }
 
 void AdaptiveAimController::reset()
