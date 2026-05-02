@@ -1457,6 +1457,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "nms_threshold", 0.45);
 	obs_data_set_default_int(settings, "target_class", -1);
 	obs_data_set_default_int(settings, "inference_interval_frames", 1);
+	obs_data_set_default_bool(settings, "is_inferencing", false);
 	obs_data_set_default_bool(settings, "show_detection_results", true);
 	obs_data_set_default_int(settings, "bbox_line_width", 2);
 	obs_data_set_default_int(settings, "bbox_color", 0xFF00FF00);
@@ -1824,6 +1825,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			}
 		}
 	}
+	
+	// 推理状态
+	tf->isInferencing = obs_data_get_bool(settings, "is_inferencing");
 	
 	bool showDetectionResults = obs_data_get_bool(settings, "show_detection_results");
 	tf->showDetectionResults = showDetectionResults;

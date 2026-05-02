@@ -46,6 +46,7 @@ private:
     
     void setupUI();
     void setupModelPage();
+    void setupDetectionPage();
     void setupVisualPage();
     void setupBasicPage();
     void setupAdvancedPIDPage();
@@ -88,6 +89,56 @@ private:
     QSpinBox* m_fovCrossLineScaleSpin;
     QSpinBox* m_fovCrossLineThicknessSpin;
     QSpinBox* m_fovCircleThicknessSpin;
+    
+    // 模型配置页面
+    QLineEdit* m_modelPathEdit;
+    QPushButton* m_modelPathBtn;
+    QComboBox* m_modelVersionCombo;
+    QComboBox* m_useGPUCombo;
+    QCheckBox* m_useGPUTextureCheck;
+    QComboBox* m_inputResolutionCombo;
+    QSpinBox* m_numThreadsSpin;
+    
+    // 检测配置页面
+    QDoubleSpinBox* m_confidenceThresholdSpin;
+    QDoubleSpinBox* m_nmsThresholdSpin;
+    QComboBox* m_targetClassCombo;
+    QLineEdit* m_targetClassesTextEdit;
+    QSpinBox* m_inferenceIntervalSpin;
+    
+    // 视觉页面 - 区域检测
+    QCheckBox* m_useRegionCheck;
+    QSpinBox* m_regionXSpin;
+    QSpinBox* m_regionYSpin;
+    QSpinBox* m_regionWidthSpin;
+    QSpinBox* m_regionHeightSpin;
+    
+    // 视觉页面 - 渲染配置
+    QSpinBox* m_bboxLineWidthSpin;
+    QPushButton* m_bboxColorBtn;
+    QDoubleSpinBox* m_labelFontScaleSpin;
+    
+    // 视觉页面 - 动态FOV
+    QCheckBox* m_useDynamicFOVCheck;
+    QCheckBox* m_showFOV2Check;
+    QSpinBox* m_fovRadius2Spin;
+    QPushButton* m_fovColorBtn;
+    QPushButton* m_fovColor2Btn;
+    QSpinBox* m_dynamicFovShrinkSpin;
+    QSpinBox* m_dynamicFovTransitionSpin;
+    
+    // 检测框平滑
+    QCheckBox* m_detectionSmoothingCheck;
+    QDoubleSpinBox* m_detectionSmoothingAlphaSpin;
+    
+    // 高级配置
+    QCheckBox* m_exportCoordinatesCheck;
+    QLineEdit* m_coordinateOutputPathEdit;
+    QPushButton* m_coordinateOutputPathBtn;
+    
+    // 推理控制
+    QPushButton* m_toggleInferenceBtn;
+    QLabel* m_inferenceStatusLabel;
     
     int m_currentConfig;
     QString m_currentSource;

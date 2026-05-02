@@ -11,6 +11,7 @@
 #include <QMessageBox>
 #include <QFile>
 #include <QDir>
+#include <QFrame>
 #include <obs.hpp>
 
 extern "C" {
@@ -47,10 +48,52 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     , m_currentConfig(0)
     , m_previewDisplay(nullptr)
     , m_previewPlaceholder(nullptr)
+    , m_showDetectionResultsCheck(nullptr)
+    , m_showFOVCheck(nullptr)
+    , m_showFOVCircleCheck(nullptr)
+    , m_showFOVCrossCheck(nullptr)
+    , m_fovRadiusSpin(nullptr)
+    , m_fovCrossLineScaleSpin(nullptr)
+    , m_fovCrossLineThicknessSpin(nullptr)
+    , m_fovCircleThicknessSpin(nullptr)
+    , m_modelPathEdit(nullptr)
+    , m_modelPathBtn(nullptr)
+    , m_modelVersionCombo(nullptr)
+    , m_useGPUCombo(nullptr)
+    , m_useGPUTextureCheck(nullptr)
+    , m_inputResolutionCombo(nullptr)
+    , m_numThreadsSpin(nullptr)
+    , m_confidenceThresholdSpin(nullptr)
+    , m_nmsThresholdSpin(nullptr)
+    , m_targetClassCombo(nullptr)
+    , m_targetClassesTextEdit(nullptr)
+    , m_inferenceIntervalSpin(nullptr)
+    , m_useRegionCheck(nullptr)
+    , m_regionXSpin(nullptr)
+    , m_regionYSpin(nullptr)
+    , m_regionWidthSpin(nullptr)
+    , m_regionHeightSpin(nullptr)
+    , m_bboxLineWidthSpin(nullptr)
+    , m_bboxColorBtn(nullptr)
+    , m_labelFontScaleSpin(nullptr)
+    , m_useDynamicFOVCheck(nullptr)
+    , m_showFOV2Check(nullptr)
+    , m_fovRadius2Spin(nullptr)
+    , m_fovColorBtn(nullptr)
+    , m_fovColor2Btn(nullptr)
+    , m_dynamicFovShrinkSpin(nullptr)
+    , m_dynamicFovTransitionSpin(nullptr)
+    , m_detectionSmoothingCheck(nullptr)
+    , m_detectionSmoothingAlphaSpin(nullptr)
+    , m_exportCoordinatesCheck(nullptr)
+    , m_coordinateOutputPathEdit(nullptr)
+    , m_coordinateOutputPathBtn(nullptr)
+    , m_toggleInferenceBtn(nullptr)
+    , m_inferenceStatusLabel(nullptr)
 {
     initAllConfigWidgetStructs();
     
-    setWindowTitle(QStringLiteral("🎮 YOLO自瞄系统"));
+    setWindowTitle(QStringLiteral("🐟 小鱼"));
     setMinimumSize(1000, 600);
     resize(1200, 700);
     
@@ -276,6 +319,59 @@ void YoloAimSettingsDialog::setupUI()
     
     topLayout->addWidget(sourceLabel);
     topLayout->addWidget(m_sourceCombo);
+    topLayout->addSpacing(20);
+    
+    m_toggleInferenceBtn = new QPushButton(QStringLiteral("▶ 开始推理"), this);
+    m_toggleInferenceBtn->setCheckable(true);
+    m_toggleInferenceBtn->setStyleSheet(R"(
+        QPushButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1a1025, stop:1 #0a0a12);
+            border: 2px solid #22c55e;
+            border-radius: 8px;
+            padding: 8px 20px;
+            color: #22c55e;
+            font-weight: bold;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background: #22c55e;
+            color: #0a0a12;
+        }
+        QPushButton:checked {
+            background: #ef4444;
+            border-color: #ef4444;
+            color: white;
+        }
+    )");
+    connect(m_toggleInferenceBtn, &QPushButton::clicked, this, [this]() {
+        bool isInferencing = m_toggleInferenceBtn->isChecked();
+        m_toggleInferenceBtn->setText(isInferencing ? QStringLiteral("⏹ 停止推理") : QStringLiteral("▶ 开始推理"));
+        m_inferenceStatusLabel->setText(isInferencing ? QStringLiteral("状态: 推理运行中") : QStringLiteral("状态: 已停止"));
+        
+        if (!m_currentSource.isEmpty()) {
+            obs_source_t* source = obs_get_source_by_name(m_currentSource.toUtf8().constData());
+            if (source) {
+                obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
+                if (filter) {
+                    obs_data_t* settings = obs_source_get_settings(filter);
+                    if (settings) {
+                        obs_data_set_bool(settings, "is_inferencing", isInferencing);
+                        obs_source_update(filter, settings);
+                        obs_data_release(settings);
+                    }
+                    obs_source_release(filter);
+                }
+                obs_source_release(source);
+            }
+        }
+    });
+    topLayout->addWidget(m_toggleInferenceBtn);
+    
+    m_inferenceStatusLabel = new QLabel(QStringLiteral("状态: 已停止"), this);
+    m_inferenceStatusLabel->setStyleSheet("color: #a78bfa; font-size: 13px; padding: 5px 10px;");
+    topLayout->addWidget(m_inferenceStatusLabel);
+    
     topLayout->addStretch();
     
     mainLayout->addLayout(topLayout);
@@ -312,6 +408,7 @@ void YoloAimSettingsDialog::setupUI()
     m_tabWidget = new QTabWidget(this);
     
     setupModelPage();
+    setupDetectionPage();
     setupVisualPage();
     setupBasicPage();
     setupAdvancedPIDPage();
@@ -362,7 +459,52 @@ void YoloAimSettingsDialog::setupModelPage()
     QVBoxLayout* layout = new QVBoxLayout(page);
     
     QGroupBox* modelGroup = new QGroupBox(QStringLiteral("📦 模型设置"), page);
-    QFormLayout* modelLayout = new QFormLayout(modelGroup);
+    QGridLayout* modelLayout = new QGridLayout(modelGroup);
+    int row = 0;
+    
+    modelLayout->addWidget(new QLabel(QStringLiteral("模型路径:"), page), row, 0);
+    m_modelPathEdit = new QLineEdit(page);
+    m_modelPathBtn = new QPushButton(QStringLiteral("浏览..."), page);
+    QHBoxLayout* modelPathLayout = new QHBoxLayout();
+    modelPathLayout->addWidget(m_modelPathEdit);
+    modelPathLayout->addWidget(m_modelPathBtn);
+    modelLayout->addLayout(modelPathLayout, row, 1);
+    row++;
+    
+    modelLayout->addWidget(new QLabel(QStringLiteral("模型版本:"), page), row, 0);
+    m_modelVersionCombo = new QComboBox(page);
+    m_modelVersionCombo->addItem(QStringLiteral("YOLOv5"), 0);
+    m_modelVersionCombo->addItem(QStringLiteral("YOLOv8"), 1);
+    m_modelVersionCombo->addItem(QStringLiteral("YOLOv11"), 2);
+    modelLayout->addWidget(m_modelVersionCombo, row, 1);
+    row++;
+    
+    modelLayout->addWidget(new QLabel(QStringLiteral("计算设备:"), page), row, 0);
+    m_useGPUCombo = new QComboBox(page);
+    m_useGPUCombo->addItem(QStringLiteral("CPU"), QStringLiteral("cpu"));
+    m_useGPUCombo->addItem(QStringLiteral("CUDA"), QStringLiteral("cuda"));
+    m_useGPUCombo->addItem(QStringLiteral("DirectML"), QStringLiteral("dml"));
+    m_useGPUCombo->addItem(QStringLiteral("CoreML"), QStringLiteral("coreml"));
+    modelLayout->addWidget(m_useGPUCombo, row, 1);
+    row++;
+    
+    m_useGPUTextureCheck = new QCheckBox(QStringLiteral("启用GPU纹理推理(实验性)"), page);
+    modelLayout->addWidget(m_useGPUTextureCheck, row, 0, 1, 2);
+    row++;
+    
+    modelLayout->addWidget(new QLabel(QStringLiteral("输入分辨率:"), page), row, 0);
+    m_inputResolutionCombo = new QComboBox(page);
+    m_inputResolutionCombo->addItem(QStringLiteral("640x640"), 640);
+    m_inputResolutionCombo->addItem(QStringLiteral("320x320"), 320);
+    m_inputResolutionCombo->addItem(QStringLiteral("1280x1280"), 1280);
+    modelLayout->addWidget(m_inputResolutionCombo, row, 1);
+    row++;
+    
+    modelLayout->addWidget(new QLabel(QStringLiteral("推理线程数:"), page), row, 0);
+    m_numThreadsSpin = new QSpinBox(page);
+    m_numThreadsSpin->setRange(1, 16);
+    m_numThreadsSpin->setValue(4);
+    modelLayout->addWidget(m_numThreadsSpin, row, 1);
     
     layout->addWidget(modelGroup);
     layout->addStretch();
@@ -370,56 +512,234 @@ void YoloAimSettingsDialog::setupModelPage()
     m_tabWidget->addTab(page, QStringLiteral("📦 模型"));
 }
 
+void YoloAimSettingsDialog::setupDetectionPage()
+{
+    QWidget* page = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(page);
+    
+    QGroupBox* detectGroup = new QGroupBox(QStringLiteral("🎯 检测设置"), page);
+    QGridLayout* detectLayout = new QGridLayout(detectGroup);
+    int row = 0;
+    
+    detectLayout->addWidget(new QLabel(QStringLiteral("置信度阈值:"), page), row, 0);
+    m_confidenceThresholdSpin = new QDoubleSpinBox(page);
+    m_confidenceThresholdSpin->setRange(0.01, 1.0);
+    m_confidenceThresholdSpin->setSingleStep(0.01);
+    m_confidenceThresholdSpin->setValue(0.5);
+    detectLayout->addWidget(m_confidenceThresholdSpin, row, 1);
+    row++;
+    
+    detectLayout->addWidget(new QLabel(QStringLiteral("NMS阈值:"), page), row, 0);
+    m_nmsThresholdSpin = new QDoubleSpinBox(page);
+    m_nmsThresholdSpin->setRange(0.01, 1.0);
+    m_nmsThresholdSpin->setSingleStep(0.01);
+    m_nmsThresholdSpin->setValue(0.45);
+    detectLayout->addWidget(m_nmsThresholdSpin, row, 1);
+    row++;
+    
+    detectLayout->addWidget(new QLabel(QStringLiteral("目标类别:"), page), row, 0);
+    m_targetClassCombo = new QComboBox(page);
+    m_targetClassCombo->addItem(QStringLiteral("全部"), -1);
+    m_targetClassCombo->addItem(QStringLiteral("人物"), 0);
+    m_targetClassCombo->addItem(QStringLiteral("车辆"), -1);
+    detectLayout->addWidget(m_targetClassCombo, row, 1);
+    row++;
+    
+    detectLayout->addWidget(new QLabel(QStringLiteral("自定义类别:"), page), row, 0);
+    m_targetClassesTextEdit = new QLineEdit(page);
+    m_targetClassesTextEdit->setPlaceholderText(QStringLiteral("多个类别用逗号分隔，如: 0,1,2"));
+    detectLayout->addWidget(m_targetClassesTextEdit, row, 1);
+    row++;
+    
+    detectLayout->addWidget(new QLabel(QStringLiteral("推理间隔(帧):"), page), row, 0);
+    m_inferenceIntervalSpin = new QSpinBox(page);
+    m_inferenceIntervalSpin->setRange(0, 10);
+    m_inferenceIntervalSpin->setValue(0);
+    detectLayout->addWidget(m_inferenceIntervalSpin, row, 1);
+    
+    layout->addWidget(detectGroup);
+    
+    QGroupBox* regionGroup = new QGroupBox(QStringLiteral("📐 区域检测"), page);
+    QGridLayout* regionLayout = new QGridLayout(regionGroup);
+    row = 0;
+    
+    m_useRegionCheck = new QCheckBox(QStringLiteral("启用区域检测"), page);
+    regionLayout->addWidget(m_useRegionCheck, row, 0, 1, 2);
+    row++;
+    
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域X:"), page), row, 0);
+    m_regionXSpin = new QSpinBox(page);
+    m_regionXSpin->setRange(0, 3840);
+    regionLayout->addWidget(m_regionXSpin, row, 1);
+    row++;
+    
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域Y:"), page), row, 0);
+    m_regionYSpin = new QSpinBox(page);
+    m_regionYSpin->setRange(0, 2160);
+    regionLayout->addWidget(m_regionYSpin, row, 1);
+    row++;
+    
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域宽度:"), page), row, 0);
+    m_regionWidthSpin = new QSpinBox(page);
+    m_regionWidthSpin->setRange(1, 3840);
+    m_regionWidthSpin->setValue(640);
+    regionLayout->addWidget(m_regionWidthSpin, row, 1);
+    row++;
+    
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域高度:"), page), row, 0);
+    m_regionHeightSpin = new QSpinBox(page);
+    m_regionHeightSpin->setRange(1, 2160);
+    m_regionHeightSpin->setValue(480);
+    regionLayout->addWidget(m_regionHeightSpin, row, 1);
+    
+    layout->addWidget(regionGroup);
+    layout->addStretch();
+    
+    m_tabWidget->addTab(page, QStringLiteral("🎯 检测"));
+}
+
 void YoloAimSettingsDialog::setupVisualPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* displayGroup = new QGroupBox(QStringLiteral("👁 显示设置"), page);
-    QGridLayout* displayLayout = new QGridLayout(displayGroup);
+    QScrollArea* scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
     
+    QWidget* scrollContent = new QWidget();
+    QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+    
+    QGroupBox* displayGroup = new QGroupBox(QStringLiteral("👁 显示设置"), scrollContent);
+    QGridLayout* displayLayout = new QGridLayout(displayGroup);
     int row = 0;
     
-    m_showDetectionResultsCheck = new QCheckBox(QStringLiteral("显示检测结果"), page);
+    m_showDetectionResultsCheck = new QCheckBox(QStringLiteral("显示检测结果"), scrollContent);
     displayLayout->addWidget(m_showDetectionResultsCheck, row, 0, 1, 2);
     row++;
     
-    m_showFOVCheck = new QCheckBox(QStringLiteral("显示FOV"), page);
-    displayLayout->addWidget(m_showFOVCheck, row, 0, 1, 2);
+    displayLayout->addWidget(new QLabel(QStringLiteral("边框线宽:"), scrollContent), row, 0);
+    m_bboxLineWidthSpin = new QSpinBox(scrollContent);
+    m_bboxLineWidthSpin->setRange(1, 5);
+    m_bboxLineWidthSpin->setValue(2);
+    displayLayout->addWidget(m_bboxLineWidthSpin, row, 1);
     row++;
     
-    m_showFOVCircleCheck = new QCheckBox(QStringLiteral("显示FOV圆圈"), page);
-    displayLayout->addWidget(m_showFOVCircleCheck, row, 0);
-    
-    m_showFOVCrossCheck = new QCheckBox(QStringLiteral("显示FOV十字"), page);
-    displayLayout->addWidget(m_showFOVCrossCheck, row, 1);
+    displayLayout->addWidget(new QLabel(QStringLiteral("标签字体大小:"), scrollContent), row, 0);
+    m_labelFontScaleSpin = new QDoubleSpinBox(scrollContent);
+    m_labelFontScaleSpin->setRange(0.2, 1.0);
+    m_labelFontScaleSpin->setSingleStep(0.05);
+    m_labelFontScaleSpin->setValue(0.5);
+    displayLayout->addWidget(m_labelFontScaleSpin, row, 1);
     row++;
     
-    displayLayout->addWidget(new QLabel(QStringLiteral("FOV半径:"), page), row, 0);
-    m_fovRadiusSpin = new QSpinBox(page);
+    m_detectionSmoothingCheck = new QCheckBox(QStringLiteral("启用检测框平滑"), scrollContent);
+    displayLayout->addWidget(m_detectionSmoothingCheck, row, 0, 1, 2);
+    row++;
+    
+    displayLayout->addWidget(new QLabel(QStringLiteral("平滑系数:"), scrollContent), row, 0);
+    m_detectionSmoothingAlphaSpin = new QDoubleSpinBox(scrollContent);
+    m_detectionSmoothingAlphaSpin->setRange(0.01, 1.0);
+    m_detectionSmoothingAlphaSpin->setSingleStep(0.01);
+    m_detectionSmoothingAlphaSpin->setValue(0.3);
+    displayLayout->addWidget(m_detectionSmoothingAlphaSpin, row, 1);
+    
+    scrollLayout->addWidget(displayGroup);
+    
+    QGroupBox* fovGroup = new QGroupBox(QStringLiteral("🎯 FOV设置"), scrollContent);
+    QGridLayout* fovLayout = new QGridLayout(fovGroup);
+    row = 0;
+    
+    m_showFOVCheck = new QCheckBox(QStringLiteral("显示FOV"), scrollContent);
+    fovLayout->addWidget(m_showFOVCheck, row, 0, 1, 2);
+    row++;
+    
+    m_showFOVCircleCheck = new QCheckBox(QStringLiteral("显示FOV圆圈"), scrollContent);
+    fovLayout->addWidget(m_showFOVCircleCheck, row, 0);
+    
+    m_showFOVCrossCheck = new QCheckBox(QStringLiteral("显示FOV十字"), scrollContent);
+    fovLayout->addWidget(m_showFOVCrossCheck, row, 1);
+    row++;
+    
+    fovLayout->addWidget(new QLabel(QStringLiteral("FOV半径:"), scrollContent), row, 0);
+    m_fovRadiusSpin = new QSpinBox(scrollContent);
     m_fovRadiusSpin->setRange(10, 500);
-    displayLayout->addWidget(m_fovRadiusSpin, row, 1);
+    fovLayout->addWidget(m_fovRadiusSpin, row, 1);
     row++;
     
-    displayLayout->addWidget(new QLabel(QStringLiteral("十字线长度:"), page), row, 0);
-    m_fovCrossLineScaleSpin = new QSpinBox(page);
-    m_fovCrossLineScaleSpin->setRange(5, 200);
-    displayLayout->addWidget(m_fovCrossLineScaleSpin, row, 1);
+    fovLayout->addWidget(new QLabel(QStringLiteral("十字线长度:"), scrollContent), row, 0);
+    m_fovCrossLineScaleSpin = new QSpinBox(scrollContent);
+    m_fovCrossLineScaleSpin->setRange(5, 300);
+    fovLayout->addWidget(m_fovCrossLineScaleSpin, row, 1);
     row++;
     
-    displayLayout->addWidget(new QLabel(QStringLiteral("十字线粗细:"), page), row, 0);
-    m_fovCrossLineThicknessSpin = new QSpinBox(page);
+    fovLayout->addWidget(new QLabel(QStringLiteral("十字线粗细:"), scrollContent), row, 0);
+    m_fovCrossLineThicknessSpin = new QSpinBox(scrollContent);
     m_fovCrossLineThicknessSpin->setRange(1, 10);
-    displayLayout->addWidget(m_fovCrossLineThicknessSpin, row, 1);
+    fovLayout->addWidget(m_fovCrossLineThicknessSpin, row, 1);
     row++;
     
-    displayLayout->addWidget(new QLabel(QStringLiteral("圆圈粗细:"), page), row, 0);
-    m_fovCircleThicknessSpin = new QSpinBox(page);
+    fovLayout->addWidget(new QLabel(QStringLiteral("圆圈粗细:"), scrollContent), row, 0);
+    m_fovCircleThicknessSpin = new QSpinBox(scrollContent);
     m_fovCircleThicknessSpin->setRange(1, 10);
-    displayLayout->addWidget(m_fovCircleThicknessSpin, row, 1);
+    fovLayout->addWidget(m_fovCircleThicknessSpin, row, 1);
     
-    layout->addWidget(displayGroup);
-    layout->addStretch();
+    scrollLayout->addWidget(fovGroup);
+    
+    QGroupBox* dynamicFovGroup = new QGroupBox(QStringLiteral("⚡ 动态FOV"), scrollContent);
+    QGridLayout* dynamicFovLayout = new QGridLayout(dynamicFovGroup);
+    row = 0;
+    
+    m_useDynamicFOVCheck = new QCheckBox(QStringLiteral("启用动态FOV"), scrollContent);
+    dynamicFovLayout->addWidget(m_useDynamicFOVCheck, row, 0, 1, 2);
+    row++;
+    
+    m_showFOV2Check = new QCheckBox(QStringLiteral("显示第二个FOV"), scrollContent);
+    dynamicFovLayout->addWidget(m_showFOV2Check, row, 0, 1, 2);
+    row++;
+    
+    dynamicFovLayout->addWidget(new QLabel(QStringLiteral("第二FOV半径:"), scrollContent), row, 0);
+    m_fovRadius2Spin = new QSpinBox(scrollContent);
+    m_fovRadius2Spin->setRange(1, 200);
+    dynamicFovLayout->addWidget(m_fovRadius2Spin, row, 1);
+    row++;
+    
+    dynamicFovLayout->addWidget(new QLabel(QStringLiteral("缩放百分比:"), scrollContent), row, 0);
+    m_dynamicFovShrinkSpin = new QSpinBox(scrollContent);
+    m_dynamicFovShrinkSpin->setRange(10, 100);
+    m_dynamicFovShrinkSpin->setValue(50);
+    dynamicFovLayout->addWidget(m_dynamicFovShrinkSpin, row, 1);
+    row++;
+    
+    dynamicFovLayout->addWidget(new QLabel(QStringLiteral("过渡时间(ms):"), scrollContent), row, 0);
+    m_dynamicFovTransitionSpin = new QSpinBox(scrollContent);
+    m_dynamicFovTransitionSpin->setRange(0, 1000);
+    m_dynamicFovTransitionSpin->setSingleStep(10);
+    dynamicFovLayout->addWidget(m_dynamicFovTransitionSpin, row, 1);
+    
+    scrollLayout->addWidget(dynamicFovGroup);
+    
+    QGroupBox* advancedGroup = new QGroupBox(QStringLiteral("🔧 高级设置"), scrollContent);
+    QGridLayout* advancedLayout = new QGridLayout(advancedGroup);
+    row = 0;
+    
+    m_exportCoordinatesCheck = new QCheckBox(QStringLiteral("导出坐标"), scrollContent);
+    advancedLayout->addWidget(m_exportCoordinatesCheck, row, 0, 1, 2);
+    row++;
+    
+    advancedLayout->addWidget(new QLabel(QStringLiteral("输出路径:"), scrollContent), row, 0);
+    m_coordinateOutputPathEdit = new QLineEdit(scrollContent);
+    m_coordinateOutputPathBtn = new QPushButton(QStringLiteral("浏览..."), scrollContent);
+    QHBoxLayout* coordPathLayout = new QHBoxLayout();
+    coordPathLayout->addWidget(m_coordinateOutputPathEdit);
+    coordPathLayout->addWidget(m_coordinateOutputPathBtn);
+    advancedLayout->addLayout(coordPathLayout, row, 1);
+    
+    scrollLayout->addWidget(advancedGroup);
+    scrollLayout->addStretch();
+    
+    scrollArea->setWidget(scrollContent);
+    layout->addWidget(scrollArea);
     
     m_tabWidget->addTab(page, QStringLiteral("👁 视觉"));
 }
@@ -1014,7 +1334,7 @@ void YoloAimSettingsDialog::loadSettings()
     obs_source_t* source = obs_get_source_by_name(m_currentSource.toUtf8().constData());
     if (!source) return;
     
-    obs_source_t* filter = obs_source_get_filter_by_name(source, "yolo-aim-filter-hidden");
+    obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
     if (!filter) {
         obs_source_release(source);
         return;
@@ -1098,6 +1418,65 @@ void YoloAimSettingsDialog::loadSettings()
     if (m_fovCrossLineThicknessSpin) m_fovCrossLineThicknessSpin->setValue(obs_data_get_int(settings, "fov_cross_line_thickness"));
     if (m_fovCircleThicknessSpin) m_fovCircleThicknessSpin->setValue(obs_data_get_int(settings, "fov_circle_thickness"));
     
+    // 推理状态
+    bool isInferencing = obs_data_get_bool(settings, "is_inferencing");
+    if (m_toggleInferenceBtn) {
+        m_toggleInferenceBtn->setChecked(isInferencing);
+        m_toggleInferenceBtn->setText(isInferencing ? QStringLiteral("⏹ 停止推理") : QStringLiteral("▶ 开始推理"));
+    }
+    if (m_inferenceStatusLabel) {
+        m_inferenceStatusLabel->setText(isInferencing ? QStringLiteral("状态: 推理运行中") : QStringLiteral("状态: 已停止"));
+    }
+    
+    // 模型配置
+    if (m_modelPathEdit) m_modelPathEdit->setText(QString::fromUtf8(obs_data_get_string(settings, "model_path")));
+    if (m_modelVersionCombo) m_modelVersionCombo->setCurrentIndex(obs_data_get_int(settings, "model_version"));
+    if (m_useGPUCombo) {
+        QString gpuSetting = QString::fromUtf8(obs_data_get_string(settings, "use_gpu"));
+        int gpuIndex = m_useGPUCombo->findData(gpuSetting);
+        if (gpuIndex >= 0) m_useGPUCombo->setCurrentIndex(gpuIndex);
+    }
+    if (m_useGPUTextureCheck) m_useGPUTextureCheck->setChecked(obs_data_get_bool(settings, "use_gpu_texture_inference"));
+    if (m_inputResolutionCombo) {
+        int res = obs_data_get_int(settings, "input_resolution");
+        int resIndex = m_inputResolutionCombo->findData(res);
+        if (resIndex >= 0) m_inputResolutionCombo->setCurrentIndex(resIndex);
+    }
+    if (m_numThreadsSpin) m_numThreadsSpin->setValue(obs_data_get_int(settings, "num_threads"));
+    
+    // 检测配置
+    if (m_confidenceThresholdSpin) m_confidenceThresholdSpin->setValue(obs_data_get_double(settings, "confidence_threshold"));
+    if (m_nmsThresholdSpin) m_nmsThresholdSpin->setValue(obs_data_get_double(settings, "nms_threshold"));
+    if (m_targetClassCombo) m_targetClassCombo->setCurrentIndex(obs_data_get_int(settings, "target_class"));
+    if (m_targetClassesTextEdit) m_targetClassesTextEdit->setText(QString::fromUtf8(obs_data_get_string(settings, "target_classes_text")));
+    if (m_inferenceIntervalSpin) m_inferenceIntervalSpin->setValue(obs_data_get_int(settings, "inference_interval_frames"));
+    
+    // 区域检测
+    if (m_useRegionCheck) m_useRegionCheck->setChecked(obs_data_get_bool(settings, "use_region"));
+    if (m_regionXSpin) m_regionXSpin->setValue(obs_data_get_int(settings, "region_x"));
+    if (m_regionYSpin) m_regionYSpin->setValue(obs_data_get_int(settings, "region_y"));
+    if (m_regionWidthSpin) m_regionWidthSpin->setValue(obs_data_get_int(settings, "region_width"));
+    if (m_regionHeightSpin) m_regionHeightSpin->setValue(obs_data_get_int(settings, "region_height"));
+    
+    // 渲染配置
+    if (m_bboxLineWidthSpin) m_bboxLineWidthSpin->setValue(obs_data_get_int(settings, "bbox_line_width"));
+    if (m_labelFontScaleSpin) m_labelFontScaleSpin->setValue(obs_data_get_double(settings, "label_font_scale"));
+    
+    // 动态FOV
+    if (m_useDynamicFOVCheck) m_useDynamicFOVCheck->setChecked(obs_data_get_bool(settings, "use_dynamic_fov"));
+    if (m_showFOV2Check) m_showFOV2Check->setChecked(obs_data_get_bool(settings, "show_fov2"));
+    if (m_fovRadius2Spin) m_fovRadius2Spin->setValue(obs_data_get_int(settings, "fov_radius2"));
+    if (m_dynamicFovShrinkSpin) m_dynamicFovShrinkSpin->setValue(obs_data_get_int(settings, "dynamic_fov_shrink_percent"));
+    if (m_dynamicFovTransitionSpin) m_dynamicFovTransitionSpin->setValue(obs_data_get_int(settings, "dynamic_fov_transition_time"));
+    
+    // 检测框平滑
+    if (m_detectionSmoothingCheck) m_detectionSmoothingCheck->setChecked(obs_data_get_bool(settings, "detection_smoothing_enabled"));
+    if (m_detectionSmoothingAlphaSpin) m_detectionSmoothingAlphaSpin->setValue(obs_data_get_double(settings, "detection_smoothing_alpha"));
+    
+    // 高级配置
+    if (m_exportCoordinatesCheck) m_exportCoordinatesCheck->setChecked(obs_data_get_bool(settings, "export_coordinates"));
+    if (m_coordinateOutputPathEdit) m_coordinateOutputPathEdit->setText(QString::fromUtf8(obs_data_get_string(settings, "coordinate_output_path")));
+    
     obs_data_release(settings);
     obs_source_release(filter);
     obs_source_release(source);
@@ -1110,7 +1489,7 @@ void YoloAimSettingsDialog::saveSettings()
     obs_source_t* source = obs_get_source_by_name(m_currentSource.toUtf8().constData());
     if (!source) return;
     
-    obs_source_t* filter = obs_source_get_filter_by_name(source, "yolo-aim-filter-hidden");
+    obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
     if (!filter) {
         obs_source_release(source);
         return;
@@ -1194,6 +1573,50 @@ void YoloAimSettingsDialog::saveSettings()
     if (m_fovCrossLineThicknessSpin) obs_data_set_int(settings, "fov_cross_line_thickness", m_fovCrossLineThicknessSpin->value());
     if (m_fovCircleThicknessSpin) obs_data_set_int(settings, "fov_circle_thickness", m_fovCircleThicknessSpin->value());
     
+    // 推理状态
+    if (m_toggleInferenceBtn) obs_data_set_bool(settings, "is_inferencing", m_toggleInferenceBtn->isChecked());
+    
+    // 模型配置
+    if (m_modelPathEdit) obs_data_set_string(settings, "model_path", m_modelPathEdit->text().toUtf8().constData());
+    if (m_modelVersionCombo) obs_data_set_int(settings, "model_version", m_modelVersionCombo->currentIndex());
+    if (m_useGPUCombo) obs_data_set_string(settings, "use_gpu", m_useGPUCombo->currentData().toString().toUtf8().constData());
+    if (m_useGPUTextureCheck) obs_data_set_bool(settings, "use_gpu_texture_inference", m_useGPUTextureCheck->isChecked());
+    if (m_inputResolutionCombo) obs_data_set_int(settings, "input_resolution", m_inputResolutionCombo->currentData().toInt());
+    if (m_numThreadsSpin) obs_data_set_int(settings, "num_threads", m_numThreadsSpin->value());
+    
+    // 检测配置
+    if (m_confidenceThresholdSpin) obs_data_set_double(settings, "confidence_threshold", m_confidenceThresholdSpin->value());
+    if (m_nmsThresholdSpin) obs_data_set_double(settings, "nms_threshold", m_nmsThresholdSpin->value());
+    if (m_targetClassCombo) obs_data_set_int(settings, "target_class", m_targetClassCombo->currentIndex());
+    if (m_targetClassesTextEdit) obs_data_set_string(settings, "target_classes_text", m_targetClassesTextEdit->text().toUtf8().constData());
+    if (m_inferenceIntervalSpin) obs_data_set_int(settings, "inference_interval_frames", m_inferenceIntervalSpin->value());
+    
+    // 区域检测
+    if (m_useRegionCheck) obs_data_set_bool(settings, "use_region", m_useRegionCheck->isChecked());
+    if (m_regionXSpin) obs_data_set_int(settings, "region_x", m_regionXSpin->value());
+    if (m_regionYSpin) obs_data_set_int(settings, "region_y", m_regionYSpin->value());
+    if (m_regionWidthSpin) obs_data_set_int(settings, "region_width", m_regionWidthSpin->value());
+    if (m_regionHeightSpin) obs_data_set_int(settings, "region_height", m_regionHeightSpin->value());
+    
+    // 渲染配置
+    if (m_bboxLineWidthSpin) obs_data_set_int(settings, "bbox_line_width", m_bboxLineWidthSpin->value());
+    if (m_labelFontScaleSpin) obs_data_set_double(settings, "label_font_scale", m_labelFontScaleSpin->value());
+    
+    // 动态FOV
+    if (m_useDynamicFOVCheck) obs_data_set_bool(settings, "use_dynamic_fov", m_useDynamicFOVCheck->isChecked());
+    if (m_showFOV2Check) obs_data_set_bool(settings, "show_fov2", m_showFOV2Check->isChecked());
+    if (m_fovRadius2Spin) obs_data_set_int(settings, "fov_radius2", m_fovRadius2Spin->value());
+    if (m_dynamicFovShrinkSpin) obs_data_set_int(settings, "dynamic_fov_shrink_percent", m_dynamicFovShrinkSpin->value());
+    if (m_dynamicFovTransitionSpin) obs_data_set_int(settings, "dynamic_fov_transition_time", m_dynamicFovTransitionSpin->value());
+    
+    // 检测框平滑
+    if (m_detectionSmoothingCheck) obs_data_set_bool(settings, "detection_smoothing_enabled", m_detectionSmoothingCheck->isChecked());
+    if (m_detectionSmoothingAlphaSpin) obs_data_set_double(settings, "detection_smoothing_alpha", m_detectionSmoothingAlphaSpin->value());
+    
+    // 高级配置
+    if (m_exportCoordinatesCheck) obs_data_set_bool(settings, "export_coordinates", m_exportCoordinatesCheck->isChecked());
+    if (m_coordinateOutputPathEdit) obs_data_set_string(settings, "coordinate_output_path", m_coordinateOutputPathEdit->text().toUtf8().constData());
+    
     obs_source_update(filter, settings);
     
     obs_data_release(settings);
@@ -1220,10 +1643,10 @@ void YoloAimSettingsDialog::attachFilterToSource(const QString& sourceName)
     obs_source_t* source = obs_get_source_by_name(sourceName.toUtf8().constData());
     if (!source) return;
     
-    obs_source_t* filter = obs_source_get_filter_by_name(source, "yolo-aim-filter-hidden");
+    obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
     if (!filter) {
         obs_data_t* settings = obs_data_create();
-        filter = obs_source_create("yolo-detector-filter", "yolo-aim-filter-hidden", settings, nullptr);
+        filter = obs_source_create("yolo-detector-filter", "visual-assist-hidden", settings, nullptr);
         if (filter) {
             obs_source_filter_add(source, filter);
         }
@@ -1239,7 +1662,7 @@ void YoloAimSettingsDialog::detachFilterFromSource(const QString& sourceName)
     obs_source_t* source = obs_get_source_by_name(sourceName.toUtf8().constData());
     if (!source) return;
     
-    obs_source_t* filter = obs_source_get_filter_by_name(source, "yolo-aim-filter-hidden");
+    obs_source_t* filter = obs_source_get_filter_by_name(source, "visual-assist-hidden");
     if (filter) {
         obs_source_filter_remove(source, filter);
         obs_source_release(filter);
