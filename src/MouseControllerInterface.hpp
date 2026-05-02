@@ -221,6 +221,7 @@ struct MouseControllerConfig {
     int neuralPathPoints = 25;                 // 轨迹点数量
     double neuralMouseStepSize = 4.0;          // 鼠标步长
     int neuralTargetRadius = 8;                // 目标半径（到达判定）
+    bool enableNeuralPathDebug = false;        // 是否输出神经网络调试日志
 };
 
 class MouseControllerInterface {

@@ -843,6 +843,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(neuralMouseStepSizeProp, "每次移动的步长大小");
 	obs_property_t *neuralTargetRadiusProp = obs_properties_add_int_slider(props, "neural_target_radius", "目标半径", 1, 50, 1);
 	obs_property_set_long_description(neuralTargetRadiusProp, "到达目标的判定半径");
+	obs_property_t *enableNeuralPathDebugProp = obs_properties_add_bool(props, "enable_neural_path_debug", "神经网络调试日志");
+	obs_property_set_long_description(enableNeuralPathDebugProp, "开启后会输出详细的神经网络轨迹运行日志，用于调试");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1445,6 +1447,7 @@ static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *propert
 	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), useNeuralPath);
 	
 	return true;
 }
@@ -1568,6 +1571,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), page == 5 && useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), page == 5 && useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), page == 5 && useNeuralPath);
 	
 	// 多指标融合追踪权重（页面5）
 	obs_property_set_visible(obs_properties_get(props, "tracking_weight_iou"), page == 5);
@@ -1717,6 +1721,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "neural_path_points", 25);
     obs_data_set_default_double(settings, "neural_mouse_step_size", 4.0);
     obs_data_set_default_int(settings, "neural_target_radius", 8);
+    obs_data_set_default_bool(settings, "enable_neural_path_debug", false);
     
     obs_data_set_default_double(settings, "label_font_scale", 0.35);
 	obs_data_set_default_bool(settings, "use_region", false);
@@ -2148,17 +2153,19 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].neuralPathPoints = (int)obs_data_get_int(settings, "neural_path_points");
 		tf->mouseConfigs[i].neuralMouseStepSize = obs_data_get_double(settings, "neural_mouse_step_size");
 		tf->mouseConfigs[i].neuralTargetRadius = (int)obs_data_get_int(settings, "neural_target_radius");
+		tf->mouseConfigs[i].enableNeuralPathDebug = obs_data_get_bool(settings, "enable_neural_path_debug");
 	}
 	
 	// 日志：神经网络配置读取结果
 	static int configReadCount = 0;
 	configReadCount++;
-	if (configReadCount <= 3 || tf->mouseConfigs[0].enableNeuralPath) {
-		obs_log(LOG_INFO, "[NeuralPath-Config] READ: enableNeuralPath=%d, neuralPathPoints=%d, neuralMouseStepSize=%.1f, neuralTargetRadius=%d",
+	if ((configReadCount <= 3 || tf->mouseConfigs[0].enableNeuralPath) && tf->mouseConfigs[0].enableNeuralPathDebug) {
+		obs_log(LOG_INFO, "[NeuralPath-Config] READ: enableNeuralPath=%d, neuralPathPoints=%d, neuralMouseStepSize=%.1f, neuralTargetRadius=%d, debug=%d",
 				tf->mouseConfigs[0].enableNeuralPath ? 1 : 0,
 				tf->mouseConfigs[0].neuralPathPoints,
 				tf->mouseConfigs[0].neuralMouseStepSize,
-				tf->mouseConfigs[0].neuralTargetRadius);
+				tf->mouseConfigs[0].neuralTargetRadius,
+				tf->mouseConfigs[0].enableNeuralPathDebug ? 1 : 0);
 	}
 
 	tf->labelFontScale = (float)obs_data_get_double(settings, "label_font_scale");
@@ -5221,15 +5228,17 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.neuralPathPoints = cfg.neuralPathPoints;
 		mcConfig.neuralMouseStepSize = cfg.neuralMouseStepSize;
 		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
+		mcConfig.enableNeuralPathDebug = cfg.enableNeuralPathDebug;
 		
 		static int syncCount = 0;
 		syncCount++;
-		if (syncCount <= 3 || cfg.enableNeuralPath) {
-			obs_log(LOG_INFO, "[NeuralPath-Sync] PASS TO CONTROLLER: enableNeuralPath=%d, neuralPathPoints=%d, neuralMouseStepSize=%.1f, neuralTargetRadius=%d",
+		if ((syncCount <= 3 || cfg.enableNeuralPath) && cfg.enableNeuralPathDebug) {
+			obs_log(LOG_INFO, "[NeuralPath-Sync] PASS TO CONTROLLER: enableNeuralPath=%d, neuralPathPoints=%d, neuralMouseStepSize=%.1f, neuralTargetRadius=%d, debug=%d",
 					mcConfig.enableNeuralPath ? 1 : 0,
 					mcConfig.neuralPathPoints,
 					mcConfig.neuralMouseStepSize,
-					mcConfig.neuralTargetRadius);
+					mcConfig.neuralTargetRadius,
+					mcConfig.enableNeuralPathDebug ? 1 : 0);
 		}
 		
 		tf->mouseController->updateConfig(mcConfig);

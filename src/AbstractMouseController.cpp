@@ -67,6 +67,7 @@ AbstractMouseController::AbstractMouseController()
     , motionSimInitialized_(false)
     , enableNeuralPath_(false)
     , neuralPathInitialized_(false)
+    , enableNeuralPathDebug_(false)
     , neuralPathIndex_(0)
     , lastNeuralTargetX_(0.0f)
     , lastNeuralTargetY_(0.0f)
@@ -121,6 +122,7 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     // 更新神经网络轨迹生成器配置
     enableNeuralPath_ = config.enableNeuralPath;
+    enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
     if (configChanged) {
@@ -151,9 +153,9 @@ void AbstractMouseController::initializeNeuralPathIfNeeded()
         neuralPathInitialized_ = true;
         obs_log(LOG_INFO, "[%s] Neural path predictor INITIALIZED SUCCESSFULLY", getLogPrefix());
     } else if (enableNeuralPath_ && neuralPathInitialized_) {
-        obs_log(LOG_DEBUG, "[%s] Neural path predictor already initialized (skipping)", getLogPrefix());
+        if (enableNeuralPathDebug_) obs_log(LOG_DEBUG, "[%s] Neural path predictor already initialized (skipping)", getLogPrefix());
     } else {
-        obs_log(LOG_DEBUG, "[%s] Neural path DISABLED (enableNeuralPath=%d)", getLogPrefix(), enableNeuralPath_ ? 1 : 0);
+        if (enableNeuralPathDebug_) obs_log(LOG_DEBUG, "[%s] Neural path DISABLED (enableNeuralPath=%d)", getLogPrefix(), enableNeuralPath_ ? 1 : 0);
     }
 }
 
@@ -263,16 +265,32 @@ void AbstractMouseController::tick()
     // 日志：目标选择
     static int targetFrameCount = 0;
     targetFrameCount++;
-    if (targetFrameCount % 60 == 1) {
+    if (targetFrameCount % 60 == 1 && enableNeuralPathDebug_) {
         obs_log(LOG_INFO, "[%s] TARGET SELECTED: classId=%d, conf=%.2f, center=(%.3f,%.3f), wh=(%.3f,%.3f)",
                 getLogPrefix(), target->classId, target->confidence,
                 target->centerX, target->centerY, target->width, target->height);
+    }
+    
+    // 诊断：检测框稳定性追踪
+    static float lastCenterX = 0, lastCenterY = 0;
+    static float maxCenterDelta = 0;
+    float centerDeltaX = std::abs(target->centerX - lastCenterX);
+    float centerDeltaY = std::abs(target->centerY - lastCenterY);
+    float maxDeltaThisFrame = std::max(centerDeltaX, centerDeltaY);
+    if (maxDeltaThisFrame > maxCenterDelta) maxCenterDelta = maxDeltaThisFrame;
+    lastCenterX = target->centerX;
+    lastCenterY = target->centerY;
+    
+    if (targetFrameCount % 120 == 1 && enableNeuralPathDebug_) {
+        obs_log(LOG_INFO, "[%s] DETECTION STABILITY: centerDelta=(%.4f,%.4f) maxDelta=%.4f (120帧内)",
+                getLogPrefix(), centerDeltaX, centerDeltaY, maxCenterDelta);
+        maxCenterDelta = 0;
     }
 
     float fovCenterX = config.inferenceFrameWidth / 2.0f;
     float fovCenterY = config.inferenceFrameHeight / 2.0f;
     
-    if (targetFrameCount % 60 == 1) {
+    if (targetFrameCount % 60 == 1 && enableNeuralPathDebug_) {
         obs_log(LOG_INFO, "[%s] NEURAL PATH STATUS: enabled=%d, initialized=%d, hasDetections=%zu",
                 getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0,
                 currentDetections.size());
@@ -286,13 +304,20 @@ void AbstractMouseController::tick()
     
     // 神经网络轨迹生成
     if (enableNeuralPath_) {
+        static int neuralLogCount = 0;
+        neuralLogCount++;
+        if (neuralLogCount % 60 == 1 && enableNeuralPathDebug_) {
+            obs_log(LOG_INFO, "[%s] NEURAL PATH ACTIVE: using neural trajectory (enabled=%d, initialized=%d)",
+                    getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0);
+        }
+        
         // 计算目标相对位置
         double relativeTargetX = targetPixelX - fovCenterX;
         double relativeTargetY = targetPixelY - fovCenterY;
         
         static int frameCount = 0;
         frameCount++;
-        if (frameCount % 30 == 1) {
+        if (frameCount % 30 == 1 && enableNeuralPathDebug_) {
             obs_log(LOG_INFO, "[%s] NeuralPath FRAME=%d: target=(%.1f,%.1f) fovCenter=(%.1f,%.1f) relative=(%.1f,%.1f) initialized=%d",
                     getLogPrefix(), frameCount, targetPixelX, targetPixelY, fovCenterX, fovCenterY,
                     relativeTargetX, relativeTargetY, neuralPathInitialized_ ? 1 : 0);
@@ -303,10 +328,15 @@ void AbstractMouseController::tick()
         bool targetChanged = std::abs(targetPixelX - lastNeuralTargetX_) > targetChangeThreshold ||
                             std::abs(targetPixelY - lastNeuralTargetY_) > targetChangeThreshold;
         
-        // 如果目标变化或轨迹已执行完毕，重新生成轨迹
-        if (targetChanged || neuralPathIndex_ >= neuralPathPoints_.size()) {
-            obs_log(LOG_INFO, "[%s] NeuralPath REGENERATING: targetChanged=%d, index=%zu, size=%zu, lastTarget=(%.1f,%.1f)",
-                    getLogPrefix(), targetChanged ? 1 : 0, neuralPathIndex_, neuralPathPoints_.size(),
+        // 检查是否已到达目标（相对位置接近0）
+        float reachThreshold = 3.0f; // 到达判定阈值（像素）
+        bool targetReached = std::abs(relativeTargetX) < reachThreshold &&
+                            std::abs(relativeTargetY) < reachThreshold;
+        
+        // 只有目标变化或轨迹执行完毕且未到达目标时，才重新生成轨迹
+        if (targetChanged || (neuralPathIndex_ >= neuralPathPoints_.size() && !targetReached)) {
+            if (enableNeuralPathDebug_) obs_log(LOG_INFO, "[%s] NeuralPath REGENERATING: targetChanged=%d, targetReached=%d, index=%zu, size=%zu, lastTarget=(%.1f,%.1f)",
+                    getLogPrefix(), targetChanged ? 1 : 0, targetReached ? 1 : 0, neuralPathIndex_, neuralPathPoints_.size(),
                     lastNeuralTargetX_, lastNeuralTargetY_);
                     
             neuralPathPoints_ = neuralPathPredictor_.moveTo(relativeTargetX, relativeTargetY);
@@ -314,8 +344,8 @@ void AbstractMouseController::tick()
             lastNeuralTargetX_ = targetPixelX;
             lastNeuralTargetY_ = targetPixelY;
             
-            obs_log(LOG_INFO, "[%s] NeuralPath GENERATED %zu points", getLogPrefix(), neuralPathPoints_.size());
-            if (!neuralPathPoints_.empty()) {
+            if (enableNeuralPathDebug_) obs_log(LOG_INFO, "[%s] NeuralPath GENERATED %zu points", getLogPrefix(), neuralPathPoints_.size());
+            if (enableNeuralPathDebug_ && !neuralPathPoints_.empty()) {
                 obs_log(LOG_INFO, "[%s] NeuralPath FIRST POINT: (%.1f,%.1f)", getLogPrefix(),
                         neuralPathPoints_[0].first, neuralPathPoints_[0].second);
             }
@@ -327,7 +357,9 @@ void AbstractMouseController::tick()
             int dy = static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].second));
             neuralPathIndex_++;
             
-            if (frameCount % 10 == 1) {
+            static int moveFrameCount = 0;
+            moveFrameCount++;
+            if (moveFrameCount % 10 == 1 && enableNeuralPathDebug_) {
                 obs_log(LOG_INFO, "[%s] NeuralPath MOVE: index=%zu/%zu, dx=%d, dy=%d, remaining=%zu",
                         getLogPrefix(), neuralPathIndex_ - 1, neuralPathPoints_.size(), dx, dy,
                         neuralPathPoints_.size() - neuralPathIndex_);
@@ -400,6 +432,15 @@ void AbstractMouseController::tick()
 
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
+    
+    static int deadZoneFrameCount = 0;
+    deadZoneFrameCount++;
+    if (deadZoneFrameCount % 60 == 1 && enableNeuralPathDebug_) {
+        float distance = std::sqrt(distanceSquared);
+        obs_log(LOG_INFO, "[%s] DEADZONE CHECK: error=(%.1f,%.1f) distance=%.1f deadZone=%.1f inDeadZone=%d",
+                getLogPrefix(), errorX, errorY, distance, config.deadZonePixels,
+                distanceSquared < deadZoneSquared ? 1 : 0);
+    }
     
     if (distanceSquared < deadZoneSquared) {
         if (isMoving) {

@@ -127,6 +127,7 @@ protected:
     MMousePredictor neuralPathPredictor_;
     bool enableNeuralPath_;
     bool neuralPathInitialized_;
+    bool enableNeuralPathDebug_;  // 神经网络调试日志开关
     std::vector<std::pair<double, double>> neuralPathPoints_;
     size_t neuralPathIndex_;
     float lastNeuralTargetX_;  // 上一个目标X坐标
