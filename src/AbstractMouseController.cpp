@@ -153,6 +153,21 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     adaptiveConfig.derivativeFilterAlpha = config.adaptiveDerivativeFilterAlpha;
     adaptiveController_.setConfig(adaptiveConfig);
     
+    // 更新IncrementalPID控制器配置
+    IncrementalPIDConfig incrementalConfig;
+    incrementalConfig.kp = config.incrementalKp;
+    incrementalConfig.ki = config.incrementalKi;
+    incrementalConfig.kd = config.incrementalKd;
+    incrementalConfig.speedX = config.incrementalSpeedX;
+    incrementalConfig.speedY = config.incrementalSpeedY;
+    incrementalConfig.aimRadius = config.incrementalAimRadius;
+    incrementalConfig.jitterEnabled = config.incrementalJitterEnabled;
+    incrementalConfig.pidEnabled = config.incrementalPidEnabled;
+    incrementalConfig.sideCompEnabled = config.incrementalSideCompEnabled;
+    incrementalConfig.sideCompCap = config.incrementalSideCompCap;
+    incrementalConfig.sideCompDenom = config.incrementalSideCompDenom;
+    incrementalController_.setConfig(incrementalConfig);
+    
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
                 getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 
@@ -1008,6 +1023,80 @@ void AbstractMouseController::tick()
         stdLastErrorY = errorY;
         stdFilteredDeltaErrorX = 0.0f;
         stdFilteredDeltaErrorY = 0.0f;
+    }
+    else if (config.algorithmType == AlgorithmType::IncrementalPID) {
+        // IncrementalPID：增量式PID控制器（MIST）
+        float outX, outY;
+        incrementalController_.update(errorX, errorY, outX, outY);
+        moveX = outX;
+        moveY = outY;
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.incrementalKp;
+            data.currentKi = config.incrementalKi;
+            data.currentKd = config.incrementalKd;
+
+            auto debugTerms = incrementalController_.getLastDebugTerms();
+            data.pTermX = debugTerms.pidOutput;
+            data.pTermY = 0;
+            data.iTermX = debugTerms.previousError;
+            data.iTermY = 0;
+            data.dTermX = 0;
+            data.dTermY = 0;
+
+            data.integralAbsX = 0;
+            data.integralAbsY = 0;
+            data.integralLimitX = 0;
+            data.integralLimitY = 0;
+            data.integralRatioX = 0;
+            data.integralRatioY = 0;
+
+            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
+            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
+            if (!hasTarget) {
+                data.controlMode = 0;
+            } else if (errDist < 10.0f) {
+                data.controlMode = 2;
+            } else {
+                data.controlMode = 1;
+            }
+
+            data.algorithmType = 5;
+            data.isFiring = isFiring;
+            data.smoothingFactorX = 0;
+            data.smoothingFactorY = 0;
+
+            pidDataCallback_(data);
+        }
+
+        // 重置其他算法状态
+        pidPreviousErrorX = 0.0f;
+        pidPreviousErrorY = 0.0f;
+        previousErrorX = 0.0f;
+        previousErrorY = 0.0f;
+        filteredDeltaErrorX = 0.0f;
+        filteredDeltaErrorY = 0.0f;
+        integralX = 0.0f;
+        integralY = 0.0f;
+        integralGainX = 0.0f;
+        integralGainY = 0.0f;
+        stdIntegralX = 0.0f;
+        stdIntegralY = 0.0f;
+        stdIntegralGainX = 0.0f;
+        stdIntegralGainY = 0.0f;
+        stdLastErrorX = errorX;
+        stdLastErrorY = errorY;
+        stdFilteredDeltaErrorX = 0.0f;
+        stdFilteredDeltaErrorY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::DynamicPID) {
         // 动态PID：基于动态阈值和状态机的PID控制器
         dynamicPidX.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
@@ -1490,6 +1579,7 @@ void AbstractMouseController::resetPidState()
     dynamicPidX.reset();
     dynamicPidY.reset();
     adaptiveController_.reset();
+    incrementalController_.reset();
     advHasReachedX = false;
     advHasReachedY = false;
     advStableCountX = 0;

@@ -16,7 +16,8 @@ enum class AlgorithmType {
     StandardPID,      // 标准PID（经典PID）
     ChrisPID,         // ChrisPID（克里斯控制器）
     DynamicPID,       // 动态PID（动态阈值状态机）
-    AdaptivePID       // 自适应PID（P_PID控制器）
+    AdaptivePID,      // 自适应PID（P_PID控制器）
+    IncrementalPID    // 增量式PID（MIST控制器）
 };
 
 // PID数据回调函数类型
@@ -212,6 +213,19 @@ struct MouseControllerConfig {
     float adaptiveMaxPredTime = 0.1f;          // 最大预测时间
     float adaptiveOutputSmoothing = 0.7f;      // 输出平滑系数
     float adaptiveDerivativeFilterAlpha = 0.3f; // 微分滤波系数
+    
+    // IncrementalPID参数（增量式PID控制器 - MIST）
+    float incrementalKp = 0.5f;                 // 比例系数
+    float incrementalKi = 0.1f;                 // 积分系数
+    float incrementalKd = 0.05f;                // 微分系数
+    float incrementalSpeedX = 1.0f;             // X轴速度
+    float incrementalSpeedY = 1.0f;             // Y轴速度
+    int incrementalAimRadius = 200;             // 瞄准半径
+    bool incrementalJitterEnabled = false;      // 抖动开关
+    bool incrementalPidEnabled = true;          // PID开关（仅X轴）
+    bool incrementalSideCompEnabled = false;    // 侧向补偿开关
+    float incrementalSideCompCap = 5.0f;        // 侧向补偿上限
+    float incrementalSideCompDenom = 1.0f;      // 侧向补偿分母
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重

@@ -15,6 +15,7 @@
 #include "ChrisPIDController.hpp"
 #include "DynamicPIDController.hpp"
 #include "AdaptivePIDController.hpp"
+#include "IncrementalPIDController.hpp"
 #include "OneEuroFilter.hpp"
 #include "MotionSimulator.hpp"
 #include "curve.hpp"
@@ -89,6 +90,8 @@ protected:
     DynamicPIDAxis dynamicPidY;  // 动态PID Y轴控制器
 
     AdaptiveAimController adaptiveController_;  // 自适应PID控制器
+
+    IncrementalPIDAdapter incrementalController_;  // 增量式PID控制器
 
     OneEuroFilter oneEuroX;  // 高级PID一欧元滤波器X轴
     OneEuroFilter oneEuroY;  // 高级PID一欧元滤波器Y轴

@@ -624,6 +624,19 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float adaptiveOutputSmoothing;
 	float adaptiveDerivativeFilterAlpha;
 	
+	// IncrementalPID参数
+	float incrementalKp;
+	float incrementalKi;
+	float incrementalKd;
+	float incrementalSpeedX;
+	float incrementalSpeedY;
+	int incrementalAimRadius;
+	bool incrementalJitterEnabled;
+	bool incrementalPidEnabled;
+	bool incrementalSideCompEnabled;
+	float incrementalSideCompCap;
+	float incrementalSideCompDenom;
+	
 #endif
 
 	~yolo_detector_filter() {
@@ -1218,7 +1231,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 2);
 	obs_property_list_add_int(algorithmTypeList, "动态PID (动态阈值)", 3);
 	obs_property_list_add_int(algorithmTypeList, "AdaptivePID (自适应PID)", 4);
-	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机；AdaptivePID是P_PID自适应控制器");
+	obs_property_list_add_int(algorithmTypeList, "IncrementalPID (增量式PID)", 5);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机；AdaptivePID是P_PID自适应控制器；IncrementalPID是MIST增量式PID控制器");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 标准PID配置分组
@@ -1329,6 +1343,31 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(adaptiveOutputSmoothingProp, "输出EMA平滑系数，0=完全平滑，1=不平滑");
 	obs_property_t *adaptiveDerivativeFilterProp = obs_properties_add_float_slider(props, "adaptive_derivative_filter", "微分滤波系数", 0.0, 1.0, 0.05);
 	obs_property_set_long_description(adaptiveDerivativeFilterProp, "微分项低通滤波系数");
+
+	// IncrementalPID参数（增量式PID控制器 - MIST）
+	obs_properties_add_group(props, "incremental_pid_group", "IncrementalPID配置", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *incrementalKpProp = obs_properties_add_float_slider(props, "incremental_kp", "Kp", 0.0, 2.0, 0.01);
+	obs_property_set_long_description(incrementalKpProp, "比例系数，值越大响应越快，但可能震荡");
+	obs_property_t *incrementalKiProp = obs_properties_add_float_slider(props, "incremental_ki", "Ki", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(incrementalKiProp, "积分系数，消除稳态误差，值过大可能超调");
+	obs_property_t *incrementalKdProp = obs_properties_add_float_slider(props, "incremental_kd", "Kd", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(incrementalKdProp, "微分系数，抑制震荡，值过大可能抖动");
+	obs_property_t *incrementalSpeedXProp = obs_properties_add_float_slider(props, "incremental_speed_x", "X轴速度", 0.0, 3.0, 0.05);
+	obs_property_set_long_description(incrementalSpeedXProp, "X轴移动速度倍率，1.0为原始速度");
+	obs_property_t *incrementalSpeedYProp = obs_properties_add_float_slider(props, "incremental_speed_y", "Y轴速度", 0.0, 3.0, 0.05);
+	obs_property_set_long_description(incrementalSpeedYProp, "Y轴移动速度倍率，1.0为原始速度");
+	obs_property_t *incrementalAimRadiusProp = obs_properties_add_int_slider(props, "incremental_aim_radius", "瞄准半径", 10, 500, 10);
+	obs_property_set_long_description(incrementalAimRadiusProp, "目标检测半径，超出此范围不跟踪");
+	obs_property_t *incrementalJitterProp = obs_properties_add_bool(props, "incremental_jitter", "启用抖动");
+	obs_property_set_long_description(incrementalJitterProp, "添加随机抖动增加自然感，模拟人类操作");
+	obs_property_t *incrementalPidEnabledProp = obs_properties_add_bool(props, "incremental_pid_enabled", "启用PID（仅X轴）");
+	obs_property_set_long_description(incrementalPidEnabledProp, "仅X轴使用PID处理，Y轴直接移动");
+	obs_property_t *incrementalSideCompProp = obs_properties_add_bool(props, "incremental_side_comp", "启用侧向补偿");
+	obs_property_set_long_description(incrementalSideCompProp, "检测连续同向移动并补偿，防止漂移");
+	obs_property_t *incrementalSideCompCapProp = obs_properties_add_float_slider(props, "incremental_side_comp_cap", "侧向补偿上限", 0.0, 20.0, 0.5);
+	obs_property_set_long_description(incrementalSideCompCapProp, "侧向补偿最大值，限制补偿幅度");
+	obs_property_t *incrementalSideCompDenomProp = obs_properties_add_float_slider(props, "incremental_side_comp_denom", "侧向补偿分母", 0.1, 10.0, 0.1);
+	obs_property_set_long_description(incrementalSideCompDenomProp, "侧向补偿计算分母，值越小补偿越强");
 
 	UNUSED_PARAMETER(data);
 	return props;
@@ -1757,6 +1796,20 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "adaptive_output_smoothing"), page == 3 && algorithm == 4);
 	obs_property_set_visible(obs_properties_get(props, "adaptive_derivative_filter"), page == 3 && algorithm == 4);
 
+	// IncrementalPID参数组（选择5时显示）
+	obs_property_set_visible(obs_properties_get(props, "incremental_pid_group"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_kp"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_ki"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_kd"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_speed_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_speed_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_aim_radius"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_jitter"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_pid_enabled"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp_cap"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp_denom"), page == 3 && algorithm == 5);
+
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
@@ -2094,6 +2147,19 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "adaptive_max_pred_time", 0.1);
     obs_data_set_default_double(settings, "adaptive_output_smoothing", 0.7);
     obs_data_set_default_double(settings, "adaptive_derivative_filter", 0.3);
+    
+    // IncrementalPID默认值
+    obs_data_set_default_double(settings, "incremental_kp", 0.5);
+    obs_data_set_default_double(settings, "incremental_ki", 0.1);
+    obs_data_set_default_double(settings, "incremental_kd", 0.05);
+    obs_data_set_default_double(settings, "incremental_speed_x", 1.0);
+    obs_data_set_default_double(settings, "incremental_speed_y", 1.0);
+    obs_data_set_default_int(settings, "incremental_aim_radius", 200);
+    obs_data_set_default_bool(settings, "incremental_jitter", false);
+    obs_data_set_default_bool(settings, "incremental_pid_enabled", true);
+    obs_data_set_default_bool(settings, "incremental_side_comp", false);
+    obs_data_set_default_double(settings, "incremental_side_comp_cap", 5.0);
+    obs_data_set_default_double(settings, "incremental_side_comp_denom", 1.0);
 #endif
 }
 
@@ -2571,6 +2637,19 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->adaptiveMaxPredTime = (float)obs_data_get_double(settings, "adaptive_max_pred_time");
 	tf->adaptiveOutputSmoothing = (float)obs_data_get_double(settings, "adaptive_output_smoothing");
 	tf->adaptiveDerivativeFilterAlpha = (float)obs_data_get_double(settings, "adaptive_derivative_filter");
+
+	// IncrementalPID参数
+	tf->incrementalKp = (float)obs_data_get_double(settings, "incremental_kp");
+	tf->incrementalKi = (float)obs_data_get_double(settings, "incremental_ki");
+	tf->incrementalKd = (float)obs_data_get_double(settings, "incremental_kd");
+	tf->incrementalSpeedX = (float)obs_data_get_double(settings, "incremental_speed_x");
+	tf->incrementalSpeedY = (float)obs_data_get_double(settings, "incremental_speed_y");
+	tf->incrementalAimRadius = (int)obs_data_get_int(settings, "incremental_aim_radius");
+	tf->incrementalJitterEnabled = obs_data_get_bool(settings, "incremental_jitter");
+	tf->incrementalPidEnabled = obs_data_get_bool(settings, "incremental_pid_enabled");
+	tf->incrementalSideCompEnabled = obs_data_get_bool(settings, "incremental_side_comp");
+	tf->incrementalSideCompCap = (float)obs_data_get_double(settings, "incremental_side_comp_cap");
+	tf->incrementalSideCompDenom = (float)obs_data_get_double(settings, "incremental_side_comp_denom");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -5381,6 +5460,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.adaptiveMaxPredTime = tf->adaptiveMaxPredTime;
 		mcConfig.adaptiveOutputSmoothing = tf->adaptiveOutputSmoothing;
 		mcConfig.adaptiveDerivativeFilterAlpha = tf->adaptiveDerivativeFilterAlpha;
+		// IncrementalPID参数
+		mcConfig.incrementalKp = tf->incrementalKp;
+		mcConfig.incrementalKi = tf->incrementalKi;
+		mcConfig.incrementalKd = tf->incrementalKd;
+		mcConfig.incrementalSpeedX = tf->incrementalSpeedX;
+		mcConfig.incrementalSpeedY = tf->incrementalSpeedY;
+		mcConfig.incrementalAimRadius = tf->incrementalAimRadius;
+		mcConfig.incrementalJitterEnabled = tf->incrementalJitterEnabled;
+		mcConfig.incrementalPidEnabled = tf->incrementalPidEnabled;
+		mcConfig.incrementalSideCompEnabled = tf->incrementalSideCompEnabled;
+		mcConfig.incrementalSideCompCap = tf->incrementalSideCompCap;
+		mcConfig.incrementalSideCompDenom = tf->incrementalSideCompDenom;
 		// MotionSimulator 人类行为模拟器参数
 		mcConfig.enableMotionSimulator = cfg.enableMotionSimulator;
 		mcConfig.motionSimRandomPos = cfg.motionSimRandomPos;

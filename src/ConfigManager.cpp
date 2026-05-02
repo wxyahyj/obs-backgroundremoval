@@ -298,6 +298,19 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["adaptiveOutputSmoothing"] = config.adaptiveOutputSmoothing;
     j["adaptiveDerivativeFilterAlpha"] = config.adaptiveDerivativeFilterAlpha;
     
+    // IncrementalPID参数
+    j["incrementalKp"] = config.incrementalKp;
+    j["incrementalKi"] = config.incrementalKi;
+    j["incrementalKd"] = config.incrementalKd;
+    j["incrementalSpeedX"] = config.incrementalSpeedX;
+    j["incrementalSpeedY"] = config.incrementalSpeedY;
+    j["incrementalAimRadius"] = config.incrementalAimRadius;
+    j["incrementalJitterEnabled"] = config.incrementalJitterEnabled;
+    j["incrementalPidEnabled"] = config.incrementalPidEnabled;
+    j["incrementalSideCompEnabled"] = config.incrementalSideCompEnabled;
+    j["incrementalSideCompCap"] = config.incrementalSideCompCap;
+    j["incrementalSideCompDenom"] = config.incrementalSideCompDenom;
+    
     return j;
 }
 
@@ -437,6 +450,19 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("adaptiveMaxPredTime")) config.adaptiveMaxPredTime = j["adaptiveMaxPredTime"].get<float>();
         if (j.contains("adaptiveOutputSmoothing")) config.adaptiveOutputSmoothing = j["adaptiveOutputSmoothing"].get<float>();
         if (j.contains("adaptiveDerivativeFilterAlpha")) config.adaptiveDerivativeFilterAlpha = j["adaptiveDerivativeFilterAlpha"].get<float>();
+        
+        // IncrementalPID参数
+        if (j.contains("incrementalKp")) config.incrementalKp = j["incrementalKp"].get<float>();
+        if (j.contains("incrementalKi")) config.incrementalKi = j["incrementalKi"].get<float>();
+        if (j.contains("incrementalKd")) config.incrementalKd = j["incrementalKd"].get<float>();
+        if (j.contains("incrementalSpeedX")) config.incrementalSpeedX = j["incrementalSpeedX"].get<float>();
+        if (j.contains("incrementalSpeedY")) config.incrementalSpeedY = j["incrementalSpeedY"].get<float>();
+        if (j.contains("incrementalAimRadius")) config.incrementalAimRadius = j["incrementalAimRadius"].get<int>();
+        if (j.contains("incrementalJitterEnabled")) config.incrementalJitterEnabled = j["incrementalJitterEnabled"].get<bool>();
+        if (j.contains("incrementalPidEnabled")) config.incrementalPidEnabled = j["incrementalPidEnabled"].get<bool>();
+        if (j.contains("incrementalSideCompEnabled")) config.incrementalSideCompEnabled = j["incrementalSideCompEnabled"].get<bool>();
+        if (j.contains("incrementalSideCompCap")) config.incrementalSideCompCap = j["incrementalSideCompCap"].get<float>();
+        if (j.contains("incrementalSideCompDenom")) config.incrementalSideCompDenom = j["incrementalSideCompDenom"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {
