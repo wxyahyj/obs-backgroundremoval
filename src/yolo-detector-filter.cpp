@@ -1307,11 +1307,11 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(adaptiveIntegralThresholdProp, "积分增益调整阈值，误差小于此值时增大积分增益");
 	obs_property_t *adaptiveKpThresholdProp = obs_properties_add_float_slider(props, "adaptive_kp_threshold", "Kp增益阈值", 1.0, 50.0, 0.5);
 	obs_property_set_long_description(adaptiveKpThresholdProp, "Kp增益调整阈值，误差小于此值时增大Kp增益");
-	obs_property_t *adaptiveIntegralRateProp = obs_properties_add_float_slider(props, "adaptive_integral_rate", "积分增益变化率", 0.01, 0.5, 0.01);
+	obs_property_t *adaptiveIntegralRateProp = obs_properties_add_float_slider(props, "adaptive_integral_rate", "积分增益变化率", 0.01, 1.0, 0.01);
 	obs_property_set_long_description(adaptiveIntegralRateProp, "积分增益的变化速率");
-	obs_property_t *adaptiveKpRateProp = obs_properties_add_float_slider(props, "adaptive_kp_rate", "Kp增益变化率", 0.01, 0.5, 0.01);
+	obs_property_t *adaptiveKpRateProp = obs_properties_add_float_slider(props, "adaptive_kp_rate", "Kp增益变化率", 0.01, 1.0, 0.01);
 	obs_property_set_long_description(adaptiveKpRateProp, "Kp增益的变化速率");
-	obs_property_t *adaptiveLargeErrorRateProp = obs_properties_add_float_slider(props, "adaptive_large_error_rate", "大误差变化率", 0.01, 0.5, 0.01);
+	obs_property_t *adaptiveLargeErrorRateProp = obs_properties_add_float_slider(props, "adaptive_large_error_rate", "大误差变化率", 0.01, 1.0, 0.01);
 	obs_property_set_long_description(adaptiveLargeErrorRateProp, "大误差时增益衰减速率");
 	obs_property_t *adaptiveMaxOutputProp = obs_properties_add_float_slider(props, "adaptive_max_output", "最大输出", 100.0, 2000.0, 10.0);
 	obs_property_set_long_description(adaptiveMaxOutputProp, "输出最大值限制");
