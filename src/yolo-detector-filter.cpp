@@ -632,6 +632,9 @@ const char *yolo_detector_filter_getname(void *unused)
 }
 
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
+static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
+static bool onMotionSimulatorChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
+static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
@@ -779,6 +782,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	// KalmanFilter 追踪设置
 	obs_property_t *useKalmanTrackerProp = obs_properties_add_bool(props, "use_kalman_tracker", "启用卡尔曼追踪");
 	obs_property_set_long_description(useKalmanTrackerProp, "启用卡尔曼滤波器进行目标追踪，提供更稳定的目标ID和预测能力");
+	obs_property_set_modified_callback(useKalmanTrackerProp, onKalmanTrackerChanged);
 	obs_property_t *kalmanGenerateThresholdProp = obs_properties_add_int_slider(props, "kalman_generate_threshold", "追踪确认阈值", 1, 10, 1);
 	obs_property_set_long_description(kalmanGenerateThresholdProp, "目标需要连续检测到的帧数才能被确认追踪");
 	obs_property_t *kalmanTerminateCountProp = obs_properties_add_int_slider(props, "kalman_terminate_count", "追踪丢失阈值", 1, 10, 1);
@@ -789,6 +793,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	// MotionSimulator 人类行为模拟器设置
 	obs_property_t *enableMotionSimulatorProp = obs_properties_add_bool(props, "enable_motion_simulator", "启用人类行为模拟");
 	obs_property_set_long_description(enableMotionSimulatorProp, "启用人类行为模拟器，使鼠标移动更自然");
+	obs_property_set_modified_callback(enableMotionSimulatorProp, onMotionSimulatorChanged);
 	obs_property_t *motionSimRandomPosProp = obs_properties_add_bool(props, "motion_sim_random_pos", "随机落点");
 	obs_property_set_long_description(motionSimRandomPosProp, "在目标范围内随机选择落点");
 	obs_property_t *motionSimOvershootProp = obs_properties_add_bool(props, "motion_sim_overshoot", "过冲");
@@ -819,6 +824,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	// 神经网络轨迹生成器设置
 	obs_property_t *enableNeuralPathProp = obs_properties_add_bool(props, "enable_neural_path", "启用神经网络轨迹");
 	obs_property_set_long_description(enableNeuralPathProp, "启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹");
+	obs_property_set_modified_callback(enableNeuralPathProp, onNeuralPathChanged);
 	obs_property_t *neuralPathPointsProp = obs_properties_add_int_slider(props, "neural_path_points", "轨迹点数量", 10, 100, 5);
 	obs_property_set_long_description(neuralPathPointsProp, "轨迹点数量，越多越平滑但移动越慢");
 	obs_property_t *neuralMouseStepSizeProp = obs_properties_add_float_slider(props, "neural_mouse_step_size", "鼠标步长", 1.0, 20.0, 0.5);
@@ -1386,6 +1392,49 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 	return true;
 }
 
+static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	bool useKalman = obs_data_get_bool(settings, "use_kalman_tracker");
+	
+	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), useKalman);
+	
+	return true;
+}
+
+static bool onMotionSimulatorChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	bool useMotionSim = obs_data_get_bool(settings, "enable_motion_simulator");
+	
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_random_pos"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_overshoot"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_inertia"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_left_btn_adaptive"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_spray_mode"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_tap_pause"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_retry"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_max_retry"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_delay_ms"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_direct_prob"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot_prob"), useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_ovshoot_prob"), useMotionSim);
+	
+	return true;
+}
+
+static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
+	
+	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), useNeuralPath);
+	
+	return true;
+}
+
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	int page = (int)obs_data_get_int(settings, "settings_page");
@@ -1472,6 +1521,37 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "max_lost_frames"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "target_switch_delay"), page == 5);
 	obs_property_set_visible(obs_properties_get(props, "target_switch_tolerance"), page == 5);
+	
+	// 卡尔曼追踪设置（页面5）
+	bool useKalman = obs_data_get_bool(settings, "use_kalman_tracker");
+	obs_property_set_visible(obs_properties_get(props, "use_kalman_tracker"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), page == 5 && useKalman);
+	
+	// MotionSimulator 人类行为模拟器设置（页面5）
+	bool useMotionSim = obs_data_get_bool(settings, "enable_motion_simulator");
+	obs_property_set_visible(obs_properties_get(props, "enable_motion_simulator"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_random_pos"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_overshoot"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_inertia"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_left_btn_adaptive"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_spray_mode"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_tap_pause"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_retry"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_max_retry"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_delay_ms"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_direct_prob"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot_prob"), page == 5 && useMotionSim);
+	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_ovshoot_prob"), page == 5 && useMotionSim);
+	
+	// 神经网络轨迹生成器设置（页面5）
+	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
+	obs_property_set_visible(obs_properties_get(props, "enable_neural_path"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), page == 5 && useNeuralPath);
 	
 	// 多指标融合追踪权重（页面5）
 	obs_property_set_visible(obs_properties_get(props, "tracking_weight_iou"), page == 5);
