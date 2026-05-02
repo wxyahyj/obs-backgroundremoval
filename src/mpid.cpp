@@ -107,11 +107,10 @@ float IncrementalPid::update(float error) {
 
     // 输出衰减：防止累积过冲
     // 当误差减小时，加速衰减
-    float error_trend = error - previous_error_;
     float decay_factor = 0.85f; // 基础衰减
 
-    // 如果误差在减小（接近目标），增加衰减
-    if (std::abs(error) < std::abs(previous_error_) && std::signbit(error) == std::signbit(previous_error_)) {
+    // 如果误差在减小（接近目标）且方向一致，增加衰减
+    if (std::abs(error) < std::abs(previous_error_) && error * previous_error_ > 0) {
         decay_factor = 0.7f; // 更强的衰减
     }
 
