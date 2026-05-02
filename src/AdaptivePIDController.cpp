@@ -77,10 +77,11 @@ void AdaptivePIDAxis::adjustKpGain(float error)
         kpGain_ += (ratio - kpGain_) * kpGainRate_;
     } else {
         ratio = kpGainThreshold_ / absError;
-        kpGain_ += (ratio * kpGain_ - kpGain_) * largeErrorRate_;
+        float targetGain = ratio * 0.5f + 0.3f;
+        kpGain_ += (targetGain - kpGain_) * largeErrorRate_ * 0.3f;
     }
     
-    kpGain_ = std::clamp(kpGain_, 0.0f, 1.0f);
+    kpGain_ = std::clamp(kpGain_, 0.3f, 1.0f);
 }
 
 float AdaptivePIDAxis::calculate(float error, float dt)
