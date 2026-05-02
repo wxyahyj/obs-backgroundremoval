@@ -252,11 +252,6 @@ public:
 
     // 设置PID数据回调函数（用于调试可视化）
     virtual void setPidDataCallback(PidDataCallback callback) = 0;
-
-    // 线程控制接口（异步鼠标控制）
-    virtual void start() = 0;   // 启动控制线程
-    virtual void stop() = 0;    // 停止控制线程
-    virtual bool isRunning() const = 0;  // 检查线程状态
 };
 
 #endif

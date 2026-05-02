@@ -4952,11 +4952,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->inferenceRunning = true;
 		instance->inferenceThread = std::thread(inferenceThreadWorker, instance.get());
 
-		// Start mouse control thread (async mode)
-		if (instance->mouseController) {
-			instance->mouseController->start();
-		}
-
 		return ptr;
 	} catch (const std::exception &e) {
 		obs_log(LOG_ERROR, "[YOLO Detector] Failed to create filter: %s", e.what());
@@ -4981,11 +4976,6 @@ void yolo_detector_filter_destroy(void *data)
 
 	// Mark as disabled to prevent further processing
 	tf->isDisabled = true;
-
-	// Stop mouse control thread (async mode)
-	if (tf->mouseController) {
-		tf->mouseController->stop();
-	}
 
 	// Stop inference thread
 	tf->inferenceRunning = false;

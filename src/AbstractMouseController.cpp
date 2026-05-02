@@ -193,14 +193,8 @@ void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detec
 
 void AbstractMouseController::tick()
 {
-    std::unique_lock<std::mutex> lock(mutex);
-    dataReady_.store(true);
-    lock.unlock();
-    controlCv_.notify_one();
-}
+    std::lock_guard<std::mutex> lock(mutex);
 
-void AbstractMouseController::tickInternal()
-{
     if (!config.enableMouseControl) {
         if (autoTriggerHolding) {
             performClickUp();
@@ -363,7 +357,7 @@ void AbstractMouseController::tickInternal()
                             std::abs(targetPixelY - lastNeuralTargetY_) > targetChangeThreshold;
         
         // 检查是否已到达目标（相对位置接近0）
-        float reachThreshold = 3.0f; // 到达判定阈值（像素）
+        float reachThreshold = 1.0f; // 到达判定阈值（像素）
         bool targetReached = std::abs(relativeTargetX) < reachThreshold &&
                             std::abs(relativeTargetY) < reachThreshold;
         
@@ -1482,57 +1476,6 @@ void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 const char* AbstractMouseController::getLogPrefix() const
 {
     return "";
-}
-
-AbstractMouseController::~AbstractMouseController()
-{
-    stop();
-}
-
-void AbstractMouseController::start()
-{
-    if (running_.load()) return;
-    
-    running_.store(true);
-    controlThread_ = std::thread(&AbstractMouseController::controlLoop, this);
-    obs_log(LOG_INFO, "[%s] Control thread started", getLogPrefix());
-}
-
-void AbstractMouseController::stop()
-{
-    if (!running_.load()) return;
-    
-    running_.store(false);
-    controlCv_.notify_all();
-    
-    if (controlThread_.joinable()) {
-        controlThread_.join();
-    }
-    obs_log(LOG_INFO, "[%s] Control thread stopped", getLogPrefix());
-}
-
-bool AbstractMouseController::isRunning() const
-{
-    return running_.load();
-}
-
-void AbstractMouseController::controlLoop()
-{
-    obs_log(LOG_INFO, "[%s] Control loop entering", getLogPrefix());
-    
-    while (running_.load()) {
-        std::unique_lock<std::mutex> lock(mutex);
-        controlCv_.wait_for(lock, std::chrono::milliseconds(1), 
-            [this] { return dataReady_.load() || !running_.load(); });
-        
-        if (!running_.load()) break;
-        
-        dataReady_.store(false);
-        
-        tickInternal();
-    }
-    
-    obs_log(LOG_INFO, "[%s] Control loop exiting", getLogPrefix());
 }
 
 #endif

@@ -7,9 +7,6 @@
 #include <windows.h>
 #include <vector>
 #include <mutex>
-#include <thread>
-#include <condition_variable>
-#include <atomic>
 #include <random>
 #include <chrono>
 #include <string>
@@ -142,14 +139,6 @@ protected:
     int currentFrameWidth_ = 0;
     int currentFrameHeight_ = 0;
 
-    // 异步控制线程
-    std::thread controlThread_;
-    std::atomic<bool> running_{false};
-    std::condition_variable controlCv_;
-    std::atomic<bool> dataReady_{false};
-    void controlLoop();
-    void tickInternal();
-
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;
     virtual void performClickUp() = 0;
@@ -179,7 +168,7 @@ protected:
 
 public:
     AbstractMouseController();
-    virtual ~AbstractMouseController();
+    virtual ~AbstractMouseController() = default;
 
     void updateConfig(const MouseControllerConfig& config) override;
     MouseControllerConfig getConfig() const override;
@@ -189,11 +178,6 @@ public:
     void setCurrentWeapon(const std::string& weaponName) override;
     std::string getCurrentWeapon() const override;
     void setPidDataCallback(PidDataCallback callback) override;
-    
-    // 线程控制
-    void start() override;
-    void stop() override;
-    bool isRunning() const override;
 };
 
 #endif
