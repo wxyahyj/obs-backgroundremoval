@@ -121,6 +121,17 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     // 更新神经网络轨迹生成器配置
     enableNeuralPath_ = config.enableNeuralPath;
+    initializeNeuralPathIfNeeded();
+    
+    if (configChanged) {
+        obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
+                getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 
+                config.autoTriggerFireDuration, config.autoTriggerInterval);
+    }
+}
+
+void AbstractMouseController::initializeNeuralPathIfNeeded()
+{
     if (enableNeuralPath_ && !neuralPathInitialized_) {
         neuralPathPredictor_.init(
             config.inferenceFrameWidth > 0 ? config.inferenceFrameWidth : 1920,
@@ -130,12 +141,13 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
             config.neuralPathPoints
         );
         neuralPathInitialized_ = true;
-    }
-    
-    if (configChanged) {
-        obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
-                getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 
-                config.autoTriggerFireDuration, config.autoTriggerInterval);
+        obs_log(LOG_INFO, "[%s] Neural path predictor initialized: %dx%d, radius=%d, step=%.1f, points=%d",
+                getLogPrefix(), 
+                config.inferenceFrameWidth > 0 ? config.inferenceFrameWidth : 1920,
+                config.inferenceFrameHeight > 0 ? config.inferenceFrameHeight : 1080,
+                config.neuralTargetRadius,
+                config.neuralMouseStepSize,
+                config.neuralPathPoints);
     }
 }
 
@@ -253,17 +265,6 @@ void AbstractMouseController::tick()
     
     // 神经网络轨迹生成
     if (enableNeuralPath_) {
-        if (!neuralPathInitialized_) {
-            neuralPathPredictor_.init(
-                config.inferenceFrameWidth > 0 ? config.inferenceFrameWidth : 1920,
-                config.inferenceFrameHeight > 0 ? config.inferenceFrameHeight : 1080,
-                config.neuralTargetRadius,
-                config.neuralMouseStepSize,
-                config.neuralPathPoints
-            );
-            neuralPathInitialized_ = true;
-        }
-        
         // 计算目标相对位置
         double relativeTargetX = targetPixelX - fovCenterX;
         double relativeTargetY = targetPixelY - fovCenterY;

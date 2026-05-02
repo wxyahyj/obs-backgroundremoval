@@ -422,6 +422,31 @@ public:
         }
         return outputs;
     }
+
+    // 获取所有追踪目标的预测位置（在匹配之前）
+    std::vector<KalmanDetail::DetectionObject> getPredictions() const {
+        std::vector<KalmanDetail::DetectionObject> predictions;
+        predictions.reserve(tracks_.size());
+        for (const auto& t : tracks_) {
+            if (!t->is_confirmed()) continue;
+            
+            const float* s = t->state_prior_5();
+            float x0, y0, x1, y1;
+            KalmanDetail::meas_to_bbox(s, x0, y0, x1, y1);
+            
+            KalmanDetail::DetectionObject o;
+            o.label = static_cast<int>(s[0]);
+            o.bbox.x = x0;
+            o.bbox.y = y0;
+            o.bbox.width = x1 - x0;
+            o.bbox.height = y1 - y0;
+            o.prob = t->prob();
+            o.track_id = t->id();
+            predictions.push_back(o);
+        }
+        return predictions;
+    }
+
 private:
     int terminate_set_;
     int generate_set_;

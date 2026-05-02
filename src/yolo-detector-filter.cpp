@@ -73,6 +73,16 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int kalmanTerminateCount = 5;
 	KalmanP kalmanTracker;
 	
+	// 卡尔曼预测位置渲染
+	struct KalmanPrediction {
+		float x, y, width, height;
+		int trackId;
+	};
+	std::vector<KalmanPrediction> kalmanPredictions;
+	std::mutex kalmanPredictionsMutex;
+	bool showKalmanPredictions = true;
+	uint32_t kalmanPredictionColor = 0xFF00FFFF; // 青色 (ARGB)
+	
 	// 多指标融合追踪权重
 	float trackingWeightIou;
 	float trackingWeightCenter;
@@ -590,6 +600,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 
 void inferenceThreadWorker(yolo_detector_filter *filter);
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
+static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
@@ -772,6 +783,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(kalmanGenerateThresholdProp, "目标需要连续检测到的帧数才能被确认追踪");
 	obs_property_t *kalmanTerminateCountProp = obs_properties_add_int_slider(props, "kalman_terminate_count", "追踪丢失阈值", 1, 10, 1);
 	obs_property_set_long_description(kalmanTerminateCountProp, "目标丢失多少帧后停止追踪");
+	obs_property_t *showKalmanPredictionsProp = obs_properties_add_bool(props, "show_kalman_predictions", "显示预测位置");
+	obs_property_set_long_description(showKalmanPredictionsProp, "在画面上显示卡尔曼滤波器预测的目标位置（青色虚线框）");
 
 	// MotionSimulator 人类行为模拟器设置
 	obs_property_t *enableMotionSimulatorProp = obs_properties_add_bool(props, "enable_motion_simulator", "启用人类行为模拟");
@@ -1583,6 +1596,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_bool(settings, "use_kalman_tracker", false);
     obs_data_set_default_int(settings, "kalman_generate_threshold", 2);
     obs_data_set_default_int(settings, "kalman_terminate_count", 5);
+    obs_data_set_default_bool(settings, "show_kalman_predictions", true);
     
     // MotionSimulator 人类行为模拟器参数
     obs_data_set_default_bool(settings, "enable_motion_simulator", false);
@@ -1996,6 +2010,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	bool newUseKalmanTracker = obs_data_get_bool(settings, "use_kalman_tracker");
 	int newKalmanGenerateThreshold = (int)obs_data_get_int(settings, "kalman_generate_threshold");
 	int newKalmanTerminateCount = (int)obs_data_get_int(settings, "kalman_terminate_count");
+	tf->showKalmanPredictions = obs_data_get_bool(settings, "show_kalman_predictions");
 	
 	if (tf->useKalmanTracker != newUseKalmanTracker || 
 	    tf->kalmanGenerateThreshold != newKalmanGenerateThreshold ||
@@ -2011,7 +2026,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	}
 
 	// MotionSimulator 人类行为模拟器参数（全局设置，应用到所有配置）
-	for (int i = 0; i < MAX_CONFIGS; i++) {
+	for (int i = 0; i < yolo_detector_filter::MAX_CONFIGS; i++) {
 		tf->mouseConfigs[i].enableMotionSimulator = obs_data_get_bool(settings, "enable_motion_simulator");
 		tf->mouseConfigs[i].motionSimRandomPos = obs_data_get_bool(settings, "motion_sim_random_pos");
 		tf->mouseConfigs[i].motionSimOvershoot = obs_data_get_bool(settings, "motion_sim_overshoot");
@@ -3992,13 +4007,30 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						kdet.bbox.y = det.y;
 						kdet.bbox.width = det.width;
 						kdet.bbox.height = det.height;
-						kdet.label = det.label;
+						kdet.label = det.classId;
 						kdet.prob = det.confidence;
 						kdet.track_id = -1;
 						kalmanDets.push_back(kdet);
 					}
 					
+					// 获取预测位置（在 predict 内部已经调用了每个 track 的 predict）
 					std::vector<KalmanDetail::DetectionObject> kalmanTracked = filter->kalmanTracker.predict(kalmanDets);
+					
+					// 保存预测位置用于渲染
+					{
+						std::lock_guard<std::mutex> predLock(filter->kalmanPredictionsMutex);
+						filter->kalmanPredictions.clear();
+						std::vector<KalmanDetail::DetectionObject> predictions = filter->kalmanTracker.getPredictions();
+						for (const auto& pred : predictions) {
+							KalmanPrediction kp;
+							kp.x = pred.bbox.x;
+							kp.y = pred.bbox.y;
+							kp.width = pred.bbox.width;
+							kp.height = pred.bbox.height;
+							kp.trackId = pred.track_id;
+							filter->kalmanPredictions.push_back(kp);
+						}
+					}
 					
 					for (const auto& kt : kalmanTracked) {
 						Detection det;
@@ -4008,7 +4040,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						det.height = kt.bbox.height;
 						det.centerX = det.x + det.width / 2.0f;
 						det.centerY = det.y + det.height / 2.0f;
-						det.label = kt.label;
+						det.classId = kt.label;
 						det.confidence = kt.prob;
 						det.trackId = kt.track_id;
 						det.lostFrames = 0;
@@ -4248,6 +4280,85 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 		gs_vertex2f(x, y + h);     // 左下
 		gs_vertex2f(x, y);         // 回到左上，闭合
 		gs_render_stop(GS_LINESTRIP);
+	}
+
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+}
+
+static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+{
+	if (!filter->useKalmanTracker || !filter->showKalmanPredictions) {
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock(filter->kalmanPredictionsMutex);
+
+	if (filter->kalmanPredictions.empty()) {
+		return;
+	}
+
+	gs_effect_t *solid = filter->solidEffect;
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+	// 使用青色绘制预测框
+	struct vec4 color;
+	float r = ((filter->kalmanPredictionColor >> 16) & 0xFF) / 255.0f;
+	float g = ((filter->kalmanPredictionColor >> 8) & 0xFF) / 255.0f;
+	float b = (filter->kalmanPredictionColor & 0xFF) / 255.0f;
+	float a = ((filter->kalmanPredictionColor >> 24) & 0xFF) / 255.0f;
+	vec4_set(&color, r, g, b, a);
+
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+	gs_effect_set_vec4(colorParam, &color);
+
+	for (const auto& pred : filter->kalmanPredictions) {
+		float x = pred.x * frameWidth;
+		float y = pred.y * frameHeight;
+		float w = pred.width * frameWidth;
+		float h = pred.height * frameHeight;
+
+		// 使用虚线样式绘制预测框
+		float dashLength = 8.0f;
+		float gapLength = 4.0f;
+
+		// 上边
+		gs_render_start(true);
+		for (float px = x; px < x + w; px += dashLength + gapLength) {
+			float endX = std::min(px + dashLength, x + w);
+			gs_vertex2f(px, y);
+			gs_vertex2f(endX, y);
+		}
+		gs_render_stop(GS_LINES);
+
+		// 下边
+		gs_render_start(true);
+		for (float px = x; px < x + w; px += dashLength + gapLength) {
+			float endX = std::min(px + dashLength, x + w);
+			gs_vertex2f(px, y + h);
+			gs_vertex2f(endX, y + h);
+		}
+		gs_render_stop(GS_LINES);
+
+		// 左边
+		gs_render_start(true);
+		for (float py = y; py < y + h; py += dashLength + gapLength) {
+			float endY = std::min(py + dashLength, y + h);
+			gs_vertex2f(x, py);
+			gs_vertex2f(x, endY);
+		}
+		gs_render_stop(GS_LINES);
+
+		// 右边
+		gs_render_start(true);
+		for (float py = y; py < y + h; py += dashLength + gapLength) {
+			float endY = std::min(py + dashLength, y + h);
+			gs_vertex2f(x + w, py);
+			gs_vertex2f(x + w, endY);
+		}
+		gs_render_stop(GS_LINES);
 	}
 
 	gs_technique_end_pass(tech);
@@ -5290,6 +5401,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	if (tf->showDetectionResults) {
 		renderDetectionBoxes(tf.get(), width, height);
 	}
+	// 渲染卡尔曼预测位置（虚线青色框）
+	renderKalmanPredictions(tf.get(), width, height);
 	if (tf->showFOV) {
 		renderFOV(tf.get(), width, height);
 	}

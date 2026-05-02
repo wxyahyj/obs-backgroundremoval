@@ -7,7 +7,7 @@
 #include <iostream>
 #include <random>
 
-static std::mt19937 global_rng(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+static std::mt19937 global_rng(static_cast<unsigned int>(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
 static std::uniform_real_distribution<double> global_dist(0.0, 1.0);
 
 double easeOutSine(double x) {

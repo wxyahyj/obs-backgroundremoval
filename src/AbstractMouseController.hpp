@@ -137,6 +137,9 @@ protected:
     virtual void performClickUp() = 0;
     virtual bool checkFiring() = 0;
     
+    // 神经网络轨迹初始化
+    void initializeNeuralPathIfNeeded();
+    
     float calculateDynamicP(float distance);
     float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
     float calculateIntegral(float error, float& integral, float& integralGain, float lastError, float deltaTime);
