@@ -2042,8 +2042,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		}
 	}
 	
-	// 推理状态
-	tf->isInferencing = obs_data_get_bool(settings, "is_inferencing");
+	// 推理状态 - 只有当设置中明确存在时才更新，避免参数调整时重置
+	if (obs_data_has_user_value(settings, "is_inferencing")) {
+		tf->isInferencing = obs_data_get_bool(settings, "is_inferencing");
+	}
 	
 	bool showDetectionResults = obs_data_get_bool(settings, "show_detection_results");
 	tf->showDetectionResults = showDetectionResults;
