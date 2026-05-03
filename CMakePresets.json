@@ -98,6 +98,16 @@
       }
     },
     {
+      "name": "windows-ci-x64-trt-yolo",
+      "inherits": ["windows-ci-x64-gpu"],
+      "displayName": "Windows x64 TensorRT-YOLO CI build",
+      "description": "Build for Windows x64 with TensorRT-YOLO support on CI",
+      "cacheVariables": {
+        "USE_TENSORRT_YOLO": "ON",
+        "TRT_PATH": "$penv{TENSORRT_PATH}"
+      }
+    },
+    {
       "name": "ubuntu-x86_64",
       "displayName": "Ubuntu x86_64",
       "description": "Build for Ubuntu x86_64",
@@ -185,6 +195,20 @@
       "configurePreset": "windows-ci-x64-directml",
       "displayName": "Windows x64 DirectML CI",
       "description": "Windows CI build for x64 with DirectML support (RelWithDebInfo configuration)",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "windows-x64-trt-yolo",
+      "configurePreset": "windows-ci-x64-trt-yolo",
+      "displayName": "Windows x64 TensorRT-YOLO",
+      "description": "Windows build for x64 with TensorRT-YOLO support",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "windows-ci-x64-trt-yolo",
+      "configurePreset": "windows-ci-x64-trt-yolo",
+      "displayName": "Windows x64 TensorRT-YOLO CI",
+      "description": "Windows CI build for x64 with TensorRT-YOLO support (RelWithDebInfo configuration)",
       "configuration": "RelWithDebInfo"
     },
     {

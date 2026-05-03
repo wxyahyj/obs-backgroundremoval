@@ -7,7 +7,9 @@ param(
     [ValidateSet('true', 'false')]
     [string] $Gpu = 'false',
     [ValidateSet('true', 'false')]
-    [string] $DirectML = 'false'
+    [string] $DirectML = 'false',
+    [ValidateSet('true', 'false')]
+    [string] $TrtYolo = 'false'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,9 +54,11 @@ function Build {
     Ensure-Location $ProjectRoot
 
     # 根据参数选择预设后缀
-    # GPU和DirectML是互斥的，优先使用GPU
+    # TrtYolo、GPU和DirectML是互斥的，优先使用TrtYolo
     $PresetSuffix = ''
-    if ( $Gpu -eq 'true' ) {
+    if ( $TrtYolo -eq 'true' ) {
+        $PresetSuffix = '-trt-yolo'
+    } elseif ( $Gpu -eq 'true' ) {
         $PresetSuffix = '-gpu'
     } elseif ( $DirectML -eq 'true' ) {
         $PresetSuffix = '-directml'

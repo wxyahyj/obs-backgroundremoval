@@ -319,3 +319,151 @@ jobs:
         with:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-directml-${{ needs.check-event.outputs.commitHash }}
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.*
+
+  windows-trt-yolo-build:
+    name: Build for Windows (TensorRT-YOLO) 🪟
+    runs-on: windows-2022
+    needs: check-event
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Qt6 🎯
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Set Up Environment 🔧
+        id: setup
+        run: |
+          # Set Up Environment 🔧
+          if ( $Env:RUNNER_DEBUG -ne $null ) {
+            Set-PSDebug -Trace 1
+          }
+
+          $BuildSpec = Get-Content -Path buildspec.json -Raw | ConvertFrom-Json
+          $ProductName = $BuildSpec.name
+          $ProductVersion = $BuildSpec.version
+
+          "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
+          "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout vcpkg repository
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          path: ${{ env.VCPKG_ROOT }}
+
+      - name: "Bootstrap vcpkg"
+        working-directory: "${{ env.VCPKG_ROOT }}"
+        shell: "pwsh"
+        run: |
+          .\bootstrap-vcpkg.bat
+
+      - name: "Install dependencies from vcpkg"
+        shell: bash
+        run: "$VCPKG_ROOT/vcpkg install --triplet x64-windows-static-md-obs"
+      
+      - name: "Download ONNX Runtime (GPU)"
+        run: "cmake -DGPU=ON -P cmake/DownloadOnnxruntime.cmake"
+
+      - name: Setup TensorRT
+        id: tensorrt
+        run: |
+          $TrtPath = "${{ github.workspace }}/TensorRT"
+          "trtPath=$TrtPath" >> $env:GITHUB_OUTPUT
+          
+          # 检查是否已存在
+          if (Test-Path "$TrtPath/include/NvInfer.h") {
+            Write-Host "TensorRT already exists"
+            "cached=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "cached=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Cache TensorRT
+        uses: actions/cache@v4
+        id: cache-trt
+        with:
+          path: ${{ github.workspace }}/TensorRT
+          key: tensorrt-10.9.0-windows-x64
+
+      - name: Download TensorRT from Release
+        if: steps.cache-trt.outputs.cache-hit != 'true'
+        run: |
+          $TrtPath = "${{ github.workspace }}/TensorRT"
+          $ReleaseUrl = "${{ secrets.TENSORRT_RELEASE_URL }}"
+          
+          # 如果没有设置Secret，使用默认URL
+          if ([string]::IsNullOrEmpty($ReleaseUrl)) {
+            $ReleaseUrl = "https://github.com/wxyahyj/obs-backgroundremoval/releases/download/tensorrt-sdk/TensorRT-minimal.zip"
+          }
+          
+          Write-Host "Downloading TensorRT from: $ReleaseUrl"
+          
+          # 下载
+          Invoke-WebRequest -Uri $ReleaseUrl -OutFile "${{ github.workspace }}/TensorRT-minimal.zip"
+          
+          # 解压
+          Write-Host "Extracting TensorRT..."
+          Expand-Archive -Path "${{ github.workspace }}/TensorRT-minimal.zip" -DestinationPath "${{ github.workspace }}" -Force
+          
+          # 查找解压后的目录
+          $ExtractedDir = Get-ChildItem -Path "${{ github.workspace }}" -Directory | Where-Object { $_.Name -like "*TensorRT*" }
+          
+          if ($ExtractedDir) {
+            Write-Host "Found TensorRT directory: $($ExtractedDir.Name)"
+            if ($ExtractedDir.Name -ne "TensorRT") {
+              Move-Item -Path $ExtractedDir.FullName -Destination $TrtPath -Force
+            }
+          }
+          
+          # 验证
+          if (Test-Path "$TrtPath/include/NvInfer.h") {
+            Write-Host "✅ TensorRT downloaded and extracted successfully"
+          } elseif (Test-Path "${{ github.workspace }}/TensorRT-minimal/include/NvInfer.h") {
+            Move-Item -Path "${{ github.workspace }}/TensorRT-minimal" -Destination $TrtPath -Force
+            Write-Host "✅ TensorRT downloaded and extracted successfully"
+          } else {
+            Write-Error "❌ TensorRT extraction failed"
+            exit 1
+          }
+          
+          # 清理
+          Remove-Item -Path "${{ github.workspace }}/TensorRT-minimal.zip" -Force -ErrorAction SilentlyContinue
+
+      - name: Build Plugin 🧱
+        uses: ./.github/actions/build-plugin
+        with:
+          target: x64
+          config: ${{ needs.check-event.outputs.config }}
+          gpu: 'true'
+          trtYolo: 'true'
+        env:
+          TENSORRT_PATH: ${{ steps.tensorrt.outputs.trtPath }}
+
+      - name: Package Plugin 📀
+        uses: ./.github/actions/package-plugin
+        with:
+          target: x64
+          config: ${{ needs.check-event.outputs.config }}
+          package: ${{ fromJSON(needs.check-event.outputs.package) }}
+      
+      - name: Rename artifact
+        run: |
+          Rename-Item -Path "${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64.zip" -NewName "${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-trt-yolo.zip"
+
+      - name: Upload Artifacts 📡
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-trt-yolo-${{ needs.check-event.outputs.commitHash }}
+          path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.*

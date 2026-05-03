@@ -296,8 +296,26 @@ target_sources(
 
 # TensorRT-YOLO 支持
 if(USE_TENSORRT_YOLO)
+  # 自动检测 TensorRT 路径
   if(NOT TRT_PATH)
-    message(FATAL_ERROR "TRT_PATH must be specified when USE_TENSORRT_YOLO is enabled")
+    # 尝试常见位置
+    set(TRT_SEARCH_PATHS
+      "${CMAKE_CURRENT_SOURCE_DIR}/TensorRT-minimal"
+      "${CMAKE_CURRENT_SOURCE_DIR}/TensorRT-10.9.0.34"
+      "${CMAKE_CURRENT_SOURCE_DIR}/TensorRT"
+    )
+    
+    foreach(PATH ${TRT_SEARCH_PATHS})
+      if(EXISTS "${PATH}/include/NvInfer.h")
+        set(TRT_PATH "${PATH}")
+        message(STATUS "Found TensorRT at: ${TRT_PATH}")
+        break()
+      endif()
+    endforeach()
+    
+    if(NOT TRT_PATH)
+      message(FATAL_ERROR "TRT_PATH must be specified when USE_TENSORRT_YOLO is enabled, or place TensorRT in project directory")
+    endif()
   endif()
   
   if(NOT EXISTS "${TRT_PATH}/include/NvInfer.h")

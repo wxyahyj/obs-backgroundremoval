@@ -16,6 +16,10 @@ inputs:
     description: Enable DirectML support
     required: false
     default: 'false'
+  trtYolo:
+    description: Enable TensorRT-YOLO support
+    required: false
+    default: 'false'
   codesign:
     description: Enable codesigning (macOS only)
     required: false
@@ -95,6 +99,7 @@ runs:
           Configuration = '${{ inputs.config }}'
           Gpu = '${{ inputs.gpu }}'
           DirectML = '${{ inputs.directml }}'
+          TrtYolo = '${{ inputs.trtYolo }}'
         }
 
         .github/scripts/Build-Windows.ps1 @BuildArgs
