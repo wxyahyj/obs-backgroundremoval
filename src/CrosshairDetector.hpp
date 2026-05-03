@@ -46,6 +46,7 @@ struct CrosshairDetectorConfig {
 	int minArea = 10;            // 最小面积 (像素)
 	int maxArea = 5000;          // 最大面积 (像素)
 	int detectEveryNFrames = 1;  // 检测帧间隔 (1-60)
+	int searchRadius = 0;        // 搜索半径（像素，0=自动1/6帧宽，仅搜索准星附近区域）
 
 	// 可视化
 	bool colorIsolationView = false;  // 颜色隔离视图（黑底只显示匹配颜色+检测框）
@@ -87,10 +88,21 @@ public:
 	// 获取调试掩码（用于渲染）
 	const cv::Mat& getDebugMask() const { return debugMask_; }
 
+	// 获取最近的HSV inRange掩码（颜色隔离视图用，未经形态学/分位数过滤）
+	const cv::Mat& getLastHsvMask() const { return lastHsvMask_; }
+
+	// 获取最近的HSV掩码ROI偏移（在bgrFrame中的位置）
+	void getLastMaskROI(int& roiX, int& roiY, int& roiW, int& roiH) const {
+		roiX = lastMaskRoiX_; roiY = lastMaskRoiY_;
+		roiW = lastMaskRoiW_; roiH = lastMaskRoiH_;
+	}
+
 private:
 	CrosshairDetectorConfig config_;
 	cv::Mat templateImage_;  // 模板图像（灰度）
 	cv::Mat debugMask_;      // 最近一次HSV掩码（调试用）
+	cv::Mat lastHsvMask_;    // 最近一次inRange掩码（颜色隔离视图用）
+	int lastMaskRoiX_ = 0, lastMaskRoiY_ = 0, lastMaskRoiW_ = 0, lastMaskRoiH_ = 0;
 	std::string lastTemplatePath_; // 上次加载的模板路径（避免重复加载）
 	int frameCounter_ = 0;
 

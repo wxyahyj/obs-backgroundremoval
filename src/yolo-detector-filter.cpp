@@ -646,14 +646,19 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 准星检测器
 	CrosshairDetector crosshairDetector;
 	CrosshairDetectorConfig crosshairConfig;
-	cv::Mat crosshairFrameBuf;  // BGRA→BGR转换后的帧缓冲
+	cv::Mat crosshairFrameBuf;  // BGR帧缓冲（仅中心区域）
 	std::mutex crosshairFrameMutex;
 	bool crosshairNeedsPick = false;  // 吸管取色标记（由_update设置，video_tick消费）
 	cv::Mat crosshairDebugMask;       // 调试用HSV掩码
 	std::mutex crosshairDebugMutex;   // 调试掩码互斥锁
-	float crosshairPixelX = -1.0f;    // 准星像素位置X（归一化坐标 * frameWidth），-1表示未检测到
-	float crosshairPixelY = -1.0f;    // 准星像素位置Y
+	float crosshairPixelX = -1.0f;    // 准星像素位置X（完整帧坐标），-1表示未检测到
+	float crosshairPixelY = -1.0f;    // 准星像素位置Y（完整帧坐标）
 	bool crosshairDetected = false;   // 当前帧是否检测到准星
+	// 准星帧捕获的裁切偏移（中心区域在完整帧中的起始位置）
+	int crosshairCropOffsetX = 0;
+	int crosshairCropOffsetY = 0;
+	int crosshairFullFrameW = 0;  // 捕获时的完整帧宽度
+	int crosshairFullFrameH = 0;  // 捕获时的完整帧高度
 	
 #endif
 
@@ -1458,6 +1463,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(chMinAreaProp, "检测候选区域的最小像素面积");
 	obs_property_t *chMaxAreaProp = obs_properties_add_int_slider(props, "crosshair_max_area", "最大面积", 1, 50000, 100);
 	obs_property_set_long_description(chMaxAreaProp, "检测候选区域的最大像素面积");
+	obs_property_t *chSearchRadiusProp = obs_properties_add_int_slider(props, "crosshair_search_radius", "搜索半径", 0, 960, 10);
+	obs_property_set_long_description(chSearchRadiusProp, "准星搜索范围半径（像素，0=自动1/6帧宽），越小越快但可能漏检偏移大的准星");
 	obs_property_t *chDetectIntervalProp = obs_properties_add_int_slider(props, "crosshair_detect_interval", "检测帧间隔", 1, 60, 1);
 	obs_property_set_long_description(chDetectIntervalProp, "每隔多少帧检测一次，传统CV很快建议1");
 	obs_property_t *chColorIsolationProp = obs_properties_add_bool(props, "crosshair_color_isolation", "🎨 颜色隔离视图");
@@ -1939,6 +1946,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "crosshair_min_area"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_max_area"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_detect_interval"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_search_radius"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_color_isolation"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_debug_mask"), page == 7);
 
@@ -2315,6 +2323,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "crosshair_min_area", 10);
     obs_data_set_default_int(settings, "crosshair_max_area", 5000);
     obs_data_set_default_int(settings, "crosshair_detect_interval", 1);
+    obs_data_set_default_int(settings, "crosshair_search_radius", 0);
     obs_data_set_default_bool(settings, "crosshair_color_isolation", false);
     obs_data_set_default_bool(settings, "crosshair_debug_mask", false);
 #endif
@@ -2867,6 +2876,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		chCfg.minArea = (int)obs_data_get_int(settings, "crosshair_min_area");
 		chCfg.maxArea = (int)obs_data_get_int(settings, "crosshair_max_area");
 		chCfg.detectEveryNFrames = (int)obs_data_get_int(settings, "crosshair_detect_interval");
+		chCfg.searchRadius = (int)obs_data_get_int(settings, "crosshair_search_radius");
 		chCfg.colorIsolationView = obs_data_get_bool(settings, "crosshair_color_isolation");
 		chCfg.showDebugMask = obs_data_get_bool(settings, "crosshair_debug_mask");
 
@@ -5568,28 +5578,13 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		// 帧间隔控制由CrosshairDetector内部处理，这里每帧都调用detect
 		if (!bgrFrame.empty()) {
 
-			int frameWidth = obs_source_get_base_width(tf->source);
-			int frameHeight = obs_source_get_base_height(tf->source);
-			int cropX = 0, cropY = 0;
-			{
-				std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
-				cropX = tf->cropOffsetX;
-				cropY = tf->cropOffsetY;
-			}
-
-			// FOV参数（准星检测在FOV区域内执行）
-			float fovCenterX = 0.5f;
-			float fovCenterY = 0.5f;
-			float fovRadiusNorm = 1.0f;
-			if (tf->showFOV || tf->useDynamicFOV) {
-				fovRadiusNorm = (tf->useDynamicFOV ? tf->currentFovRadius : static_cast<float>(tf->fovRadius))
-					/ static_cast<float>(frameWidth);
-			}
-
-			// 执行准星检测
+			// 帧已经是中心裁切区域，在裁切帧上全覆盖检测
+			// fovCenterX/Y=0.5, fovRadiusNorm=1.0 让detect覆盖整个裁切帧
 			std::vector<Detection> crosshairDets = tf->crosshairDetector.detect(
-				bgrFrame, frameWidth, frameHeight, cropX, cropY,
-				fovCenterX, fovCenterY, fovRadiusNorm
+				bgrFrame,
+				tf->crosshairFullFrameW, tf->crosshairFullFrameH,
+				tf->crosshairCropOffsetX, tf->crosshairCropOffsetY,
+				0.5f, 0.5f, 1.0f
 			);
 
 			// 保存调试掩码
@@ -5601,17 +5596,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				}
 			}
 
-			// 准星检测结果：提取准星位置作为瞄准起点，不再混入目标detections
+			// 准星检测结果：提取准星位置作为瞄准起点
+			// detect返回的centerX/centerY是基于bgrFrame(裁切帧)的归一化坐标
+			// 需要映射回完整帧像素坐标
 			if (!crosshairDets.empty()) {
-				// 取第一个准星检测结果的中心作为准星位置
 				const auto& chDet = crosshairDets[0];
-				int frameWidth = obs_source_get_base_width(tf->source);
-				int frameHeight = obs_source_get_base_height(tf->source);
-				if (frameWidth > 0 && frameHeight > 0) {
-					tf->crosshairPixelX = chDet.centerX * frameWidth;
-					tf->crosshairPixelY = chDet.centerY * frameHeight;
-					tf->crosshairDetected = true;
-				}
+				// 裁切帧内像素坐标
+				int cropPxX = static_cast<int>(chDet.centerX * bgrFrame.cols);
+				int cropPxY = static_cast<int>(chDet.centerY * bgrFrame.rows);
+				// 映射到完整帧像素坐标
+				tf->crosshairPixelX = static_cast<float>(cropPxX + tf->crosshairCropOffsetX);
+				tf->crosshairPixelY = static_cast<float>(cropPxY + tf->crosshairCropOffsetY);
+				tf->crosshairDetected = true;
 			} else {
 				tf->crosshairDetected = false;
 			}
@@ -6182,12 +6178,27 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							}
 						}
 
-						// 准星检测帧捕获：将BGRA帧转换为BGR供CrosshairDetector使用
+						// 准星检测帧捕获：只裁切中心区域（准星始终在屏幕中心附近），大幅减少处理面积
 						if (tf->crosshairConfig.enabled) {
-							cv::Mat bgrFrame;
-							cv::cvtColor(temp, bgrFrame, cv::COLOR_BGRA2BGR);
+							// 搜索半径：配置值或自动（帧宽1/6）
+							int searchRadius = tf->crosshairConfig.searchRadius > 0
+								? tf->crosshairConfig.searchRadius
+								: temp.cols / 6;
+							int centerX = temp.cols / 2;
+							int centerY = temp.rows / 2;
+							int x0 = std::max(0, centerX - searchRadius);
+							int y0 = std::max(0, centerY - searchRadius);
+							int x1 = std::min(temp.cols, centerX + searchRadius);
+							int y1 = std::min(temp.rows, centerY + searchRadius);
+
+							cv::Mat bgrCrop;
+							cv::cvtColor(temp(cv::Rect(x0, y0, x1 - x0, y1 - y0)), bgrCrop, cv::COLOR_BGRA2BGR);
 							std::lock_guard<std::mutex> chLock(tf->crosshairFrameMutex);
-							tf->crosshairFrameBuf = std::move(bgrFrame);
+							tf->crosshairFrameBuf = std::move(bgrCrop);
+							tf->crosshairCropOffsetX = x0;
+							tf->crosshairCropOffsetY = y0;
+							tf->crosshairFullFrameW = temp.cols;
+							tf->crosshairFullFrameH = temp.rows;
 						}
 						
 						gs_stagesurface_unmap(tf->stagesurface);
@@ -6389,22 +6400,31 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 		// 准星检测可视化
 		if (tf->crosshairConfig.enabled) {
-			// 颜色隔离视图：黑底只显示HSV匹配颜色，直观看到找色效果
+			// 颜色隔离视图：复用detect缓存的HSV mask，避免每帧重复BGRA→BGR→HSV+inRange
 			if (tf->crosshairConfig.colorIsolationView) {
-				cv::Mat bgrCropped;
-				cv::cvtColor(croppedFrame, bgrCropped, cv::COLOR_BGRA2BGR);
-				cv::Mat hsvCropped;
-				cv::cvtColor(bgrCropped, hsvCropped, cv::COLOR_BGR2HSV);
-
-				cv::Scalar lower(tf->crosshairConfig.hMin, tf->crosshairConfig.sMin, tf->crosshairConfig.vMin);
-				cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
-				cv::Mat mask;
-				cv::inRange(hsvCropped, lower, upper, mask);
-
-				// 非匹配区域置黑：反转mask后setTo
-				cv::Mat invMask;
-				cv::bitwise_not(mask, invMask);
-				croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
+				cv::Mat hsvMask = tf->crosshairDetector.getLastHsvMask();
+				if (!hsvMask.empty()) {
+					// mask是准星裁切帧尺寸，resize到悬浮窗裁切帧尺寸
+					cv::Mat maskResized;
+					cv::resize(hsvMask, maskResized, cv::Size(croppedFrame.cols, croppedFrame.rows));
+					// 非匹配区域置黑
+					cv::Mat invMask;
+					cv::bitwise_not(maskResized, invMask);
+					croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
+				} else {
+					// 首帧还没有mask时，回退到实时计算
+					cv::Mat bgrCropped;
+					cv::cvtColor(croppedFrame, bgrCropped, cv::COLOR_BGRA2BGR);
+					cv::Mat hsvCropped;
+					cv::cvtColor(bgrCropped, hsvCropped, cv::COLOR_BGR2HSV);
+					cv::Scalar lower(tf->crosshairConfig.hMin, tf->crosshairConfig.sMin, tf->crosshairConfig.vMin);
+					cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
+					cv::Mat mask;
+					cv::inRange(hsvCropped, lower, upper, mask);
+					cv::Mat invMask;
+					cv::bitwise_not(mask, invMask);
+					croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
+				}
 			}
 			// 旧版调试掩码：半透明白色叠加
 			else if (tf->crosshairConfig.showDebugMask) {

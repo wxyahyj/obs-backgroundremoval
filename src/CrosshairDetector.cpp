@@ -164,6 +164,11 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	cv::Mat mask;
 	cv::inRange(hsvFrame, lower, upper, mask);
 
+	// 保存原始inRange掩码（颜色隔离视图用）
+	lastHsvMask_ = mask.clone();
+	lastMaskRoiX_ = roiX; lastMaskRoiY_ = roiY;
+	lastMaskRoiW_ = roiW; lastMaskRoiH_ = roiH;
+
 	// ========== 第3步：形态学过滤 ==========
 	if (config_.erodeIterations > 0 && config_.morphKernelSize > 0) {
 		cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
