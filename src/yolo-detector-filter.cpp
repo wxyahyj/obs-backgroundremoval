@@ -43,6 +43,7 @@
 #include "obs-utils/obs-utils.h"
 #include "consts.h"
 #include "KalmanFilter.hpp"
+#include "CrosshairDetector.hpp"
 
 // 目标重识别结构体
 struct LostTarget {
@@ -636,6 +637,18 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	bool incrementalSideCompEnabled;
 	float incrementalSideCompCap;
 	float incrementalSideCompDenom;
+	float incrementalInputAlpha;
+	float incrementalDAlpha;
+	float incrementalOutputAlpha;
+	
+	// 准星检测器
+	CrosshairDetector crosshairDetector;
+	CrosshairDetectorConfig crosshairConfig;
+	cv::Mat crosshairFrameBuf;  // BGRA→BGR转换后的帧缓冲
+	std::mutex crosshairFrameMutex;
+	bool crosshairNeedsPick = false;  // 吸管取色标记（由_update设置，video_tick消费）
+	cv::Mat crosshairDebugMask;       // 调试用HSV掩码
+	std::mutex crosshairDebugMutex;   // 调试掩码互斥锁
 	
 #endif
 
@@ -709,6 +722,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(pageList, "鼠标控制 - 扳机", 4);
 	obs_property_list_add_int(pageList, "追踪与高级", 5);
 	obs_property_list_add_int(pageList, "预测与滤波", 6);
+	obs_property_list_add_int(pageList, "准星检测", 7);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -1369,6 +1383,82 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *incrementalSideCompDenomProp = obs_properties_add_float_slider(props, "incremental_side_comp_denom", "侧向补偿分母", 0.1, 10.0, 0.1);
 	obs_property_set_long_description(incrementalSideCompDenomProp, "侧向补偿计算分母，值越小补偿越强");
 
+	// ========== 页面7: 准星检测 ==========
+#ifdef _WIN32
+	obs_properties_add_group(props, "crosshair_group", "准星检测", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *crosshairEnabledProp = obs_properties_add_bool(props, "crosshair_enabled", "启用准星检测");
+	obs_property_set_long_description(crosshairEnabledProp, "使用HSV颜色+形态学+子矩阵分位数+模板匹配检测准星");
+	
+	// 吸管取色
+	obs_property_t *crosshairPickColorProp = obs_properties_add_button(props, "crosshair_pick_color", "🎯 吸管取色（点击自动采集准星颜色）", [](obs_properties_t *, obs_property_t *, void *data) -> bool {
+		auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+		if (!ptr) return false;
+		auto tf = *ptr;
+		if (!tf) return false;
+		tf->crosshairConfig.pickingColor = true;
+		return true;
+	});
+	obs_property_set_long_description(crosshairPickColorProp, "点击后自动从帧中心采样HSV颜色并设置范围");
+	obs_property_t *crosshairColorInfoProp = obs_properties_add_text(props, "crosshair_color_info", "取色结果", OBS_TEXT_INFO);
+	obs_property_set_long_description(crosshairColorInfoProp, "显示最近一次取色的HSV值和范围");
+
+	// HSV手动微调
+	obs_property_t *chHMinProp = obs_properties_add_int_slider(props, "crosshair_h_min", "H最小", 0, 180, 1);
+	obs_property_set_long_description(chHMinProp, "HSV色调下限(0-180)");
+	obs_property_t *chHMaxProp = obs_properties_add_int_slider(props, "crosshair_h_max", "H最大", 0, 180, 1);
+	obs_property_set_long_description(chHMaxProp, "HSV色调上限(0-180)");
+	obs_property_t *chSMinProp = obs_properties_add_int_slider(props, "crosshair_s_min", "S最小", 0, 255, 1);
+	obs_property_set_long_description(chSMinProp, "HSV饱和度下限(0-255)");
+	obs_property_t *chSMaxProp = obs_properties_add_int_slider(props, "crosshair_s_max", "S最大", 0, 255, 1);
+	obs_property_set_long_description(chSMaxProp, "HSV饱和度上限(0-255)");
+	obs_property_t *chVMinProp = obs_properties_add_int_slider(props, "crosshair_v_min", "V最小", 0, 255, 1);
+	obs_property_set_long_description(chVMinProp, "HSV明度下限(0-255)");
+	obs_property_t *chVMaxProp = obs_properties_add_int_slider(props, "crosshair_v_max", "V最大", 0, 255, 1);
+	obs_property_set_long_description(chVMaxProp, "HSV明度上限(0-255)");
+
+	// 取色容差
+	obs_property_t *chHTolProp = obs_properties_add_int_slider(props, "crosshair_h_tolerance", "H容差", 1, 90, 1);
+	obs_property_set_long_description(chHTolProp, "吸管取色时H通道的容差范围");
+	obs_property_t *chSTolProp = obs_properties_add_int_slider(props, "crosshair_s_tolerance", "S容差", 1, 128, 1);
+	obs_property_set_long_description(chSTolProp, "吸管取色时S通道的容差范围");
+	obs_property_t *chVTolProp = obs_properties_add_int_slider(props, "crosshair_v_tolerance", "V容差", 1, 128, 1);
+	obs_property_set_long_description(chVTolProp, "吸管取色时V通道的容差范围");
+
+	// 形态学参数
+	obs_property_t *chMorphKernelProp = obs_properties_add_int_slider(props, "crosshair_morph_kernel", "形态学核大小", 1, 15, 2);
+	obs_property_set_long_description(chMorphKernelProp, "腐蚀/膨胀的核大小（仅奇数）");
+	obs_property_t *chErodeIterProp = obs_properties_add_int_slider(props, "crosshair_erode_iter", "腐蚀迭代次数", 0, 5, 1);
+	obs_property_set_long_description(chErodeIterProp, "腐蚀操作迭代次数，去噪点");
+	obs_property_t *chDilateIterProp = obs_properties_add_int_slider(props, "crosshair_dilate_iter", "膨胀迭代次数", 0, 10, 1);
+	obs_property_set_long_description(chDilateIterProp, "膨胀操作迭代次数，填充间隙");
+
+	// 子矩阵分位数过滤
+	obs_property_t *chGridRowsProp = obs_properties_add_int_slider(props, "crosshair_grid_rows", "网格行数", 2, 20, 1);
+	obs_property_set_long_description(chGridRowsProp, "将二值图划分为多少行网格");
+	obs_property_t *chGridColsProp = obs_properties_add_int_slider(props, "crosshair_grid_cols", "网格列数", 2, 20, 1);
+	obs_property_set_long_description(chGridColsProp, "将二值图划分为多少列网格");
+	obs_property_t *chQuantileProp = obs_properties_add_float_slider(props, "crosshair_quantile_threshold", "分位数阈值", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(chQuantileProp, "子区域白像素比例低于此值则清零，去除稀疏噪声");
+
+	// 模板匹配
+	obs_property_t *chTemplatePathProp = obs_properties_add_path(props, "crosshair_template_path", "模板图片路径", OBS_PATH_FILE, "Image Files (*.png *.jpg *.bmp)", nullptr);
+	obs_property_set_long_description(chTemplatePathProp, "准星模板图片（灰度），留空则仅用轮廓定位");
+	obs_property_t *chMatchThresholdProp = obs_properties_add_float_slider(props, "crosshair_match_threshold", "匹配阈值", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(chMatchThresholdProp, "模板匹配置信度阈值，低于此值不认为匹配成功");
+
+	// 通用参数
+	obs_property_t *chMinAreaProp = obs_properties_add_int_slider(props, "crosshair_min_area", "最小面积", 1, 10000, 10);
+	obs_property_set_long_description(chMinAreaProp, "检测候选区域的最小像素面积");
+	obs_property_t *chMaxAreaProp = obs_properties_add_int_slider(props, "crosshair_max_area", "最大面积", 1, 50000, 100);
+	obs_property_set_long_description(chMaxAreaProp, "检测候选区域的最大像素面积");
+	obs_property_t *chDetectIntervalProp = obs_properties_add_int_slider(props, "crosshair_detect_interval", "检测帧间隔", 1, 60, 1);
+	obs_property_set_long_description(chDetectIntervalProp, "每隔多少帧检测一次，传统CV很快建议1");
+	obs_property_t *chColorIsolationProp = obs_properties_add_bool(props, "crosshair_color_isolation", "🎨 颜色隔离视图");
+	obs_property_set_long_description(chColorIsolationProp, "悬浮窗黑底只显示HSV匹配颜色+YOLO框，直观看到找色效果");
+	obs_property_t *chDebugMaskProp = obs_properties_add_bool(props, "crosshair_debug_mask", "显示HSV掩码调试");
+	obs_property_set_long_description(chDebugMaskProp, "在悬浮窗半透明叠加HSV二值化掩码用于调参");
+#endif
+
 	UNUSED_PARAMETER(data);
 	return props;
 }
@@ -1809,11 +1899,42 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp"), page == 3 && algorithm == 5);
 	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp_cap"), page == 3 && algorithm == 5);
 	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp_denom"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_input_alpha"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_d_alpha"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "incremental_output_alpha"), page == 3 && algorithm == 5);
 
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
 	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
-	
+
+	// 页面7: 准星检测
+	obs_property_set_visible(obs_properties_get(props, "crosshair_group"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_enabled"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_pick_color"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_color_info"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_h_min"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_h_max"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_s_min"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_s_max"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_v_min"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_v_max"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_h_tolerance"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_s_tolerance"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_v_tolerance"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_morph_kernel"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_erode_iter"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_dilate_iter"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_grid_rows"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_grid_cols"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_quantile_threshold"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_template_path"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_match_threshold"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_min_area"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_max_area"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_detect_interval"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_color_isolation"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_debug_mask"), page == 7);
+
 #else
 	(void)page;
 #endif
@@ -2160,6 +2281,34 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_bool(settings, "incremental_side_comp", false);
     obs_data_set_default_double(settings, "incremental_side_comp_cap", 5.0);
     obs_data_set_default_double(settings, "incremental_side_comp_denom", 1.0);
+    obs_data_set_default_double(settings, "incremental_input_alpha", 0.3);
+    obs_data_set_default_double(settings, "incremental_d_alpha", 0.2);
+    obs_data_set_default_double(settings, "incremental_output_alpha", 0.4);
+
+    // 准星检测参数默认值
+    obs_data_set_default_bool(settings, "crosshair_enabled", false);
+    obs_data_set_default_int(settings, "crosshair_h_min", 0);
+    obs_data_set_default_int(settings, "crosshair_h_max", 180);
+    obs_data_set_default_int(settings, "crosshair_s_min", 100);
+    obs_data_set_default_int(settings, "crosshair_s_max", 255);
+    obs_data_set_default_int(settings, "crosshair_v_min", 100);
+    obs_data_set_default_int(settings, "crosshair_v_max", 255);
+    obs_data_set_default_int(settings, "crosshair_h_tolerance", 10);
+    obs_data_set_default_int(settings, "crosshair_s_tolerance", 40);
+    obs_data_set_default_int(settings, "crosshair_v_tolerance", 40);
+    obs_data_set_default_int(settings, "crosshair_morph_kernel", 3);
+    obs_data_set_default_int(settings, "crosshair_erode_iter", 1);
+    obs_data_set_default_int(settings, "crosshair_dilate_iter", 2);
+    obs_data_set_default_int(settings, "crosshair_grid_rows", 8);
+    obs_data_set_default_int(settings, "crosshair_grid_cols", 8);
+    obs_data_set_default_double(settings, "crosshair_quantile_threshold", 0.05);
+    obs_data_set_default_string(settings, "crosshair_template_path", "");
+    obs_data_set_default_double(settings, "crosshair_match_threshold", 0.6);
+    obs_data_set_default_int(settings, "crosshair_min_area", 10);
+    obs_data_set_default_int(settings, "crosshair_max_area", 5000);
+    obs_data_set_default_int(settings, "crosshair_detect_interval", 1);
+    obs_data_set_default_bool(settings, "crosshair_color_isolation", false);
+    obs_data_set_default_bool(settings, "crosshair_debug_mask", false);
 #endif
 }
 
@@ -2650,6 +2799,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->incrementalSideCompEnabled = obs_data_get_bool(settings, "incremental_side_comp");
 	tf->incrementalSideCompCap = (float)obs_data_get_double(settings, "incremental_side_comp_cap");
 	tf->incrementalSideCompDenom = (float)obs_data_get_double(settings, "incremental_side_comp_denom");
+	tf->incrementalInputAlpha = (float)obs_data_get_double(settings, "incremental_input_alpha");
+	tf->incrementalDAlpha = (float)obs_data_get_double(settings, "incremental_d_alpha");
+	tf->incrementalOutputAlpha = (float)obs_data_get_double(settings, "incremental_output_alpha");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -2679,7 +2831,52 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	// 重识别参数
 	tf->maxReidentifyFrames = (int)obs_data_get_int(settings, "max_reidentify_frames");
 	tf->reidentifyCenterThreshold = (float)obs_data_get_double(settings, "reidentify_center_threshold");
-	
+
+	// 准星检测参数读取
+	{
+		CrosshairDetectorConfig& chCfg = tf->crosshairConfig;
+		bool wasPickingColor = chCfg.pickingColor;  // 保留运行时吸管取色状态
+		chCfg.enabled = obs_data_get_bool(settings, "crosshair_enabled");
+		chCfg.hMin = (int)obs_data_get_int(settings, "crosshair_h_min");
+		chCfg.hMax = (int)obs_data_get_int(settings, "crosshair_h_max");
+		chCfg.sMin = (int)obs_data_get_int(settings, "crosshair_s_min");
+		chCfg.sMax = (int)obs_data_get_int(settings, "crosshair_s_max");
+		chCfg.vMin = (int)obs_data_get_int(settings, "crosshair_v_min");
+		chCfg.vMax = (int)obs_data_get_int(settings, "crosshair_v_max");
+		chCfg.hTolerance = (int)obs_data_get_int(settings, "crosshair_h_tolerance");
+		chCfg.sTolerance = (int)obs_data_get_int(settings, "crosshair_s_tolerance");
+		chCfg.vTolerance = (int)obs_data_get_int(settings, "crosshair_v_tolerance");
+		chCfg.morphKernelSize = (int)obs_data_get_int(settings, "crosshair_morph_kernel");
+		chCfg.erodeIterations = (int)obs_data_get_int(settings, "crosshair_erode_iter");
+		chCfg.dilateIterations = (int)obs_data_get_int(settings, "crosshair_dilate_iter");
+		chCfg.gridRows = (int)obs_data_get_int(settings, "crosshair_grid_rows");
+		chCfg.gridCols = (int)obs_data_get_int(settings, "crosshair_grid_cols");
+		chCfg.quantileThreshold = (float)obs_data_get_double(settings, "crosshair_quantile_threshold");
+		std::string newTemplatePath = obs_data_get_string(settings, "crosshair_template_path");
+		chCfg.templateImagePath = newTemplatePath;
+		chCfg.matchThreshold = (float)obs_data_get_double(settings, "crosshair_match_threshold");
+		chCfg.minArea = (int)obs_data_get_int(settings, "crosshair_min_area");
+		chCfg.maxArea = (int)obs_data_get_int(settings, "crosshair_max_area");
+		chCfg.detectEveryNFrames = (int)obs_data_get_int(settings, "crosshair_detect_interval");
+		chCfg.colorIsolationView = obs_data_get_bool(settings, "crosshair_color_isolation");
+		chCfg.showDebugMask = obs_data_get_bool(settings, "crosshair_debug_mask");
+
+		// 如果模板路径改变，加载新模板
+		tf->crosshairDetector.updateConfig(chCfg);
+		if (!newTemplatePath.empty()) {
+			tf->crosshairDetector.loadTemplate(newTemplatePath);
+		}
+
+		// 吸管取色处理
+		if (chCfg.pickingColor || wasPickingColor) {
+			chCfg.pickingColor = false;
+			// 重新更新config，确保pickingColor为false
+			tf->crosshairDetector.updateConfig(chCfg);
+			// 取色将在video_tick中执行（需要当前帧数据）
+			tf->crosshairNeedsPick = true;
+		}
+	}
+
 #endif
 
 	tf->isDisabled = false;
@@ -5300,6 +5497,88 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	}
 
 #ifdef _WIN32
+	// === 准星检测：吸管取色 + HSV检测管线 ===
+	if (tf->crosshairConfig.enabled) {
+		cv::Mat bgrFrame;
+		{
+			std::lock_guard<std::mutex> lock(tf->crosshairFrameMutex);
+			bgrFrame = tf->crosshairFrameBuf.clone();
+		}
+
+		// 吸管取色处理
+		if (tf->crosshairNeedsPick && !bgrFrame.empty()) {
+			bool picked = tf->crosshairDetector.pickColorFromCenter(
+				bgrFrame,
+				obs_source_get_base_width(tf->source),
+				obs_source_get_base_height(tf->source),
+				tf->cropOffsetX, tf->cropOffsetY
+			);
+			if (picked) {
+				CrosshairDetectorConfig& chCfg = tf->crosshairConfig;
+				chCfg.colorPicked = true;
+				chCfg.pickedH = tf->crosshairDetector.getConfig().pickedH;
+				chCfg.pickedS = tf->crosshairDetector.getConfig().pickedS;
+				chCfg.pickedV = tf->crosshairDetector.getConfig().pickedV;
+				chCfg.hMin = tf->crosshairDetector.getConfig().hMin;
+				chCfg.hMax = tf->crosshairDetector.getConfig().hMax;
+				chCfg.sMin = tf->crosshairDetector.getConfig().sMin;
+				chCfg.sMax = tf->crosshairDetector.getConfig().sMax;
+				chCfg.vMin = tf->crosshairDetector.getConfig().vMin;
+				chCfg.vMax = tf->crosshairDetector.getConfig().vMax;
+				tf->crosshairDetector.updateConfig(chCfg);
+				obs_log(LOG_INFO, "[Crosshair] 吸管取色成功: H=%d S=%d V=%d, 范围 H[%d-%d] S[%d-%d] V[%d-%d]",
+					chCfg.pickedH, chCfg.pickedS, chCfg.pickedV,
+					chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
+			}
+			tf->crosshairNeedsPick = false;
+		}
+
+		// 帧间隔控制由CrosshairDetector内部处理，这里每帧都调用detect
+		if (!bgrFrame.empty()) {
+
+			int frameWidth = obs_source_get_base_width(tf->source);
+			int frameHeight = obs_source_get_base_height(tf->source);
+			int cropX = 0, cropY = 0;
+			{
+				std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
+				cropX = tf->cropOffsetX;
+				cropY = tf->cropOffsetY;
+			}
+
+			// FOV参数（准星检测在FOV区域内执行）
+			float fovCenterX = 0.5f;
+			float fovCenterY = 0.5f;
+			float fovRadiusNorm = 1.0f;
+			if (tf->showFOV || tf->useDynamicFOV) {
+				fovRadiusNorm = (tf->useDynamicFOV ? tf->currentFovRadius : static_cast<float>(tf->fovRadius))
+					/ static_cast<float>(frameWidth);
+			}
+
+			// 执行准星检测
+			std::vector<Detection> crosshairDets = tf->crosshairDetector.detect(
+				bgrFrame, frameWidth, frameHeight, cropX, cropY,
+				fovCenterX, fovCenterY, fovRadiusNorm
+			);
+
+			// 保存调试掩码
+			if (tf->crosshairConfig.showDebugMask) {
+				cv::Mat debugMask = tf->crosshairDetector.getDebugMask();
+				if (!debugMask.empty()) {
+					std::lock_guard<std::mutex> lock(tf->crosshairDebugMutex);
+					tf->crosshairDebugMask = debugMask.clone();
+				}
+			}
+
+			// 合并检测结果到主detections
+			if (!crosshairDets.empty()) {
+				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+				for (auto& det : crosshairDets) {
+					tf->detections.push_back(std::move(det));
+				}
+			}
+		}
+	}
+
 	auto getActiveConfig = [&tf]() -> int {
 		for (int i = 0; i < 5; i++) {
 			if (tf->mouseConfigs[i].enabled) {
@@ -5709,7 +5988,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	}
 
 	bool needShowLabels = tf->showLabel || tf->showConfidence;
-	bool needCapture = tf->showFloatingWindow || tf->isInferencing || needShowLabels;
+	bool needCapture = tf->showFloatingWindow || tf->isInferencing || needShowLabels
+#ifdef _WIN32
+		|| tf->crosshairConfig.enabled
+#endif
+		;
 
 	// 捕获原始帧（用于推理、悬浮窗和标签显示）
 	cv::Mat originalImage;
@@ -5845,6 +6128,14 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							if (actualCropWidth > 0 && actualCropHeight > 0) {
 								originalImage = temp(cv::Rect(cropOffsetX, cropOffsetY, actualCropWidth, actualCropHeight)).clone();
 							}
+						}
+
+						// 准星检测帧捕获：将BGRA帧转换为BGR供CrosshairDetector使用
+						if (tf->crosshairConfig.enabled) {
+							cv::Mat bgrFrame;
+							cv::cvtColor(temp, bgrFrame, cv::COLOR_BGRA2BGR);
+							std::lock_guard<std::mutex> chLock(tf->crosshairFrameMutex);
+							tf->crosshairFrameBuf = std::move(bgrFrame);
 						}
 						
 						gs_stagesurface_unmap(tf->stagesurface);
@@ -6043,6 +6334,61 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		cv::putText(croppedFrame, detText,
 			cv::Point(10, 10 + fpsSize.height + detSize.height + 10),
 			fontFace, fontScale, cv::Scalar(0, 255, 255), thickness);
+
+		// 准星检测可视化
+		if (tf->crosshairConfig.enabled) {
+			// 颜色隔离视图：黑底只显示HSV匹配颜色，直观看到找色效果
+			if (tf->crosshairConfig.colorIsolationView) {
+				cv::Mat bgrCropped;
+				cv::cvtColor(croppedFrame, bgrCropped, cv::COLOR_BGRA2BGR);
+				cv::Mat hsvCropped;
+				cv::cvtColor(bgrCropped, hsvCropped, cv::COLOR_BGR2HSV);
+
+				cv::Scalar lower(tf->crosshairConfig.hMin, tf->crosshairConfig.sMin, tf->crosshairConfig.vMin);
+				cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
+				cv::Mat mask;
+				cv::inRange(hsvCropped, lower, upper, mask);
+
+				// 非匹配区域置黑：反转mask后setTo
+				cv::Mat invMask;
+				cv::bitwise_not(mask, invMask);
+				croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
+			}
+			// 旧版调试掩码：半透明白色叠加
+			else if (tf->crosshairConfig.showDebugMask) {
+				cv::Mat debugMask;
+				{
+					std::lock_guard<std::mutex> lock(tf->crosshairDebugMutex);
+					debugMask = tf->crosshairDebugMask.clone();
+				}
+				if (!debugMask.empty()) {
+					// 将掩码调整到悬浮窗尺寸并叠加
+					cv::Mat maskResized;
+					cv::resize(debugMask, maskResized, cv::Size(croppedFrame.cols, croppedFrame.rows));
+					cv::cvtColor(maskResized, maskResized, cv::COLOR_GRAY2BGRA);
+					// 半透明叠加（50%透明度）
+					cv::addWeighted(croppedFrame, 0.5, maskResized, 0.5, 0, croppedFrame);
+				}
+			}
+		}
+
+		// 准星检测：绘制classId==-2的检测结果（用紫色标注）
+		if (tf->crosshairConfig.enabled) {
+			cv::Scalar crosshairColor(255, 0, 255, 255); // 紫色(BGRA)
+			for (const auto& det : detectionsCopy) {
+				if (det.classId != -2) continue;
+				int x = static_cast<int>(det.x * originalWidth) - cropOffsetX;
+				int y = static_cast<int>(det.y * originalHeight) - cropOffsetY;
+				int w = static_cast<int>(det.width * originalWidth);
+				int h = static_cast<int>(det.height * originalHeight);
+				if (x + w >= 0 && y + h >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
+					cv::rectangle(croppedFrame, cv::Point(x, y), cv::Point(x + w, y + h), crosshairColor, 2);
+					std::string label = "CH " + std::to_string(static_cast<int>(det.confidence * 100)) + "%";
+					cv::putText(croppedFrame, label, cv::Point(x, y - 5),
+						cv::FONT_HERSHEY_SIMPLEX, 0.4, crosshairColor, 1);
+				}
+			}
+		}
 
 		// 如果裁切后的尺寸与悬浮窗尺寸不匹配，需要调整
 		if (croppedFrame.cols != tf->floatingWindowWidth || croppedFrame.rows != tf->floatingWindowHeight) {

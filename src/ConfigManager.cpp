@@ -310,6 +310,9 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["incrementalSideCompEnabled"] = config.incrementalSideCompEnabled;
     j["incrementalSideCompCap"] = config.incrementalSideCompCap;
     j["incrementalSideCompDenom"] = config.incrementalSideCompDenom;
+    j["incrementalInputAlpha"] = config.incrementalInputAlpha;
+    j["incrementalDAlpha"] = config.incrementalDAlpha;
+    j["incrementalOutputAlpha"] = config.incrementalOutputAlpha;
     
     return j;
 }
@@ -463,6 +466,9 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("incrementalSideCompEnabled")) config.incrementalSideCompEnabled = j["incrementalSideCompEnabled"].get<bool>();
         if (j.contains("incrementalSideCompCap")) config.incrementalSideCompCap = j["incrementalSideCompCap"].get<float>();
         if (j.contains("incrementalSideCompDenom")) config.incrementalSideCompDenom = j["incrementalSideCompDenom"].get<float>();
+        if (j.contains("incrementalInputAlpha")) config.incrementalInputAlpha = j["incrementalInputAlpha"].get<float>();
+        if (j.contains("incrementalDAlpha")) config.incrementalDAlpha = j["incrementalDAlpha"].get<float>();
+        if (j.contains("incrementalOutputAlpha")) config.incrementalOutputAlpha = j["incrementalOutputAlpha"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {

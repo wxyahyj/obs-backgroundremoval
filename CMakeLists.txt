@@ -308,6 +308,7 @@ if(WIN32)
       src/OneEuroFilter.cpp
       src/MotionSimulator.cpp
       src/curve.cpp
+      src/CrosshairDetector.cpp
   )
 endif()
 

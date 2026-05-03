@@ -2,6 +2,7 @@
 
 #include "IncrementalPIDController.hpp"
 #include <obs-module.h>
+#include <algorithm>
 
 IncrementalPIDAdapter::IncrementalPIDAdapter()
 {
@@ -16,7 +17,7 @@ void IncrementalPIDAdapter::setConfig(const IncrementalPIDConfig& config)
 {
     config_ = config;
     
-    chain_.configure_pid(config.kp, config.ki, config.kd);
+    chain_.configure_pid(config.kp, config.ki, config.kd, config.dAlpha);
     
     chainConfig_.speed_x = config.speedX;
     chainConfig_.speed_y = config.speedY;
@@ -34,9 +35,13 @@ void IncrementalPIDAdapter::setConfig(const IncrementalPIDConfig& config)
 
 void IncrementalPIDAdapter::update(float errorX, float errorY, float& outX, float& outY)
 {
+    // 输入EMA滤波
+    filteredErrorX_ = config_.inputAlpha * errorX + (1.0f - config_.inputAlpha) * filteredErrorX_;
+    filteredErrorY_ = config_.inputAlpha * errorY + (1.0f - config_.inputAlpha) * filteredErrorY_;
+    
     mist::reconstructed::Detection det;
-    det.x = static_cast<int>(errorX);
-    det.y = static_cast<int>(errorY);
+    det.x = static_cast<int>(filteredErrorX_);
+    det.y = static_cast<int>(filteredErrorY_);
     det.width = 1;
     det.height = 1;
     det.class_id = 0;
@@ -45,13 +50,20 @@ void IncrementalPIDAdapter::update(float errorX, float errorY, float& outX, floa
     
     auto result = chain_.process(chainConfig_, detections);
     
+    float rawOutX = 0.0f;
+    float rawOutY = 0.0f;
+    
     if (result.has_target && result.emitted_move) {
-        outX = static_cast<float>(result.output_move.x);
-        outY = static_cast<float>(result.output_move.y);
-    } else {
-        outX = 0.0f;
-        outY = 0.0f;
+        rawOutX = static_cast<float>(result.output_move.x);
+        rawOutY = static_cast<float>(result.output_move.y);
     }
+    
+    // 输出EMA滤波
+    outX = config_.outputAlpha * rawOutX + (1.0f - config_.outputAlpha) * previousOutX_;
+    outY = config_.outputAlpha * rawOutY + (1.0f - config_.outputAlpha) * previousOutY_;
+    
+    previousOutX_ = outX;
+    previousOutY_ = outY;
     
     // 计算增量式PID的各项：output += Kp*(e - e1) + Ki*e + Kd*(e - 2*e1 + e2)
     const auto& pid = chain_.pid();
@@ -79,7 +91,10 @@ void IncrementalPIDAdapter::update(float errorX, float errorY, float& outX, floa
 void IncrementalPIDAdapter::reset()
 {
     chain_.reset_runtime();
-    lastDebugTerms_ = DebugTerms{};
+    filteredErrorX_ = 0.0f;
+    filteredErrorY_ = 0.0f;
+    previousOutX_ = 0.0f;
+    previousOutY_ = 0.0f;
 }
 
-#endif
+#endif // _WIN32

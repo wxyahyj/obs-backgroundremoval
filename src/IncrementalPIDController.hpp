@@ -17,6 +17,9 @@ struct IncrementalPIDConfig {
     bool sideCompEnabled = false;
     float sideCompCap = 5.0f;
     float sideCompDenom = 1.0f;
+    float inputAlpha = 0.3f;
+    float dAlpha = 0.2f;
+    float outputAlpha = 0.4f;
     int centerX = 0;
     int centerY = 0;
 };
@@ -44,6 +47,12 @@ private:
     mist::reconstructed::ChainConfig chainConfig_;
     IncrementalPIDConfig config_;
     DebugTerms lastDebugTerms_;
+    
+    // 滤波状态
+    float filteredErrorX_ = 0.0f;
+    float filteredErrorY_ = 0.0f;
+    float previousOutX_ = 0.0f;
+    float previousOutY_ = 0.0f;
 };
 
 #endif

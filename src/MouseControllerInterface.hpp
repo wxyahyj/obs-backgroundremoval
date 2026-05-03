@@ -226,6 +226,9 @@ struct MouseControllerConfig {
     bool incrementalSideCompEnabled = false;    // 侧向补偿开关
     float incrementalSideCompCap = 5.0f;        // 侧向补偿上限
     float incrementalSideCompDenom = 1.0f;      // 侧向补偿分母
+    float incrementalInputAlpha = 0.3f;         // 输入滤波系数
+    float incrementalDAlpha = 0.2f;             // D项滤波系数
+    float incrementalOutputAlpha = 0.4f;        // 输出滤波系数
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重

@@ -166,6 +166,9 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     incrementalConfig.sideCompEnabled = config.incrementalSideCompEnabled;
     incrementalConfig.sideCompCap = config.incrementalSideCompCap;
     incrementalConfig.sideCompDenom = config.incrementalSideCompDenom;
+    incrementalConfig.inputAlpha = config.incrementalInputAlpha;
+    incrementalConfig.dAlpha = config.incrementalDAlpha;
+    incrementalConfig.outputAlpha = config.incrementalOutputAlpha;
     incrementalController_.setConfig(incrementalConfig);
     
     if (configChanged) {

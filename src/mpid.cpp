@@ -77,10 +77,11 @@ private:
 
 } // namespace
 
-void IncrementalPid::configure(float kp, float ki, float kd) {
+void IncrementalPid::configure(float kp, float ki, float kd, float d_alpha) {
     kp_ = kp;
     ki_ = ki;
     kd_ = kd;
+    d_alpha_ = d_alpha;
 }
 
 void IncrementalPid::reset(float output) {
@@ -88,13 +89,22 @@ void IncrementalPid::reset(float output) {
     previous_output_ = output;
     previous_error_ = 0.0f;
     previous_previous_error_ = 0.0f;
+    previous_d_term_ = 0.0f;
 }
 
 float IncrementalPid::update(float error) {
+    // 输入EMA滤波（减少噪声）
+    const float input_alpha = 0.3f;
+    float filtered_error = input_alpha * error + (1.0f - input_alpha) * previous_error_;
+
     // 计算增量
-    float p_term = kp_ * (error - previous_error_);
-    float i_term = ki_ * error;
-    float d_term = kd_ * (error - 2.0f * previous_error_ + previous_previous_error_);
+    float p_term = kp_ * (filtered_error - previous_error_);
+    float i_term = ki_ * filtered_error;
+    float d_term = kd_ * (filtered_error - 2.0f * previous_error_ + previous_previous_error_);
+
+    // D项低通滤波（减少高频噪声）
+    d_term = d_alpha_ * d_term + (1.0f - d_alpha_) * previous_d_term_;
+    previous_d_term_ = d_term;
 
     // 输出变化量
     float delta = p_term + i_term + d_term;
@@ -106,12 +116,16 @@ float IncrementalPid::update(float error) {
     // 更新输出
     output_ += delta;
 
+    // 输出EMA滤波（平滑输出）
+    const float output_alpha = 0.4f;
+    output_ = output_alpha * output_ + (1.0f - output_alpha) * previous_output_;
+
     // 输出衰减：防止累积过冲
     // 当误差减小时，加速衰减
     float decay_factor = 0.85f; // 基础衰减
 
     // 如果误差在减小（接近目标）且方向一致，增加衰减
-    if (std::abs(error) < std::abs(previous_error_) && (error > 0) == (previous_error_ > 0)) {
+    if (std::abs(filtered_error) < std::abs(previous_error_) && (filtered_error > 0) == (previous_error_ > 0)) {
         decay_factor = 0.7f; // 更强的衰减
     }
 
@@ -122,13 +136,13 @@ float IncrementalPid::update(float error) {
     output_ = std::clamp(output_, -max_output, max_output);
 
     previous_previous_error_ = previous_error_;
-    previous_error_ = error;
+    previous_error_ = filtered_error;
     previous_output_ = output_;
     return output_;
 }
 
-void PidControlChain::configure_pid(float kp, float ki, float kd) {
-    pid_.configure(kp, ki, kd);
+void PidControlChain::configure_pid(float kp, float ki, float kd, float d_alpha) {
+    pid_.configure(kp, ki, kd, d_alpha);
 }
 
 void PidControlChain::reset_runtime() {
