@@ -48,6 +48,12 @@ endfunction()
 
 # _setup_obs_studio: Create obs-studio build project, then build libobs and obs-frontend-api
 function(_setup_obs_studio)
+  # 检查预编译的 OBS 库是否已经存在
+  if(EXISTS "${dependencies_dir}/lib/obs.lib" AND EXISTS "${dependencies_dir}/lib/obs-frontend-api.lib")
+    message(STATUS "Pre-built OBS libraries found, skipping OBS source build")
+    return()
+  endif()
+
   if(NOT libobs_DIR)
     set(_is_fresh --fresh)
   endif()

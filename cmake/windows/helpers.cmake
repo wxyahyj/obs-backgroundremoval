@@ -47,6 +47,23 @@ function(set_target_properties_plugin target)
     VERBATIM
   )
 
+  # 构建后自动复制到 release 目录
+  add_custom_command(
+    TARGET ${target}
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_SOURCE_DIR}/release/${target}/bin/64bit"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_SOURCE_DIR}/release/${target}/data"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:${target}>"
+      "$<$<CONFIG:Debug,RelWithDebInfo,Release>:$<TARGET_PDB_FILE:${target}>>"
+      "${CMAKE_SOURCE_DIR}/release/${target}/bin/64bit"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_SOURCE_DIR}/data"
+      "${CMAKE_SOURCE_DIR}/release/${target}/data"
+    COMMENT "Copy ${target} to release directory"
+    VERBATIM
+  )
+
   target_install_resources(${target})
 
   get_target_property(target_sources ${target} SOURCES)

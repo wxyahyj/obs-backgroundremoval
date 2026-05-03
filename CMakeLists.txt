@@ -53,10 +53,6 @@ if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
   find_package(OpenCV CONFIG REQUIRED)
   find_package(nlohmann_json CONFIG REQUIRED)
   find_package(Eigen3 CONFIG REQUIRED)
-
-  add_library(OpenCV::opencv_core ALIAS opencv_core)
-  add_library(OpenCV::opencv_imgproc ALIAS opencv_imgproc)
-  add_library(OpenCV::opencv_imgcodecs ALIAS opencv_imgcodecs)
 elseif(USE_PKGCONFIG)
   # Use pkg-config to find dependencies (Arch Linux, etc.)
 
@@ -146,8 +142,12 @@ elseif(MSVC)
       IMPORTED_IMPLIB "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib"
       IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime.dll"
       INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
-      INTERFACE_LINK_OPTIONS "/DELAYLOAD:onnxruntime.dll"
   )
+  
+  # 只有存在DLL时才添加DELAYLOAD
+  if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime.dll")
+    set_target_properties(onnxruntime::onnxruntime PROPERTIES INTERFACE_LINK_OPTIONS "/DELAYLOAD:onnxruntime.dll")
+  endif()
   
   # 只有存在providers_shared库时才链接
   if(ONNXRUNTIME_HAS_PROVIDERS_SHARED)
@@ -266,6 +266,8 @@ if(WIN32)
   if(DIRECTML)
     message(STATUS "ONNX Runtime DirectML Execution Provider enabled (DirectML build)")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+    # DirectML 需要 dxcore.lib
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore)
   else()
     check_library_exists(
       onnxruntime::onnxruntime
@@ -276,6 +278,8 @@ if(WIN32)
     if(HAVE_ONNXRUNTIME_DML_EP)
       message(STATUS "ONNX Runtime DirectML Execution Provider found")
       target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+      # DirectML 需要 dxcore.lib
+      target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore)
     endif()
   endif()
 endif()
