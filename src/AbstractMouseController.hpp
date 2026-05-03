@@ -145,6 +145,10 @@ protected:
     int currentFrameWidth_ = 0;
     int currentFrameHeight_ = 0;
 
+    // 准星位置（瞄准起点），-1表示使用画面中心
+    float aimOriginX_ = -1.0f;
+    float aimOriginY_ = -1.0f;
+
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;
     virtual void performClickUp() = 0;
@@ -184,6 +188,7 @@ public:
     void setCurrentWeapon(const std::string& weaponName) override;
     std::string getCurrentWeapon() const override;
     void setPidDataCallback(PidDataCallback callback) override;
+    void setAimOrigin(float x, float y) override;
 };
 
 #endif

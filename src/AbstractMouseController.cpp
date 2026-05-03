@@ -340,6 +340,12 @@ void AbstractMouseController::tick()
     float fovCenterX = config.inferenceFrameWidth / 2.0f;
     float fovCenterY = config.inferenceFrameHeight / 2.0f;
     
+    // 准星位置优先：如果有准星检测结果，用准星位置作为瞄准起点
+    if (aimOriginX_ >= 0.0f && aimOriginY_ >= 0.0f) {
+        fovCenterX = aimOriginX_;
+        fovCenterY = aimOriginY_;
+    }
+    
     if (targetFrameCount % 60 == 1 && enableNeuralPathDebug_) {
         obs_log(LOG_INFO, "[%s] NEURAL PATH STATUS: enabled=%d, initialized=%d, hasDetections=%zu",
                 getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0,
@@ -1666,6 +1672,12 @@ std::string AbstractMouseController::getCurrentWeapon() const
 void AbstractMouseController::setPidDataCallback(PidDataCallback callback)
 {
     pidDataCallback_ = callback;
+}
+
+void AbstractMouseController::setAimOrigin(float x, float y)
+{
+    aimOriginX_ = x;
+    aimOriginY_ = y;
 }
 
 const char* AbstractMouseController::getLogPrefix() const

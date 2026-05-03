@@ -651,6 +651,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	bool crosshairNeedsPick = false;  // 吸管取色标记（由_update设置，video_tick消费）
 	cv::Mat crosshairDebugMask;       // 调试用HSV掩码
 	std::mutex crosshairDebugMutex;   // 调试掩码互斥锁
+	float crosshairPixelX = -1.0f;    // 准星像素位置X（归一化坐标 * frameWidth），-1表示未检测到
+	float crosshairPixelY = -1.0f;    // 准星像素位置Y
+	bool crosshairDetected = false;   // 当前帧是否检测到准星
 	
 #endif
 
@@ -5532,6 +5535,29 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				chCfg.vMin = tf->crosshairDetector.getConfig().vMin;
 				chCfg.vMax = tf->crosshairDetector.getConfig().vMax;
 				tf->crosshairDetector.updateConfig(chCfg);
+
+				// 回写OBS settings，确保UI滑块更新且不被_update覆盖
+				obs_data_t *pickSettings = obs_source_get_settings(tf->context);
+				if (pickSettings) {
+					obs_data_set_int(pickSettings, "crosshair_h_min", chCfg.hMin);
+					obs_data_set_int(pickSettings, "crosshair_h_max", chCfg.hMax);
+					obs_data_set_int(pickSettings, "crosshair_s_min", chCfg.sMin);
+					obs_data_set_int(pickSettings, "crosshair_s_max", chCfg.sMax);
+					obs_data_set_int(pickSettings, "crosshair_v_min", chCfg.vMin);
+					obs_data_set_int(pickSettings, "crosshair_v_max", chCfg.vMax);
+
+					// 更新取色结果显示
+					char infoText[256];
+					snprintf(infoText, sizeof(infoText),
+						"H=%d S=%d V=%d  →  H[%d~%d] S[%d~%d] V[%d~%d]",
+						chCfg.pickedH, chCfg.pickedS, chCfg.pickedV,
+						chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
+					obs_data_set_string(pickSettings, "crosshair_color_info", infoText);
+
+					obs_source_update(tf->context, pickSettings);
+					obs_data_release(pickSettings);
+				}
+
 				obs_log(LOG_INFO, "[Crosshair] 吸管取色成功: H=%d S=%d V=%d, 范围 H[%d-%d] S[%d-%d] V[%d-%d]",
 					chCfg.pickedH, chCfg.pickedS, chCfg.pickedV,
 					chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
@@ -5575,12 +5601,19 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				}
 			}
 
-			// 合并检测结果到主detections
+			// 准星检测结果：提取准星位置作为瞄准起点，不再混入目标detections
 			if (!crosshairDets.empty()) {
-				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-				for (auto& det : crosshairDets) {
-					tf->detections.push_back(std::move(det));
+				// 取第一个准星检测结果的中心作为准星位置
+				const auto& chDet = crosshairDets[0];
+				int frameWidth = obs_source_get_base_width(tf->source);
+				int frameHeight = obs_source_get_base_height(tf->source);
+				if (frameWidth > 0 && frameHeight > 0) {
+					tf->crosshairPixelX = chDet.centerX * frameWidth;
+					tf->crosshairPixelY = chDet.centerY * frameHeight;
+					tf->crosshairDetected = true;
 				}
+			} else {
+				tf->crosshairDetected = false;
 			}
 		}
 	}
@@ -5904,6 +5937,12 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropY = tf->cropOffsetY;
 					}
 					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+					// 传递准星位置作为瞄准起点（后坐力补偿）
+					if (tf->crosshairDetected) {
+						tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
+					} else {
+						tf->mouseController->setAimOrigin(-1.0f, -1.0f);  // 无准星时用画面中心
+					}
 					tf->mouseController->tick();
 				} else {
 					MouseControllerConfig mcConfig;
@@ -5940,6 +5979,12 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropY = tf->cropOffsetY;
 					}
 					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+					// 传递准星位置作为瞄准起点（后坐力补偿）
+					if (tf->crosshairDetected) {
+						tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
+					} else {
+						tf->mouseController->setAimOrigin(-1.0f, -1.0f);  // 无准星时用画面中心
+					}
 					tf->mouseController->tick();
 				} else {
 					MouseControllerConfig mcConfig;
@@ -6379,21 +6424,20 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			}
 		}
 
-		// 准星检测：绘制classId==-2的检测结果（用紫色标注）
-		if (tf->crosshairConfig.enabled) {
+		// 准星检测：绘制准星位置（紫色十字标注）
+		if (tf->crosshairConfig.enabled && tf->crosshairDetected) {
 			cv::Scalar crosshairColor(255, 0, 255, 255); // 紫色(BGRA)
-			for (const auto& det : detectionsCopy) {
-				if (det.classId != -2) continue;
-				int x = static_cast<int>(det.x * originalWidth) - cropOffsetX;
-				int y = static_cast<int>(det.y * originalHeight) - cropOffsetY;
-				int w = static_cast<int>(det.width * originalWidth);
-				int h = static_cast<int>(det.height * originalHeight);
-				if (x + w >= 0 && y + h >= 0 && x < croppedFrame.cols && y < croppedFrame.rows) {
-					cv::rectangle(croppedFrame, cv::Point(x, y), cv::Point(x + w, y + h), crosshairColor, 2);
-					std::string label = "CH " + std::to_string(static_cast<int>(det.confidence * 100)) + "%";
-					cv::putText(croppedFrame, label, cv::Point(x, y - 5),
-						cv::FONT_HERSHEY_SIMPLEX, 0.4, crosshairColor, 1);
-				}
+			// crosshairPixelX/Y 是相对于完整帧的像素坐标，需转换到裁切后坐标
+			int cx = static_cast<int>(tf->crosshairPixelX) - cropOffsetX;
+			int cy = static_cast<int>(tf->crosshairPixelY) - cropOffsetY;
+			if (cx >= 0 && cx < croppedFrame.cols && cy >= 0 && cy < croppedFrame.rows) {
+				// 绘制十字准星标记
+				int armLen = 12;
+				cv::line(croppedFrame, cv::Point(cx - armLen, cy), cv::Point(cx + armLen, cy), crosshairColor, 2);
+				cv::line(croppedFrame, cv::Point(cx, cy - armLen), cv::Point(cx, cy + armLen), crosshairColor, 2);
+				cv::circle(croppedFrame, cv::Point(cx, cy), 6, crosshairColor, 1);
+				cv::putText(croppedFrame, "CH", cv::Point(cx + 8, cy - 8),
+					cv::FONT_HERSHEY_SIMPLEX, 0.4, crosshairColor, 1);
 			}
 		}
 

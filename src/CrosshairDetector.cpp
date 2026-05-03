@@ -55,9 +55,9 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 {
 	if (bgrFrame.empty()) return false;
 
-	// 计算像素坐标
-	int px = static_cast<int>(normX * frameWidth);
-	int py = static_cast<int>(normY * frameHeight);
+	// 直接用bgrFrame的实际尺寸计算像素坐标（不依赖frameWidth/frameHeight）
+	int px = static_cast<int>(normX * bgrFrame.cols);
+	int py = static_cast<int>(normY * bgrFrame.rows);
 	px = std::max(0, std::min(bgrFrame.cols - 1, px));
 	py = std::max(0, std::min(bgrFrame.rows - 1, py));
 

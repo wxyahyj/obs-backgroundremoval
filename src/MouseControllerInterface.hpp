@@ -289,6 +289,10 @@ public:
 
     // 设置PID数据回调函数（用于调试可视化）
     virtual void setPidDataCallback(PidDataCallback callback) = 0;
+
+    // 设置瞄准起点（准星位置），替代默认的画面中心
+    // x/y 为像素坐标，设为-1表示使用画面中心
+    virtual void setAimOrigin(float x, float y) = 0;
 };
 
 #endif
