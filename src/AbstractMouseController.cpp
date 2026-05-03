@@ -30,16 +30,6 @@ AbstractMouseController::AbstractMouseController()
     , integralY(0.0f)
     , integralGainX(0.0f)
     , integralGainY(0.0f)
-    , stdIntegralX(0.0f)
-    , stdIntegralY(0.0f)
-    , stdIntegralGainX(0.0f)
-    , stdIntegralGainY(0.0f)
-    , stdLastErrorX(0.0f)
-    , stdLastErrorY(0.0f)
-    , stdFilteredDeltaErrorX(0.0f)
-    , stdFilteredDeltaErrorY(0.0f)
-    , stdPreviousMoveX(0.0f)
-    , stdPreviousMoveY(0.0f)
     , lockedTrackId(-1)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
@@ -634,15 +624,6 @@ void AbstractMouseController::tick()
         pidPreviousErrorY = errorY;
         previousErrorX = errorX;
         previousErrorY = errorY;
-        
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
-        stdLastErrorX = errorX;
-        stdLastErrorY = errorY;
-        stdFilteredDeltaErrorX = 0.0f;
-        stdFilteredDeltaErrorY = 0.0f;
     } else if (config.algorithmType == AlgorithmType::DynamicPID) {
         // 动态PID：基于动态阈值和状态机的PID控制器
         dynamicPidX.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
@@ -763,14 +744,6 @@ void AbstractMouseController::tick()
         integralY = 0.0f;
         integralGainX = 0.0f;
         integralGainY = 0.0f;
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
-        stdLastErrorX = errorX;
-        stdLastErrorY = errorY;
-        stdFilteredDeltaErrorX = 0.0f;
-        stdFilteredDeltaErrorY = 0.0f;
     }
     
     bool firing = checkFiring();
@@ -1053,31 +1026,8 @@ void AbstractMouseController::resetPidState()
     integralGainX = 0.0f;
     integralGainY = 0.0f;
     predictor.reset();
-    stdIntegralX = 0.0f;
-    stdIntegralY = 0.0f;
-    stdIntegralGainX = 0.0f;
-    stdIntegralGainY = 0.0f;
-    stdLastErrorX = 0.0f;
-    stdLastErrorY = 0.0f;
-    stdFilteredDeltaErrorX = 0.0f;
-    stdFilteredDeltaErrorY = 0.0f;
-    stdPreviousMoveX = 0.0f;
-    stdPreviousMoveY = 0.0f;
-    advHasReachedX = false;
-    advHasReachedY = false;
-    advStableCountX = 0;
-    advStableCountY = 0;
-    advPreviousOutputX = 0.0f;
-    advPreviousOutputY = 0.0f;
-    lockedTrackId = -1;
-    pendingTargetTrackId = -1;
-    pendingTargetScore = 0.0f;
-    currentTargetScore = 0.0f;
-    chrisController_.reset();
     dynamicPidX.reset();
     dynamicPidY.reset();
-    adaptiveController_.reset();
-    incrementalController_.reset();
     advHasReachedX = false;
     advHasReachedY = false;
     advStableCountX = 0;

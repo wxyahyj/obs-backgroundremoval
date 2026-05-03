@@ -338,13 +338,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	static const int MAX_CONFIGS = 5;
 
     // 全局标准PID参数（独立于各配置）
-    int algorithmTypeGlobal;  // 0=高级PID, 1=标准PID
-    float stdKpGlobal;
-    float stdKiGlobal;
-    float stdKdGlobal;
-    float stdOutputLimitGlobal;
-    float stdDeadZoneGlobal;
-    float stdIntegralLimitGlobal;
+    int algorithmTypeGlobal;  // 0=高级PID, 1=动态PID
     
     // 动态FOV参数
     float dynamicFovShrinkPercent;      // 缩放百分比 (0.1-1.0)
@@ -354,10 +348,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
     bool isFovTransitioning;
     float fovTransitionStartRadius;
     float fovTransitionEndRadius;
-	float stdIntegralDeadzoneGlobal;
-	float stdIntegralThresholdGlobal;
-	float stdIntegralRateGlobal;
-	float stdDerivativeFilterAlphaGlobal;
 
 	struct MouseControlConfig {
 		bool enabled;
@@ -427,36 +417,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int recoilSpeed;
 		float recoilPidGainScale;  // 压枪时Y轴PID增益系数
 		// 算法选择
-		int algorithmType;  // 0=高级PID, 1=标准PID
-		// 标准PID参数
-		float stdKp;
-		float stdKi;
-		float stdKd;
-		float stdOutputLimit;
-		float stdDeadZone;
-		float stdIntegralLimit;
-		float stdIntegralDeadzone;
-		float stdIntegralThreshold;
-		float stdIntegralRate;
+		int algorithmType;  // 0=高级PID, 1=动态PID
 		// 贝塞尔曲线移动参数
 		bool enableBezierMovement;
 		float bezierCurvature;
 		float bezierRandomness;
-		// MotionSimulator 人类行为模拟器参数
-		bool enableMotionSimulator;
-		bool motionSimRandomPos;
-		bool motionSimOvershoot;
-		bool motionSimMicroOvershoot;
-		bool motionSimInertia;
-		bool motionSimLeftBtnAdaptive;
-		bool motionSimSprayMode;
-		bool motionSimTapPause;
-		bool motionSimRetry;
-		int motionSimMaxRetry;
-		int motionSimDelayMs;
-		float motionSimDirectProb;
-		float motionSimOvershootProb;
-		float motionSimMicroOvshootProb;
 		// 神经网络轨迹生成器参数
 		bool enableNeuralPath;
 		int neuralPathPoints;
@@ -530,34 +495,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			// 算法选择默认值
 			algorithmType = 0;  // 默认使用高级PID
 			// 标准PID参数默认值
-			stdKp = 0.3f;
-			stdKi = 0.01f;
-			stdKd = 0.005f;
-			stdOutputLimit = 10.0f;
-			stdDeadZone = 0.3f;
-			stdIntegralLimit = 100.0f;
-			stdIntegralDeadzone = 1.0f;
-			stdIntegralThreshold = 50.0f;
-			stdIntegralRate = 0.015f;
+			algorithmType = 0;  // 默认高级PID
 			// 贝塞尔曲线移动参数默认值
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
 			bezierRandomness = 0.2f;
-			// MotionSimulator 人类行为模拟器默认值
-			enableMotionSimulator = false;
-			motionSimRandomPos = true;
-			motionSimOvershoot = true;
-			motionSimMicroOvershoot = true;
-			motionSimInertia = true;
-			motionSimLeftBtnAdaptive = true;
-			motionSimSprayMode = true;
-			motionSimTapPause = true;
-			motionSimRetry = true;
-			motionSimMaxRetry = 2;
-			motionSimDelayMs = 80;
-			motionSimDirectProb = 0.85f;
-			motionSimOvershootProb = 0.10f;
-			motionSimMicroOvshootProb = 0.05f;
 			// 神经网络轨迹生成器默认值
 			enableNeuralPath = false;
 			neuralPathPoints = 35;
@@ -565,11 +507,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			neuralTargetRadius = 8;
 			neuralConsumePerFrame = 2;
 			enableNeuralPathDebug = false;
-			// 稳定性检测默认值
-			enableStabilityCheck = false;
-			stabilityRequiredFrames = 3;
-			stabilityPositionThreshold = 5.0f;
-			stabilitySizeThreshold = 0.1f;
 		}
 	};
 
@@ -1386,7 +1323,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *chMaxAspectProp = obs_properties_add_float_slider(props, "crosshair_max_aspect_ratio", "最大纵横比", 0.1, 5.0, 0.1);
 	obs_property_set_long_description(chMaxAspectProp, "宽/高的最大值，十字和点状建议2.0以下");
 
-	obs_property_t *chSearchRadiusProp = obs_properties_add_int_slider(props, "crosshair_search_radius", "搜索半径", 0, 960, 10);
+	obs_property_t *chSearchRadiusProp = obs_properties_add_int_slider(props, "crosshair_search_radius", "搜索半径", 0, 1920, 10);
 	obs_property_set_long_description(chSearchRadiusProp, "准星搜索范围半径（像素，0=自动1/6帧宽），越小越快但可能漏检偏移大的准星");
 	obs_property_t *chDetectIntervalProp = obs_properties_add_int_slider(props, "crosshair_detect_interval", "检测帧间隔", 1, 60, 1);
 	obs_property_set_long_description(chDetectIntervalProp, "每隔多少帧检测一次，传统CV很快建议1");
@@ -2139,7 +2076,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_string(settings, "crosshair_template_path", "");
     obs_data_set_default_double(settings, "crosshair_match_threshold", 0.6);
     obs_data_set_default_int(settings, "crosshair_min_area", 10);
-    obs_data_set_default_int(settings, "crosshair_max_area", 5000);
+    obs_data_set_default_int(settings, "crosshair_max_area", 50000);
     obs_data_set_default_bool(settings, "crosshair_shape_filter_enabled", false);
     obs_data_set_default_int(settings, "crosshair_shape_type", 0);
     obs_data_set_default_double(settings, "crosshair_min_fill_ratio", 0.05);
@@ -2572,30 +2509,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
 	tf->targetSwitchTolerance = (float)obs_data_get_double(settings, "target_switch_tolerance");
 
-	// 读取全局标准PID参数
+	// 读取全局算法类型参数
 	tf->algorithmTypeGlobal = (int)obs_data_get_int(settings, "algorithm_type_global");
-	tf->stdKpGlobal = (float)obs_data_get_double(settings, "std_kp_global");
-	tf->stdKiGlobal = (float)obs_data_get_double(settings, "std_ki_global");
-	tf->stdKdGlobal = (float)obs_data_get_double(settings, "std_kd_global");
-	tf->stdOutputLimitGlobal = (float)obs_data_get_double(settings, "std_output_limit_global");
-	tf->stdDeadZoneGlobal = (float)obs_data_get_double(settings, "std_dead_zone_global");
-	tf->stdIntegralLimitGlobal = (float)obs_data_get_double(settings, "std_integral_limit_global");
-	tf->stdIntegralDeadzoneGlobal = (float)obs_data_get_double(settings, "std_integral_deadzone_global");
-	tf->stdIntegralThresholdGlobal = (float)obs_data_get_double(settings, "std_integral_threshold_global");
-	tf->stdIntegralRateGlobal = (float)obs_data_get_double(settings, "std_integral_rate_global");
-	tf->stdDerivativeFilterAlphaGlobal = (float)obs_data_get_double(settings, "std_derivative_filter_alpha_global");
-
-	// 读取ChrisPID参数
-	tf->chrisKp = (float)obs_data_get_double(settings, "chris_kp");
-	tf->chrisKi = (float)obs_data_get_double(settings, "chris_ki");
-	tf->chrisKd = (float)obs_data_get_double(settings, "chris_kd");
-	tf->chrisPredWeightX = (float)obs_data_get_double(settings, "chris_pred_weight_x");
-	tf->chrisPredWeightY = (float)obs_data_get_double(settings, "chris_pred_weight_y");
-	tf->chrisInitScale = (float)obs_data_get_double(settings, "chris_init_scale");
-	tf->chrisRampTime = (float)obs_data_get_double(settings, "chris_ramp_time");
-	tf->chrisOutputMax = (float)obs_data_get_double(settings, "chris_output_max");
-	tf->chrisIMax = (float)obs_data_get_double(settings, "chris_i_max");
-	tf->chrisDFilterAlpha = (float)obs_data_get_double(settings, "chris_d_filter_alpha");
 
 	// DynamicPID参数
 	tf->dynamicKp = (float)obs_data_get_double(settings, "dynamic_kp");
@@ -2610,40 +2525,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->dynamicMinDataPoints = (int)obs_data_get_int(settings, "dynamic_min_data_points");
 	tf->dynamicErrorTolerance = (float)obs_data_get_double(settings, "dynamic_error_tolerance");
 	tf->dynamicSmoothingFactor = (float)obs_data_get_double(settings, "dynamic_smoothing_factor");
-
-	// AdaptivePID参数
-	tf->adaptiveBaseKp = (float)obs_data_get_double(settings, "adaptive_base_kp");
-	tf->adaptiveBaseKi = (float)obs_data_get_double(settings, "adaptive_base_ki");
-	tf->adaptiveBaseKd = (float)obs_data_get_double(settings, "adaptive_base_kd");
-	tf->adaptiveIntegralThreshold = (float)obs_data_get_double(settings, "adaptive_integral_threshold");
-	tf->adaptiveKpThreshold = (float)obs_data_get_double(settings, "adaptive_kp_threshold");
-	tf->adaptiveIntegralRate = (float)obs_data_get_double(settings, "adaptive_integral_rate");
-	tf->adaptiveKpRate = (float)obs_data_get_double(settings, "adaptive_kp_rate");
-	tf->adaptiveLargeErrorRate = (float)obs_data_get_double(settings, "adaptive_large_error_rate");
-	tf->adaptiveMaxOutput = (float)obs_data_get_double(settings, "adaptive_max_output");
-	tf->adaptiveMaxIntegral = (float)obs_data_get_double(settings, "adaptive_max_integral");
-	tf->adaptiveUsePredictor = obs_data_get_bool(settings, "adaptive_use_predictor");
-	tf->adaptivePredWeightX = (float)obs_data_get_double(settings, "adaptive_pred_weight_x");
-	tf->adaptivePredWeightY = (float)obs_data_get_double(settings, "adaptive_pred_weight_y");
-	tf->adaptiveMaxPredTime = (float)obs_data_get_double(settings, "adaptive_max_pred_time");
-	tf->adaptiveOutputSmoothing = (float)obs_data_get_double(settings, "adaptive_output_smoothing");
-	tf->adaptiveDerivativeFilterAlpha = (float)obs_data_get_double(settings, "adaptive_derivative_filter");
-
-	// IncrementalPID参数
-	tf->incrementalKp = (float)obs_data_get_double(settings, "incremental_kp");
-	tf->incrementalKi = (float)obs_data_get_double(settings, "incremental_ki");
-	tf->incrementalKd = (float)obs_data_get_double(settings, "incremental_kd");
-	tf->incrementalSpeedX = (float)obs_data_get_double(settings, "incremental_speed_x");
-	tf->incrementalSpeedY = (float)obs_data_get_double(settings, "incremental_speed_y");
-	tf->incrementalAimRadius = (int)obs_data_get_int(settings, "incremental_aim_radius");
-	tf->incrementalJitterEnabled = obs_data_get_bool(settings, "incremental_jitter");
-	tf->incrementalPidEnabled = obs_data_get_bool(settings, "incremental_pid_enabled");
-	tf->incrementalSideCompEnabled = obs_data_get_bool(settings, "incremental_side_comp");
-	tf->incrementalSideCompCap = (float)obs_data_get_double(settings, "incremental_side_comp_cap");
-	tf->incrementalSideCompDenom = (float)obs_data_get_double(settings, "incremental_side_comp_denom");
-	tf->incrementalInputAlpha = (float)obs_data_get_double(settings, "incremental_input_alpha");
-	tf->incrementalDAlpha = (float)obs_data_get_double(settings, "incremental_d_alpha");
-	tf->incrementalOutputAlpha = (float)obs_data_get_double(settings, "incremental_output_alpha");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -5442,6 +5323,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				tf->crosshairDetected = true;
 			} else {
 				tf->crosshairDetected = false;
+				// 检测失败，重置跟踪状态，下一帧重新从中心搜索
+				tf->crosshairDetector.resetTracking();
 			}
 		}
 	}
@@ -5554,29 +5437,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		// 算法选择（使用全局设置）
 		mcConfig.algorithmType = static_cast<AlgorithmType>(tf->algorithmTypeGlobal);
 		// 标准PID参数（使用全局设置）
-		mcConfig.stdKp = tf->stdKpGlobal;
-		mcConfig.stdKi = tf->stdKiGlobal;
-		mcConfig.stdKd = tf->stdKdGlobal;
-		mcConfig.stdOutputLimit = tf->stdOutputLimitGlobal;
-		mcConfig.stdDeadZone = tf->stdDeadZoneGlobal;
-		mcConfig.stdIntegralLimit = tf->stdIntegralLimitGlobal;
-		mcConfig.stdIntegralDeadzone = tf->stdIntegralDeadzoneGlobal;
-		mcConfig.stdIntegralThreshold = tf->stdIntegralThresholdGlobal;
-		mcConfig.stdIntegralRate = tf->stdIntegralRateGlobal;
-		mcConfig.stdDerivativeFilterAlpha = tf->stdDerivativeFilterAlphaGlobal;
-		mcConfig.stdSmoothingX = 0.7f;
-		mcConfig.stdSmoothingY = 0.5f;
-		// ChrisPID参数（使用全局设置）
-		mcConfig.chrisKp = tf->chrisKp;
-		mcConfig.chrisKi = tf->chrisKi;
-		mcConfig.chrisKd = tf->chrisKd;
-		mcConfig.chrisPredWeightX = tf->chrisPredWeightX;
-		mcConfig.chrisPredWeightY = tf->chrisPredWeightY;
-		mcConfig.chrisInitScale = tf->chrisInitScale;
-		mcConfig.chrisRampTime = tf->chrisRampTime;
-		mcConfig.chrisOutputMax = tf->chrisOutputMax;
-		mcConfig.chrisIMax = tf->chrisIMax;
-		mcConfig.chrisDFilterAlpha = tf->chrisDFilterAlpha;
+		// 算法类型
+		mcConfig.algorithmType = (tf->algorithmTypeGlobal == 0) ? AlgorithmType::AdvancedPID : AlgorithmType::DynamicPID;
+		// 动态PID参数
 		mcConfig.dynamicKp = tf->dynamicKp;
 		mcConfig.dynamicKi = tf->dynamicKi;
 		mcConfig.dynamicKd = tf->dynamicKd;
@@ -5589,50 +5452,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.dynamicMinDataPoints = tf->dynamicMinDataPoints;
 		mcConfig.dynamicErrorTolerance = tf->dynamicErrorTolerance;
 		mcConfig.dynamicSmoothingFactor = tf->dynamicSmoothingFactor;
-		// AdaptivePID参数
-		mcConfig.adaptiveBaseKp = tf->adaptiveBaseKp;
-		mcConfig.adaptiveBaseKi = tf->adaptiveBaseKi;
-		mcConfig.adaptiveBaseKd = tf->adaptiveBaseKd;
-		mcConfig.adaptiveIntegralThreshold = tf->adaptiveIntegralThreshold;
-		mcConfig.adaptiveKpThreshold = tf->adaptiveKpThreshold;
-		mcConfig.adaptiveIntegralRate = tf->adaptiveIntegralRate;
-		mcConfig.adaptiveKpRate = tf->adaptiveKpRate;
-		mcConfig.adaptiveLargeErrorRate = tf->adaptiveLargeErrorRate;
-		mcConfig.adaptiveMaxOutput = tf->adaptiveMaxOutput;
-		mcConfig.adaptiveMaxIntegral = tf->adaptiveMaxIntegral;
-		mcConfig.adaptiveUsePredictor = tf->adaptiveUsePredictor;
-		mcConfig.adaptivePredWeightX = tf->adaptivePredWeightX;
-		mcConfig.adaptivePredWeightY = tf->adaptivePredWeightY;
-		mcConfig.adaptiveMaxPredTime = tf->adaptiveMaxPredTime;
-		mcConfig.adaptiveOutputSmoothing = tf->adaptiveOutputSmoothing;
-		mcConfig.adaptiveDerivativeFilterAlpha = tf->adaptiveDerivativeFilterAlpha;
-		// IncrementalPID参数
-		mcConfig.incrementalKp = tf->incrementalKp;
-		mcConfig.incrementalKi = tf->incrementalKi;
-		mcConfig.incrementalKd = tf->incrementalKd;
-		mcConfig.incrementalSpeedX = tf->incrementalSpeedX;
-		mcConfig.incrementalSpeedY = tf->incrementalSpeedY;
-		mcConfig.incrementalAimRadius = tf->incrementalAimRadius;
-		mcConfig.incrementalJitterEnabled = tf->incrementalJitterEnabled;
-		mcConfig.incrementalPidEnabled = tf->incrementalPidEnabled;
-		mcConfig.incrementalSideCompEnabled = tf->incrementalSideCompEnabled;
-		mcConfig.incrementalSideCompCap = tf->incrementalSideCompCap;
-		mcConfig.incrementalSideCompDenom = tf->incrementalSideCompDenom;
-		// MotionSimulator 人类行为模拟器参数
-		mcConfig.enableMotionSimulator = cfg.enableMotionSimulator;
-		mcConfig.motionSimRandomPos = cfg.motionSimRandomPos;
-		mcConfig.motionSimOvershoot = cfg.motionSimOvershoot;
-		mcConfig.motionSimMicroOvershoot = cfg.motionSimMicroOvershoot;
-		mcConfig.motionSimInertia = cfg.motionSimInertia;
-		mcConfig.motionSimLeftBtnAdaptive = cfg.motionSimLeftBtnAdaptive;
-		mcConfig.motionSimSprayMode = cfg.motionSimSprayMode;
-		mcConfig.motionSimTapPause = cfg.motionSimTapPause;
-		mcConfig.motionSimRetry = cfg.motionSimRetry;
-		mcConfig.motionSimMaxRetry = cfg.motionSimMaxRetry;
-		mcConfig.motionSimDelayMs = cfg.motionSimDelayMs;
-		mcConfig.motionSimDirectProb = cfg.motionSimDirectProb;
-		mcConfig.motionSimOvershootProb = cfg.motionSimOvershootProb;
-		mcConfig.motionSimMicroOvshootProb = cfg.motionSimMicroOvshootProb;
 		// 神经网络轨迹生成器参数
 		mcConfig.enableNeuralPath = cfg.enableNeuralPath;
 		mcConfig.neuralPathPoints = cfg.neuralPathPoints;
@@ -5640,11 +5459,6 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
 		mcConfig.neuralConsumePerFrame = cfg.neuralConsumePerFrame;
 		mcConfig.enableNeuralPathDebug = cfg.enableNeuralPathDebug;
-		// 稳定性检测参数
-		mcConfig.enableStabilityCheck = cfg.enableStabilityCheck;
-		mcConfig.stabilityRequiredFrames = cfg.stabilityRequiredFrames;
-		mcConfig.stabilityPositionThreshold = cfg.stabilityPositionThreshold;
-		mcConfig.stabilitySizeThreshold = cfg.stabilitySizeThreshold;
 		
 		static int syncCount = 0;
 		syncCount++;
@@ -6268,47 +6082,44 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 		// 准星检测可视化
 		if (tf->crosshairConfig.enabled) {
-			// 颜色隔离视图：复用detect缓存的HSV mask，避免每帧重复BGRA→BGR→HSV+inRange
+			// 颜色隔离视图：直接在悬浮窗图像上做HSV分割
 			if (tf->crosshairConfig.colorIsolationView) {
-				cv::Mat hsvMask = tf->crosshairDetector.getLastHsvMask();
-				if (!hsvMask.empty()) {
-					// mask是准星裁切帧尺寸，resize到悬浮窗裁切帧尺寸
-					cv::Mat maskResized;
-					cv::resize(hsvMask, maskResized, cv::Size(croppedFrame.cols, croppedFrame.rows));
-					// 非匹配区域置黑
-					cv::Mat invMask;
-					cv::bitwise_not(maskResized, invMask);
-					croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
-				} else {
-					// 首帧还没有mask时，回退到实时计算
-					cv::Mat bgrCropped;
-					cv::cvtColor(croppedFrame, bgrCropped, cv::COLOR_BGRA2BGR);
-					cv::Mat hsvCropped;
-					cv::cvtColor(bgrCropped, hsvCropped, cv::COLOR_BGR2HSV);
-					cv::Scalar lower(tf->crosshairConfig.hMin, tf->crosshairConfig.sMin, tf->crosshairConfig.vMin);
-					cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
-					cv::Mat mask;
-					cv::inRange(hsvCropped, lower, upper, mask);
-					cv::Mat invMask;
-					cv::bitwise_not(mask, invMask);
-					croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
-				}
+				cv::Mat bgrCropped;
+				cv::cvtColor(croppedFrame, bgrCropped, cv::COLOR_BGRA2BGR);
+				cv::Mat hsvCropped;
+				cv::cvtColor(bgrCropped, hsvCropped, cv::COLOR_BGR2HSV);
+				cv::Scalar lower(tf->crosshairConfig.hMin, tf->crosshairConfig.sMin, tf->crosshairConfig.vMin);
+				cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
+				cv::Mat mask;
+				cv::inRange(hsvCropped, lower, upper, mask);
+				cv::Mat invMask;
+				cv::bitwise_not(mask, invMask);
+				croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
 			}
-			// 旧版调试掩码：半透明白色叠加
+			// 调试掩码：直接在悬浮窗图像上做HSV分割
 			else if (tf->crosshairConfig.showDebugMask) {
-				cv::Mat debugMask;
-				{
-					std::lock_guard<std::mutex> lock(tf->crosshairDebugMutex);
-					debugMask = tf->crosshairDebugMask.clone();
+				cv::Mat bgrCropped;
+				cv::cvtColor(croppedFrame, bgrCropped, cv::COLOR_BGRA2BGR);
+				cv::Mat hsvCropped;
+				cv::cvtColor(bgrCropped, hsvCropped, cv::COLOR_BGR2HSV);
+				cv::Scalar lower(tf->crosshairConfig.hMin, tf->crosshairConfig.sMin, tf->crosshairConfig.vMin);
+				cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
+				cv::Mat mask;
+				cv::inRange(hsvCropped, lower, upper, mask);
+				// 形态学处理和准星检测保持一致
+				if (tf->crosshairConfig.erodeIterations > 0 && tf->crosshairConfig.morphKernelSize > 0) {
+					cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+						cv::Size(tf->crosshairConfig.morphKernelSize, tf->crosshairConfig.morphKernelSize));
+					cv::erode(mask, mask, kernel, cv::Point(-1, -1), tf->crosshairConfig.erodeIterations);
 				}
-				if (!debugMask.empty()) {
-					// 将掩码调整到悬浮窗尺寸并叠加
-					cv::Mat maskResized;
-					cv::resize(debugMask, maskResized, cv::Size(croppedFrame.cols, croppedFrame.rows));
-					cv::cvtColor(maskResized, maskResized, cv::COLOR_GRAY2BGRA);
-					// 半透明叠加（50%透明度）
-					cv::addWeighted(croppedFrame, 0.5, maskResized, 0.5, 0, croppedFrame);
+				if (tf->crosshairConfig.dilateIterations > 0 && tf->crosshairConfig.morphKernelSize > 0) {
+					cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+						cv::Size(tf->crosshairConfig.morphKernelSize, tf->crosshairConfig.morphKernelSize));
+					cv::dilate(mask, mask, kernel, cv::Point(-1, -1), tf->crosshairConfig.dilateIterations);
 				}
+				// 半透明叠加
+				cv::cvtColor(mask, mask, cv::COLOR_GRAY2BGRA);
+				cv::addWeighted(croppedFrame, 0.5, mask, 0.5, 0, croppedFrame);
 			}
 		}
 

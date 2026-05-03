@@ -239,25 +239,33 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	// ========== 第0步：吸管取色 ==========
 	if (config_.pickingColor) {
 		pickColorFromCenter(bgrFrame, frameWidth, frameHeight, cropX, cropY);
-		// 取色后本次不执行检测，下一帧再检测
 		return results;
 	}
 
-	// ========== 第1步：ROI裁剪（FOV区域） ==========
+	// ========== 第1步：ROI裁剪 ==========
 	int imgW = bgrFrame.cols;
 	int imgH = bgrFrame.rows;
 
-	// 计算FOV圆形区域的包围盒
-	int fovRadiusPx = static_cast<int>(fovRadiusNorm * imgW);
-	int fovCenterXPx = static_cast<int>(fovCenterX * imgW);
-	int fovCenterYPx = static_cast<int>(fovCenterY * imgH);
+	// 确定搜索中心：优先用前一帧检测到的位置
+	float searchCenterX = fovCenterX;
+	float searchCenterY = fovCenterY;
+	float searchRadius = fovRadiusNorm;
 
-	// ROI范围，留一些余量
+	if (hasLastDetection_) {
+		searchCenterX = lastDetectedX_;
+		searchCenterY = lastDetectedY_;
+		searchRadius = std::min(fovRadiusNorm * 0.5f, 0.2f);
+	}
+
+	int searchRadiusPx = static_cast<int>(searchRadius * imgW);
+	int searchCenterXPx = static_cast<int>(searchCenterX * imgW);
+	int searchCenterYPx = static_cast<int>(searchCenterY * imgH);
+
 	int margin = 10;
-	int roiX = std::max(0, fovCenterXPx - fovRadiusPx - margin);
-	int roiY = std::max(0, fovCenterYPx - fovRadiusPx - margin);
-	int roiW = std::min(imgW - roiX, 2 * (fovRadiusPx + margin));
-	int roiH = std::min(imgH - roiY, 2 * (fovRadiusPx + margin));
+	int roiX = std::max(0, searchCenterXPx - searchRadiusPx - margin);
+	int roiY = std::max(0, searchCenterYPx - searchRadiusPx - margin);
+	int roiW = std::min(imgW - roiX, 2 * (searchRadiusPx + margin));
+	int roiH = std::min(imgH - roiY, 2 * (searchRadiusPx + margin));
 
 	if (roiW <= 0 || roiH <= 0) return results;
 
@@ -272,12 +280,10 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	cv::Mat mask;
 	cv::inRange(hsvFrame, lower, upper, mask);
 
-	// 保存原始inRange掩码（颜色隔离视图用）
 	lastHsvMask_ = mask.clone();
 	lastMaskRoiX_ = roiX; lastMaskRoiY_ = roiY;
 	lastMaskRoiW_ = roiW; lastMaskRoiH_ = roiH;
 
-	// 统计原始mask白色像素数（用于诊断）
 	int originalWhitePixels = cv::countNonZero(mask);
 
 	// ========== 第3步：形态学过滤 ==========
@@ -294,96 +300,139 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	}
 
 	// ========== 第4步：子矩阵分位数过滤 ==========
-	// 注意：准心线条极细（1-2像素），在网格子区域中占比极低，
-	// 默认quantileThreshold=0跳过此步骤，避免误杀准心像素
 	if (config_.quantileThreshold > 0.0f) {
 		filterBySubMatrixQuantile(mask, config_.gridRows, config_.gridCols, config_.quantileThreshold);
 	}
 
-	// 保存调试掩码
 	if (config_.showDebugMask) {
 		debugMask_ = mask.clone();
 	}
 
-	// ========== 第5步：准心定位 ==========
-	// 准心是细线条，dilate后仍可能分裂成多个小碎片，用轮廓面积过滤不可靠
-	// 改用mask质心：直接计算所有白色像素的加权中心点，更稳定
-	cv::Moments m = cv::moments(mask, true);
-	if (m.m00 <= 0) {
-		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 形态学处理后mask无白色像素 (原始mask有%d个白色像素)", originalWhitePixels);
-		return results; // mask中没有白色像素
+	// ========== 第5步：连通域分析（关键改进！）==========
+	struct Candidate {
+		float cx, cy;
+		float area;
+		cv::Rect bbox;
+		float score;
+	};
+
+	std::vector<Candidate> candidates;
+
+	std::vector<std::vector<cv::Point>> contours;
+	cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+	// 计算理想中心位置（ROI坐标系）
+	float idealCenterX = searchCenterX * imgW - roiX;
+	float idealCenterY = searchCenterY * imgH - roiY;
+
+	// 计算上一帧位置（ROI坐标系）
+	float lastCenterX = hasLastDetection_ ? (lastDetectedX_ * imgW - roiX) : idealCenterX;
+	float lastCenterY = hasLastDetection_ ? (lastDetectedY_ * imgH - roiY) : idealCenterY;
+
+	for (size_t i = 0; i < contours.size(); i++) {
+		Candidate cand;
+		cand.area = static_cast<float>(cv::contourArea(contours[i]));
+
+		// 面积过滤
+		if (cand.area < config_.minArea || cand.area > config_.maxArea) {
+			continue;
+		}
+
+		cv::Moments m = cv::moments(contours[i]);
+		if (m.m00 <= 0) continue;
+		cand.cx = static_cast<float>(m.m10 / m.m00);
+		cand.cy = static_cast<float>(m.m01 / m.m00);
+		cand.bbox = cv::boundingRect(contours[i]);
+
+		// ========== 评分机制 ==========
+		cand.score = 0.0f;
+
+		// 1. 面积评分：准心通常是小面积，大面积是背景
+		// 面积越小分数越高（但有最小限制）
+		float areaScore = 0.0f;
+		if (cand.area < 500) {
+			areaScore = 100.0f;  // 小面积高分
+		} else if (cand.area < 2000) {
+			areaScore = 50.0f;   // 中等面积中等分
+		} else {
+			areaScore = 10.0f;   // 大面积低分
+		}
+		cand.score += areaScore;
+
+		// 2. 距离理想中心的评分
+		float distToIdeal = std::sqrt(std::pow(cand.cx - idealCenterX, 2) + std::pow(cand.cy - idealCenterY, 2));
+		float distScore = std::max(0.0f, 100.0f - distToIdeal / 3.0f);
+		cand.score += distScore;
+
+		// 3. 如果有前一帧结果，距离前一帧位置的评分（权重最高）
+		if (hasLastDetection_) {
+			float distToLast = std::sqrt(std::pow(cand.cx - lastCenterX, 2) + std::pow(cand.cy - lastCenterY, 2));
+			float lastPosScore = std::max(0.0f, 200.0f - distToLast / 2.0f);
+			cand.score += lastPosScore;
+		}
+
+		candidates.push_back(cand);
 	}
 
-	// 质心坐标（ROI坐标系）
-	float cx = static_cast<float>(m.m10 / m.m00);
-	float cy = static_cast<float>(m.m01 / m.m00);
-
-	// 白像素总面积（用于置信度）
-	double totalArea = m.m00;
-
-	// 可选面积过滤：太少可能是噪点，太多可能匹配了整个背景
-	if (totalArea < config_.minArea || totalArea > config_.maxArea) {
-		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 面积过滤 totalArea=%.0f, minArea=%d, maxArea=%d (原始mask有%d个白色像素)",
-		        totalArea, config_.minArea, config_.maxArea, originalWhitePixels);
+	if (candidates.empty()) {
+		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 没有找到符合条件的连通域 (原始mask有%d个白色像素)", originalWhitePixels);
 		return results;
 	}
 
-	// ========== 第6步：轮廓形状过滤 ==========
+	// ========== 第6步：选择最佳候选 ==========
+	std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+		return a.score > b.score;
+	});
+
+	Candidate best = candidates[0];
+
+	// ========== 第7步：形状过滤（可选） ==========
 	if (config_.shapeFilterEnabled && config_.shapeType != CrosshairShapeType::Any) {
-		float fillRatio, aspectRatio;
-		bool hasCrossPoint;
-		if (!filterByShape(mask, fillRatio, aspectRatio, hasCrossPoint)) {
-			// 形状过滤失败，日志已在filterByShape中输出
-			return results;
+		int expand = 10;
+		int shapeROIX = std::max(0, best.bbox.x - expand);
+		int shapeROIY = std::max(0, best.bbox.y - expand);
+		int shapeROIW = std::min(roiW - shapeROIX, best.bbox.width + 2 * expand);
+		int shapeROIH = std::min(roiH - shapeROIY, best.bbox.height + 2 * expand);
+
+		if (shapeROIW > 0 && shapeROIH > 0) {
+			cv::Mat shapeMask = mask(cv::Rect(shapeROIX, shapeROIY, shapeROIW, shapeROIH));
+			float fillRatio, aspectRatio;
+			bool hasCrossPoint;
+			if (!filterByShape(shapeMask, fillRatio, aspectRatio, hasCrossPoint)) {
+				return results;
+			}
 		}
 	}
 
-	// 转换到全帧坐标系
-	cx += roiX;
-	cy += roiY;
+	// ========== 第8步：构建检测结果 ==========
+	float fullFrameCx = best.cx + roiX;
+	float fullFrameCy = best.cy + roiY;
 
-	// FOV圆形过滤
-	float dx = cx / imgW - fovCenterX;
-	float dy = cy / imgH - fovCenterY;
+	float dx = fullFrameCx / imgW - fovCenterX;
+	float dy = fullFrameCy / imgH - fovCenterY;
 	float dist = std::sqrt(dx * dx + dy * dy);
 	if (dist > fovRadiusNorm * 1.1f) return results;
 
-	// 转换为归一化坐标
-	float normCX = cx / imgW;
-	float normCY = cy / imgH;
+	float normCX = fullFrameCx / imgW;
+	float normCY = fullFrameCy / imgH;
 
-	// 置信度：白色像素越多越可靠，但归一化到0-1
-	float confidence = static_cast<float>(std::min(1.0, totalArea / config_.maxArea));
+	float confidence = std::min(1.0f, best.score / 400.0f);
 	confidence = std::max(0.1f, confidence);
 
-	// 构建Detection结果
 	Detection det;
-	det.classId = -2;  // 准星检测专用classId
+	det.classId = -2;
 	det.className = "crosshair";
 	det.confidence = confidence;
 	det.centerX = normCX;
 	det.centerY = normCY;
-
-	// 计算包围盒（mask中白色像素的范围，ROI坐标系 → 归一化）
-	std::vector<cv::Point> whitePixels;
-	cv::findNonZero(mask, whitePixels);
-	if (!whitePixels.empty()) {
-		cv::Rect bbox = cv::boundingRect(whitePixels);
-		det.x = (bbox.x + roiX) / static_cast<float>(imgW);
-		det.y = (bbox.y + roiY) / static_cast<float>(imgH);
-		det.width = static_cast<float>(bbox.width) / imgW;
-		det.height = static_cast<float>(bbox.height) / imgH;
-	} else {
-		det.x = normCX;
-		det.y = normCY;
-		det.width = 0.01f;
-		det.height = 0.01f;
-	}
-
+	det.x = (best.bbox.x + roiX) / static_cast<float>(imgW);
+	det.y = (best.bbox.y + roiY) / static_cast<float>(imgH);
+	det.width = static_cast<float>(best.bbox.width) / imgW;
+	det.height = static_cast<float>(best.bbox.height) / imgH;
 	det.trackId = -1;
 	det.lostFrames = 0;
 
-	// ========== 第6步：模板匹配精确定位（可选） ==========
+	// ========== 第9步：模板匹配精确定位（可选） ==========
 	if (!templateImage_.empty()) {
 		float refinedX = normCX, refinedY = normCY, refinedConf = confidence;
 		bool matched = refineByTemplateMatch(bgrFrame,
@@ -402,7 +451,17 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 
 	results.push_back(det);
 
+	lastDetectedX_ = det.centerX;
+	lastDetectedY_ = det.centerY;
+	hasLastDetection_ = true;
+
 	return results;
+}
+
+void CrosshairDetector::resetTracking() {
+	hasLastDetection_ = false;
+	lastDetectedX_ = 0.5f;
+	lastDetectedY_ = 0.5f;
 }
 
 void CrosshairDetector::filterBySubMatrixQuantile(cv::Mat& binaryMask, int rows, int cols, float threshold)
@@ -427,12 +486,10 @@ void CrosshairDetector::filterBySubMatrixQuantile(cv::Mat& binaryMask, int rows,
 
 			cv::Mat cell = binaryMask(cellRect);
 
-			// 计算白像素比例
 			int totalPixels = cell.rows * cell.cols;
 			int whitePixels = cv::countNonZero(cell);
 			float ratio = static_cast<float>(whitePixels) / totalPixels;
 
-			// 低于分位数阈值，清零该子区域
 			if (ratio < threshold) {
 				cell.setTo(0);
 			}
@@ -449,7 +506,6 @@ bool CrosshairDetector::refineByTemplateMatch(const cv::Mat& bgrFrame,
 {
 	if (templateImage_.empty()) return false;
 
-	// 候选区域扩展，给模板匹配留搜索空间
 	int expandPx = std::max(templateImage_.cols, templateImage_.rows);
 	int x0 = std::max(0, candidateROI.x - expandPx);
 	int y0 = std::max(0, candidateROI.y - expandPx);
@@ -458,31 +514,26 @@ bool CrosshairDetector::refineByTemplateMatch(const cv::Mat& bgrFrame,
 
 	cv::Rect searchROI(x0, y0, x1 - x0, y1 - y0);
 
-	// 搜索区域必须大于模板尺寸
 	if (searchROI.width < templateImage_.cols || searchROI.height < templateImage_.rows) {
 		return false;
 	}
 
-	// 转灰度
 	cv::Mat searchGray;
 	cv::cvtColor(bgrFrame(searchROI), searchGray, cv::COLOR_BGR2GRAY);
 
-	// 模板匹配
 	cv::Mat result;
 	int matchMethod = cv::TM_CCOEFF_NORMED;
 	cv::matchTemplate(searchGray, templateImage_, result, matchMethod);
 
-	// 找最佳匹配位置
 	double minVal, maxVal;
 	cv::Point minLoc, maxLoc;
 	cv::minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
 
 	float bestConfidence = static_cast<float>(maxVal);
 	if (bestConfidence < config_.matchThreshold) {
-		return false; // 匹配置信度不够
+		return false;
 	}
 
-	// 计算精确定位中心（搜索ROI坐标系 → 全帧坐标系 → 归一化）
 	float matchCX = searchROI.x + maxLoc.x + templateImage_.cols * 0.5f;
 	float matchCY = searchROI.y + maxLoc.y + templateImage_.rows * 0.5f;
 
@@ -500,7 +551,6 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 {
 	if (mask.empty()) return false;
 
-	// 找到所有轮廓
 	std::vector<std::vector<cv::Point>> contours;
 	cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
@@ -509,7 +559,6 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 		return false;
 	}
 
-	// 找到最大轮廓（准心主体）
 	int maxIdx = -1;
 	double maxArea = 0;
 	for (int i = 0; i < static_cast<int>(contours.size()); ++i) {
@@ -525,25 +574,16 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 		return false;
 	}
 
-	// 计算boundingRect
 	cv::Rect bbox = cv::boundingRect(contours[maxIdx]);
-	
-	// 计算填充率 = 轮廓面积 / boundingRect面积
 	double bboxArea = bbox.width * bbox.height;
 	outFillRatio = static_cast<float>(maxArea / bboxArea);
-
-	// 计算纵横比 = 宽 / 高
 	outAspectRatio = static_cast<float>(bbox.width) / std::max(1, bbox.height);
-
-	// 检测十字形特征
 	outHasCrossPoint = detectCrossShape(mask);
 
-	// 根据形状类型进行过滤
 	bool passed = true;
 	std::string rejectReason;
 
 	if (config_.shapeType == CrosshairShapeType::Cross) {
-		// 十字形准心：填充率低（线条细），纵横比接近1，有交叉点
 		if (outFillRatio > config_.maxFillRatio) {
 			passed = false;
 			rejectReason = "填充率过高(非十字形)";
@@ -558,7 +598,6 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 		}
 	}
 	else if (config_.shapeType == CrosshairShapeType::Dot) {
-		// 点状准心：填充率高（接近圆形），纵横比接近1，无交叉点
 		if (outFillRatio < config_.minFillRatio) {
 			passed = false;
 			rejectReason = "填充率过低(非点状)";
@@ -567,10 +606,8 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 			passed = false;
 			rejectReason = "纵横比不符合";
 		}
-		// 点状不需要交叉点，反而有交叉点可能不是点状
 	}
 	else if (config_.shapeType == CrosshairShapeType::TShape) {
-		// T字形：填充率低，纵横比接近1，有交叉点但不完全对称
 		if (outFillRatio > config_.maxFillRatio) {
 			passed = false;
 			rejectReason = "填充率过高(非T字形)";
@@ -580,7 +617,6 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 			rejectReason = "纵横比不符合";
 		}
 	}
-	// Any类型不做额外过滤
 
 	if (!passed) {
 		obs_log(LOG_INFO, "[CrosshairDetector] 形状过滤失败: %s (填充率=%.2f, 纵横比=%.2f, 交叉点=%d)",
@@ -592,15 +628,10 @@ bool CrosshairDetector::filterByShape(const cv::Mat& mask,
 
 bool CrosshairDetector::detectCrossShape(const cv::Mat& mask)
 {
-	// 十字形检测方法：在mask中心区域检测是否有交叉点
-	// 方法：对mask进行细化（骨架化），然后检测交叉点
-
 	if (mask.empty()) return false;
 
-	// 复制mask，避免修改原始数据
 	cv::Mat maskCopy = mask.clone();
 
-	// 使用形态学骨架化
 	cv::Mat skel(mask.size(), CV_8UC1, cv::Scalar(0));
 	cv::Mat temp;
 	cv::Mat eroded;
@@ -609,7 +640,7 @@ bool CrosshairDetector::detectCrossShape(const cv::Mat& mask)
 	
 	bool done = false;
 	int iterations = 0;
-	const int maxIterations = 20;  // 防止无限循环
+	const int maxIterations = 20;
 
 	do {
 		cv::erode(maskCopy, eroded, element);
@@ -622,8 +653,6 @@ bool CrosshairDetector::detectCrossShape(const cv::Mat& mask)
 		iterations++;
 	} while (!done && iterations < maxIterations);
 
-	// 在骨架图中检测交叉点
-	// 交叉点特征：周围有多个方向的骨架线
 	cv::Mat crossKernel = (cv::Mat_<uchar>(3, 3) << 
 		0, 1, 0,
 		1, 1, 1,
@@ -634,7 +663,6 @@ bool CrosshairDetector::detectCrossShape(const cv::Mat& mask)
 	
 	int crossPoints = cv::countNonZero(hitResult);
 	
-	// 如果有交叉点，返回true
 	return crossPoints > 0;
 }
 

@@ -108,6 +108,9 @@ public:
 	// 加载模板图像
 	void loadTemplate(const std::string& path);
 
+	// 重置跟踪状态
+	void resetTracking();
+
 	// 获取调试掩码（用于渲染）
 	const cv::Mat& getDebugMask() const { return debugMask_; }
 
@@ -128,6 +131,11 @@ private:
 	int lastMaskRoiX_ = 0, lastMaskRoiY_ = 0, lastMaskRoiW_ = 0, lastMaskRoiH_ = 0;
 	std::string lastTemplatePath_; // 上次加载的模板路径（避免重复加载）
 	int frameCounter_ = 0;
+
+	// 准心位置跟踪
+	float lastDetectedX_ = 0.5f;  // 上一帧检测到的准心X（归一化）
+	float lastDetectedY_ = 0.5f;  // 上一帧检测到的准心Y（归一化）
+	bool hasLastDetection_ = false;  // 是否有上一帧的检测结果
 
 	// 子矩阵分位数过滤：将二值图划分为网格，低于阈值的子区域清零
 	void filterBySubMatrixQuantile(cv::Mat& binaryMask, int rows, int cols, float threshold);
