@@ -65,7 +65,8 @@ private:
     float dx_prev_ = 0.0f;
 
     static float alpha(float dt, float cutoff) {
-        float tau = 1.0f / (2.0f * static_cast<float>(M_PI) * cutoff);
+        const float pi = 3.14159265358979323846f;
+        float tau = 1.0f / (2.0f * pi * cutoff);
         return 1.0f / (1.0f + tau / dt);
     }
 
