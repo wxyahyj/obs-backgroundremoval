@@ -249,15 +249,28 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	// 确定搜索中心：优先用前一帧检测到的位置
 	float searchCenterX = fovCenterX;
 	float searchCenterY = fovCenterY;
-	float searchRadius = fovRadiusNorm;
+	
+	// 确定搜索半径
+	int searchRadiusPx;
+	if (config_.searchRadius > 0) {
+		// 用户设置了搜索半径（像素），直接使用
+		searchRadiusPx = config_.searchRadius;
+	} else {
+		// 默认：使用FOV半径
+		searchRadiusPx = static_cast<int>(fovRadiusNorm * imgW);
+	}
 
 	if (hasLastDetection_) {
 		searchCenterX = lastDetectedX_;
 		searchCenterY = lastDetectedY_;
-		searchRadius = std::min(fovRadiusNorm * 0.5f, 0.2f);
+		// 有前一帧结果时，缩小搜索范围
+		if (config_.searchRadius > 0) {
+			searchRadiusPx = config_.searchRadius / 2;
+		} else {
+			searchRadiusPx = static_cast<int>(std::min(fovRadiusNorm * 0.5f, 0.2f) * imgW);
+		}
 	}
 
-	int searchRadiusPx = static_cast<int>(searchRadius * imgW);
 	int searchCenterXPx = static_cast<int>(searchCenterX * imgW);
 	int searchCenterYPx = static_cast<int>(searchCenterY * imgH);
 
@@ -300,8 +313,14 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	}
 
 	// ========== 第4步：子矩阵分位数过滤 ==========
+	int beforeQuantilePixels = cv::countNonZero(mask);
+	obs_log(LOG_INFO, "[CrosshairDetector] 形态学处理后白色像素: %d", beforeQuantilePixels);
+	
 	if (config_.quantileThreshold > 0.0f) {
 		filterBySubMatrixQuantile(mask, config_.gridRows, config_.gridCols, config_.quantileThreshold);
+		int afterQuantilePixels = cv::countNonZero(mask);
+		obs_log(LOG_INFO, "[CrosshairDetector] 分位数过滤后白色像素: %d (阈值=%.2f, 网格=%dx%d)", 
+		        afterQuantilePixels, config_.quantileThreshold, config_.gridRows, config_.gridCols);
 	}
 
 	if (config_.showDebugMask) {
@@ -321,6 +340,9 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	std::vector<std::vector<cv::Point>> contours;
 	cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
+	obs_log(LOG_INFO, "[CrosshairDetector] 轮廓检测: 找到%zu个轮廓, 面积范围[%d, %d]", 
+	        contours.size(), config_.minArea, config_.maxArea);
+
 	// 计算理想中心位置（ROI坐标系）
 	float idealCenterX = searchCenterX * imgW - roiX;
 	float idealCenterY = searchCenterY * imgH - roiY;
@@ -335,8 +357,12 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 
 		// 面积过滤
 		if (cand.area < config_.minArea || cand.area > config_.maxArea) {
+			obs_log(LOG_INFO, "[CrosshairDetector] 轮廓%zu被过滤: 面积=%.0f (minArea=%d, maxArea=%d)", 
+			        i, cand.area, config_.minArea, config_.maxArea);
 			continue;
 		}
+		
+		obs_log(LOG_INFO, "[CrosshairDetector] 轮廓%zu通过面积过滤: 面积=%.0f", i, cand.area);
 
 		cv::Moments m = cv::moments(contours[i]);
 		if (m.m00 <= 0) continue;
@@ -375,7 +401,8 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	}
 
 	if (candidates.empty()) {
-		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 没有找到符合条件的连通域 (原始mask有%d个白色像素)", originalWhitePixels);
+		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 没有找到符合条件的连通域 (原始mask有%d个白色像素, 找到%zu个轮廓)", 
+		        originalWhitePixels, contours.size());
 		return results;
 	}
 

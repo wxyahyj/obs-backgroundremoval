@@ -6009,6 +6009,19 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 				cv::Scalar upper(tf->crosshairConfig.hMax, tf->crosshairConfig.sMax, tf->crosshairConfig.vMax);
 				cv::Mat mask;
 				cv::inRange(hsvCropped, lower, upper, mask);
+				
+				// 形态学处理（和实际检测保持一致）
+				if (tf->crosshairConfig.erodeIterations > 0 && tf->crosshairConfig.morphKernelSize > 0) {
+					cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+						cv::Size(tf->crosshairConfig.morphKernelSize, tf->crosshairConfig.morphKernelSize));
+					cv::erode(mask, mask, kernel, cv::Point(-1, -1), tf->crosshairConfig.erodeIterations);
+				}
+				if (tf->crosshairConfig.dilateIterations > 0 && tf->crosshairConfig.morphKernelSize > 0) {
+					cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+						cv::Size(tf->crosshairConfig.morphKernelSize, tf->crosshairConfig.morphKernelSize));
+					cv::dilate(mask, mask, kernel, cv::Point(-1, -1), tf->crosshairConfig.dilateIterations);
+				}
+				
 				cv::Mat invMask;
 				cv::bitwise_not(mask, invMask);
 				croppedFrame.setTo(cv::Scalar(0, 0, 0, 255), invMask);
