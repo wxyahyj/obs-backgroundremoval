@@ -462,6 +462,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int neuralPathPoints;
 		double neuralMouseStepSize;
 		int neuralTargetRadius;
+		int neuralConsumePerFrame;  // 每帧消费路径点数（加速执行）
 		bool enableNeuralPathDebug;
 		// 稳定性检测参数
 		bool enableStabilityCheck;
@@ -559,9 +560,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			motionSimMicroOvshootProb = 0.05f;
 			// 神经网络轨迹生成器默认值
 			enableNeuralPath = false;
-			neuralPathPoints = 25;
-			neuralMouseStepSize = 4.0;
+			neuralPathPoints = 35;
+			neuralMouseStepSize = 8.0;
 			neuralTargetRadius = 8;
+			neuralConsumePerFrame = 2;
 			enableNeuralPathDebug = false;
 			// 稳定性检测默认值
 			enableStabilityCheck = false;
@@ -903,6 +905,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(neuralMouseStepSizeProp, "每次移动的步长大小");
 	obs_property_t *neuralTargetRadiusProp = obs_properties_add_int_slider(props, "neural_target_radius", "目标半径", 1, 50, 1);
 	obs_property_set_long_description(neuralTargetRadiusProp, "到达目标的判定半径");
+	obs_property_t *neuralConsumeProp = obs_properties_add_int_slider(props, "neural_consume_per_frame", "每帧消费点数", 1, 5, 1);
+	obs_property_set_long_description(neuralConsumeProp, "每帧消费的路径点数量，越大移动越快但曲线越粗略（1=拟人,2=平衡,3+=快速）");
 	obs_property_t *enableNeuralPathDebugProp = obs_properties_add_bool(props, "enable_neural_path_debug", "神经网络调试日志");
 	obs_property_set_long_description(enableNeuralPathDebugProp, "开启后会输出详细的神经网络轨迹运行日志，用于调试");
 
@@ -2010,8 +2014,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     // 神经网络轨迹生成器默认值
     obs_data_set_default_bool(settings, "enable_neural_path", false);
     obs_data_set_default_int(settings, "neural_path_points", 25);
-    obs_data_set_default_double(settings, "neural_mouse_step_size", 4.0);
+    obs_data_set_default_double(settings, "neural_mouse_step_size", 8.0);
     obs_data_set_default_int(settings, "neural_target_radius", 8);
+    obs_data_set_default_int(settings, "neural_consume_per_frame", 2);
     obs_data_set_default_bool(settings, "enable_neural_path_debug", false);
     
     // 稳定性检测默认值
@@ -2509,6 +2514,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].neuralPathPoints = (int)obs_data_get_int(settings, "neural_path_points");
 		tf->mouseConfigs[i].neuralMouseStepSize = obs_data_get_double(settings, "neural_mouse_step_size");
 		tf->mouseConfigs[i].neuralTargetRadius = (int)obs_data_get_int(settings, "neural_target_radius");
+		tf->mouseConfigs[i].neuralConsumePerFrame = (int)obs_data_get_int(settings, "neural_consume_per_frame");
 		tf->mouseConfigs[i].enableNeuralPathDebug = obs_data_get_bool(settings, "enable_neural_path_debug");
 		// 稳定性检测参数（全局设置，应用到所有配置）
 		tf->mouseConfigs[i].enableStabilityCheck = obs_data_get_bool(settings, "enable_stability_check");
@@ -5771,6 +5777,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.neuralPathPoints = cfg.neuralPathPoints;
 		mcConfig.neuralMouseStepSize = cfg.neuralMouseStepSize;
 		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
+		mcConfig.neuralConsumePerFrame = cfg.neuralConsumePerFrame;
 		mcConfig.enableNeuralPathDebug = cfg.enableNeuralPathDebug;
 		// 稳定性检测参数
 		mcConfig.enableStabilityCheck = cfg.enableStabilityCheck;

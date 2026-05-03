@@ -255,8 +255,9 @@ struct MouseControllerConfig {
     // 神经网络轨迹生成器配置
     bool enableNeuralPath = false;             // 是否启用神经网络轨迹
     int neuralPathPoints = 25;                 // 轨迹点数量
-    double neuralMouseStepSize = 4.0;          // 鼠标步长
+    double neuralMouseStepSize = 8.0;          // 鼠标步长
     int neuralTargetRadius = 8;                // 目标半径（到达判定）
+    int neuralConsumePerFrame = 2;             // 每帧消费路径点数（加速执行）
     bool enableNeuralPathDebug = false;        // 是否输出神经网络调试日志
 
     // 目标稳定性检测配置

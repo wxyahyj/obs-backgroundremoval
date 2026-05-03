@@ -417,17 +417,22 @@ void AbstractMouseController::tick()
             }
         }
         
-        // 执行轨迹移动
+        // 执行轨迹移动 - 每帧可消费多个路径点加速到达
         if (!neuralPathPoints_.empty() && neuralPathIndex_ < neuralPathPoints_.size()) {
-            int dx = static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].first));
-            int dy = static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].second));
-            neuralPathIndex_++;
-            
+            int dx = 0, dy = 0;
+            int consumeCount = std::min(config.neuralConsumePerFrame,
+                static_cast<int>(neuralPathPoints_.size() - neuralPathIndex_));
+            for (int i = 0; i < consumeCount; i++) {
+                dx += static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].first));
+                dy += static_cast<int>(std::round(neuralPathPoints_[neuralPathIndex_].second));
+                neuralPathIndex_++;
+            }
+
             static int moveFrameCount = 0;
             moveFrameCount++;
             if (moveFrameCount % 10 == 1 && enableNeuralPathDebug_) {
-                obs_log(LOG_INFO, "[%s] NeuralPath MOVE: index=%zu/%zu, dx=%d, dy=%d, remaining=%zu",
-                        getLogPrefix(), neuralPathIndex_ - 1, neuralPathPoints_.size(), dx, dy,
+                obs_log(LOG_INFO, "[%s] NeuralPath MOVE: consumed=%d, dx=%d, dy=%d, remaining=%zu",
+                        getLogPrefix(), consumeCount, dx, dy,
                         neuralPathPoints_.size() - neuralPathIndex_);
             }
             

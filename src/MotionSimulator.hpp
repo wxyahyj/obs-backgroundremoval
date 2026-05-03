@@ -27,17 +27,14 @@ private:
 
     enum LeftBtnState { LB_IDLE, LB_TAP, LB_SPRAY };
 
-    static constexpr double DIST_MIN = 20.0;
-    static constexpr double DIST_MID = 40.0;
-    static constexpr double DIST_MAX = 60.0;
-    static constexpr double DIST_IMMEDIATE = 10.0;
-    static constexpr double DIST_LOW_OVERSHOOT = 20.0;
-    static constexpr double DIST_NORMAL_START = 30.0;
+    static constexpr double DIST_MIN_RATIO = 0.05;   // 5% of diagonal
+    static constexpr double DIST_MID_RATIO = 0.15;   // 15% of diagonal
+    static constexpr double DIST_MAX_RATIO = 0.30;   // 30% of diagonal
     static constexpr double SIZE_SMALL = 0.02;
     static constexpr double SIZE_LARGE = 0.3;
     static constexpr double OVS_MIN_RATIO = 0.0;
     static constexpr double OVS_MAX_RATIO = 1.0;
-    static constexpr double OVS_RETRY_OVS_PROB = 0.9;
+    static constexpr double OVS_RETRY_OVS_PROB = 0.5;
     static constexpr double OVS_RETRY_DIRECT_PROB = 0.7;
     static constexpr double PRECISE_HEAD_MIN = 0.47;
     static constexpr double PRECISE_HEAD_MAX = 0.53;
@@ -75,8 +72,8 @@ private:
     static constexpr double MOVS_PAUSE_MAX = 0.04;
     static constexpr double MOVS_HEAD_MIN = 0.55;
     static constexpr double MOVS_HEAD_MAX = 0.65;
-    static constexpr double MOVS_BODY_MIN = 1.05;
-    static constexpr double MOVS_BODY_MAX = 1.25;
+    static constexpr double MOVS_BODY_MIN = 0.55;
+    static constexpr double MOVS_BODY_MAX = 0.70;
     static constexpr double LB_TAP_THRESHOLD = 0.03;
     static constexpr double LB_TAP_PAUSE_MIN = 0.01;
     static constexpr double LB_TAP_PAUSE_MAX = 0.06;
@@ -90,10 +87,10 @@ private:
     static constexpr double HEADOVS_LEFT_MAX = 0.6;
     static constexpr double HEADOVS_RIGHT_MIN = 0.4;
     static constexpr double HEADOVS_RIGHT_MAX = 0.5;
-    static constexpr double BODYOVS_LEFT_MIN = 0.9;
-    static constexpr double BODYOVS_LEFT_MAX = 1.5;
-    static constexpr double BODYOVS_RIGHT_MIN = -0.5;
-    static constexpr double BODYOVS_RIGHT_MAX = 0.1;
+    static constexpr double BODYOVS_LEFT_MIN = 0.55;
+    static constexpr double BODYOVS_LEFT_MAX = 0.75;
+    static constexpr double BODYOVS_RIGHT_MIN = 0.25;
+    static constexpr double BODYOVS_RIGHT_MAX = 0.45;
     static constexpr double BREGION_HEAD_TOP = 1.0;
     static constexpr double BREGION_HEAD_BOTTOM = 0.85;
     static constexpr double BREGION_BODY_BOTTOM = 0.4;

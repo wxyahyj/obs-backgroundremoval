@@ -4,6 +4,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <algorithm>
 #include <cmath>
+#include <obs-module.h>
 #include <plugin-support.h>
 
 void CrosshairDetector::updateConfig(const CrosshairDetectorConfig& cfg)

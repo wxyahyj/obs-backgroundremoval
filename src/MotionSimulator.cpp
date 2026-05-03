@@ -208,7 +208,12 @@ double MotionSimulator::calculateDistance() const {
 }
 
 double MotionSimulator::clampDistance(double distance) const {
-    return std::clamp(distance, DIST_MIN, DIST_MAX);
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    double dist_min = diag * DIST_MIN_RATIO;
+    double dist_mid = diag * DIST_MID_RATIO;
+    double dist_max = diag * DIST_MAX_RATIO;
+    (void)dist_mid;  // 预留中间值供未来扩展
+    return std::clamp(distance, dist_min, dist_max);
 }
 
 void MotionSimulator::updateOvershootRatio() {
@@ -289,17 +294,22 @@ double MotionSimulator::calculateSprayAdaptive() const {
 }
 
 double MotionSimulator::calculateDirectDuration(double distance) {
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    double dist_min = diag * DIST_MIN_RATIO;
+    double dist_mid = diag * DIST_MID_RATIO;
+    double dist_max = diag * DIST_MAX_RATIO;
+
     double lo_min, lo_max;
-    if (distance <= DIST_MIN) {
+    if (distance <= dist_min) {
         lo_min = DIRECT_D20_MIN; lo_max = DIRECT_D20_MAX;
     }
-    else if (distance <= DIST_MID) {
-        double r = (distance - DIST_MIN) / (DIST_MID - DIST_MIN);
+    else if (distance <= dist_mid) {
+        double r = (distance - dist_min) / (dist_mid - dist_min);
         lo_min = DIRECT_D20_MIN + r * (DIRECT_D40_MIN - DIRECT_D20_MIN);
         lo_max = DIRECT_D20_MAX + r * (DIRECT_D40_MAX - DIRECT_D20_MAX);
     }
-    else if (distance <= DIST_MAX) {
-        double r = (distance - DIST_MID) / (DIST_MAX - DIST_MID);
+    else if (distance <= dist_max) {
+        double r = (distance - dist_mid) / (dist_max - dist_mid);
         lo_min = DIRECT_D40_MIN + r * (DIRECT_D60_MIN - DIRECT_D40_MIN);
         lo_max = DIRECT_D40_MAX + r * (DIRECT_D60_MAX - DIRECT_D40_MAX);
     }
@@ -310,17 +320,22 @@ double MotionSimulator::calculateDirectDuration(double distance) {
 }
 
 double MotionSimulator::calculateOvershootDuration(double distance) {
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    double dist_min = diag * DIST_MIN_RATIO;
+    double dist_mid = diag * DIST_MID_RATIO;
+    double dist_max = diag * DIST_MAX_RATIO;
+
     double lo_min, lo_max;
-    if (distance <= DIST_MIN) {
+    if (distance <= dist_min) {
         lo_min = OVSDUR_D20_MIN; lo_max = OVSDUR_D20_MAX;
     }
-    else if (distance <= DIST_MID) {
-        double r = (distance - DIST_MIN) / (DIST_MID - DIST_MIN);
+    else if (distance <= dist_mid) {
+        double r = (distance - dist_min) / (dist_mid - dist_min);
         lo_min = OVSDUR_D20_MIN + r * (OVSDUR_D40_MIN - OVSDUR_D20_MIN);
         lo_max = OVSDUR_D20_MAX + r * (OVSDUR_D40_MAX - OVSDUR_D20_MAX);
     }
-    else if (distance <= DIST_MAX) {
-        double r = (distance - DIST_MID) / (DIST_MAX - DIST_MID);
+    else if (distance <= dist_max) {
+        double r = (distance - dist_mid) / (dist_max - dist_mid);
         lo_min = OVSDUR_D40_MIN + r * (OVSDUR_D60_MIN - OVSDUR_D40_MIN);
         lo_max = OVSDUR_D40_MAX + r * (OVSDUR_D60_MAX - OVSDUR_D40_MAX);
     }
@@ -331,8 +346,10 @@ double MotionSimulator::calculateOvershootDuration(double distance) {
 }
 
 bool MotionSimulator::shouldUseFastThenSlow(double distance) {
-    if (distance <= DIST_MIN - 2) return false;
-    if (distance >= DIST_MIN + 2) return true;
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    double dist_min = diag * DIST_MIN_RATIO;
+    if (distance <= dist_min - 2) return false;
+    if (distance >= dist_min + 2) return true;
     return rng() < 0.5;
 }
 
@@ -386,8 +403,9 @@ void MotionSimulator::enterDirectPhase(bool is_second_phase) {
         has_entered_correction_ = true;
     }
 
-    if (clamped_distance_ <= DIST_MIN) fast_phase_ratio_ = 1.0;
-    else if (clamped_distance_ <= DIST_MID) fast_phase_ratio_ = 0.7 + rng() * 0.1;
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    if (clamped_distance_ <= diag * DIST_MIN_RATIO) fast_phase_ratio_ = 1.0;
+    else if (clamped_distance_ <= diag * DIST_MID_RATIO) fast_phase_ratio_ = 0.7 + rng() * 0.1;
     else fast_phase_ratio_ = 0.65 + rng() * 0.1;
 
     start_ratio_ = current_ratio_;
@@ -405,8 +423,9 @@ void MotionSimulator::enterOvershootPhase() {
     motion_duration_ = calculateOvershootDuration(clamped_distance_);
     is_fast_then_slow_ = shouldUseFastThenSlow(clamped_distance_);
 
-    if (clamped_distance_ <= DIST_MIN) fast_phase_ratio_ = 1.0;
-    else if (clamped_distance_ <= DIST_MID) fast_phase_ratio_ = 0.7 + rng() * 0.1;
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    if (clamped_distance_ <= diag * DIST_MIN_RATIO) fast_phase_ratio_ = 1.0;
+    else if (clamped_distance_ <= diag * DIST_MID_RATIO) fast_phase_ratio_ = 0.7 + rng() * 0.1;
     else fast_phase_ratio_ = 0.65 + rng() * 0.1;
 
     start_ratio_ = current_ratio_;
@@ -509,15 +528,19 @@ void MotionSimulator::initializeMotion() {
         return;
     }
 
-    if (target_size_ratio >= SIZE_LARGE || calculated_distance_ <= DIST_IMMEDIATE) {
+    double diag = std::sqrt(image_width_ * image_width_ + image_height_ * image_height_);
+    double dist_immediate = diag * 0.02;  // 极近距离，直接到位
+    double dist_low_overshoot = diag * 0.06;  // 低过冲距离
+
+    if (target_size_ratio >= SIZE_LARGE || calculated_distance_ <= dist_immediate) {
         enterDirectPhase(false);
         retry_count_ = 0; overshoot_retry_count_ = 0; is_second_direct_phase_ = false;
         return;
     }
 
     double final_direct_prob = cfg_directProb_;
-    if (calculated_distance_ < DIST_LOW_OVERSHOOT) {
-        double dist_factor = 1.0 - (calculated_distance_ / DIST_LOW_OVERSHOOT);
+    if (calculated_distance_ < dist_low_overshoot) {
+        double dist_factor = 1.0 - (calculated_distance_ / dist_low_overshoot);
         dist_factor = std::clamp(dist_factor, 0.0, 1.0);
         dist_factor *= dist_factor;
         final_direct_prob += (1.0 - final_direct_prob) * dist_factor;
@@ -693,8 +716,11 @@ double MotionSimulator::handleOvershootPause1(double elapsed) {
         current_phase_ = PHASE_OVERSHOOT_PAUSE_2;
         phase_start_time_ = std::chrono::steady_clock::now();
     }
-    else {
+    else if (overshoot_retry_count_ < cfg_maxRetryCount_) {
         enterOvershootRetryFlow();
+    }
+    else {
+        current_ratio_ = 0.5;
     }
     return current_ratio_;
 }
@@ -710,15 +736,24 @@ double MotionSimulator::handleOvershootPause2(double elapsed) {
         current_phase_ = PHASE_OVERSHOOT_PAUSE_3;
         phase_start_time_ = std::chrono::steady_clock::now();
     }
-    else {
+    else if (overshoot_retry_count_ < cfg_maxRetryCount_) {
         enterOvershootRetryFlow();
+    }
+    else {
+        // 重试次数用尽，直接归位避免振荡
+        current_ratio_ = 0.5;
     }
     return current_ratio_;
 }
 
 double MotionSimulator::handleOvershootPause3(double elapsed) {
     if (elapsed < pause_duration_) return current_ratio_;
-    enterOvershootRetryFlow();
+    // 经过3次暂停后不再重试，直接归位到中心，避免振荡循环
+    current_ratio_ = 0.5;
+    if (is_left_btn_locked_ && has_entered_correction_) {
+        is_left_btn_locked_ = false;
+        has_entered_correction_ = false;
+    }
     return current_ratio_;
 }
 

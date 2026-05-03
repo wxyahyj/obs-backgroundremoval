@@ -1187,6 +1187,12 @@ void YoloAimSettingsDialog::setupNeuralPathPage()
     m_neuralTargetRadiusSpin->setSuffix(QStringLiteral(" px"));
     m_neuralTargetRadiusSpin->setToolTip(QStringLiteral("到达目标的判定半径"));
     paramsLayout->addRow(QStringLiteral("目标半径:"), m_neuralTargetRadiusSpin);
+
+    m_neuralConsumePerFrameSpin = new QSpinBox(page);
+    m_neuralConsumePerFrameSpin->setRange(1, 5);
+    m_neuralConsumePerFrameSpin->setValue(2);
+    m_neuralConsumePerFrameSpin->setToolTip(QStringLiteral("每帧消费的路径点数量，越大移动越快但曲线越粗略（1=拟人,2=平衡,3+=快速）"));
+    paramsLayout->addRow(QStringLiteral("每帧消费点数:"), m_neuralConsumePerFrameSpin);
     
     layout->addWidget(paramsGroup);
     
@@ -1689,6 +1695,7 @@ void YoloAimSettingsDialog::loadSettings()
     if (m_neuralPathPointsSpin) m_neuralPathPointsSpin->setValue(obs_data_get_int(settings, "neural_path_points"));
     if (m_neuralMouseStepSizeSpin) m_neuralMouseStepSizeSpin->setValue(obs_data_get_double(settings, "neural_mouse_step_size"));
     if (m_neuralTargetRadiusSpin) m_neuralTargetRadiusSpin->setValue(obs_data_get_int(settings, "neural_target_radius"));
+    if (m_neuralConsumePerFrameSpin) m_neuralConsumePerFrameSpin->setValue(obs_data_get_int(settings, "neural_consume_per_frame"));
     
     // 高级配置
     if (m_exportCoordinatesCheck) m_exportCoordinatesCheck->setChecked(obs_data_get_bool(settings, "export_coordinates"));
@@ -1856,6 +1863,7 @@ void YoloAimSettingsDialog::saveSettings()
     if (m_neuralPathPointsSpin) obs_data_set_int(settings, "neural_path_points", m_neuralPathPointsSpin->value());
     if (m_neuralMouseStepSizeSpin) obs_data_set_double(settings, "neural_mouse_step_size", m_neuralMouseStepSizeSpin->value());
     if (m_neuralTargetRadiusSpin) obs_data_set_int(settings, "neural_target_radius", m_neuralTargetRadiusSpin->value());
+    if (m_neuralConsumePerFrameSpin) obs_data_set_int(settings, "neural_consume_per_frame", m_neuralConsumePerFrameSpin->value());
     
     // 高级配置
     if (m_exportCoordinatesCheck) obs_data_set_bool(settings, "export_coordinates", m_exportCoordinatesCheck->isChecked());

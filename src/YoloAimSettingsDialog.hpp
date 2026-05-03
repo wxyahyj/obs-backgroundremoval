@@ -159,6 +159,7 @@ private:
     QSpinBox* m_neuralPathPointsSpin;
     QDoubleSpinBox* m_neuralMouseStepSizeSpin;
     QSpinBox* m_neuralTargetRadiusSpin;
+    QSpinBox* m_neuralConsumePerFrameSpin;
     
     // 高级配置
     QCheckBox* m_exportCoordinatesCheck;
