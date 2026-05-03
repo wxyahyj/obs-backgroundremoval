@@ -363,8 +363,12 @@ if(USE_TENSORRT_YOLO)
     src/models/ModelTensorRTYOLO.cpp
   )
   
+  # 查找 CUDA
+  find_package(CUDA REQUIRED)
+  
   target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${TRT_PATH}/include
+    ${CUDA_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/infer
     ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/utils
@@ -378,6 +382,11 @@ if(USE_TENSORRT_YOLO)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${TRT_LIBS})
   
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE USE_TENSORRT_YOLO)
+  
+  # 禁用 C4251 警告（dll-interface 警告）
+  if(MSVC)
+    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE /wd4251)
+  endif()
   
   # CUDA 编译选项
   target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE 

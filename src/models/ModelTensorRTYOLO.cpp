@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iostream>
+#include <fstream>
 
 // 包含 TensorRT-YOLO 头文件
 #include "trtyolo.hpp"

@@ -106,6 +106,13 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.5.0'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "cufft", "cufft_dev", "curand", "curand_dev", "cusolver", "cusolver_dev", "cusparse", "cusparse_dev", "npp", "npp_dev", "nvidia_cudart", "nvidia_cudart_dev", "nvidia_cuobjdump", "nvidia_cuxxfilt", "nvidia_fatbinaryloader", "nvidia_nvcc", "nvidia_nvdisasm", "nvidia_nvml_dev", "nvidia_nvprof", "nvidia_nvprune", "nvidia_nvvm", "nvidia_ptxjitcompiler", "nvidia_ptxjitcompiler_dev", "nvidia_tools", "nvidia_visual_profiler", "nvrtc", "nvrtc_dev", "nvtx", "nvtx_dev"]'
+
       - name: Set Up Environment 🔧
         id: setup
         run: |
@@ -180,6 +187,13 @@ jobs:
           target: 'desktop'
           arch: 'win64_msvc2022_64'
           cache: true
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.5.0'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "cufft", "cufft_dev", "curand", "curand_dev", "cusolver", "cusolver_dev", "cusparse", "cusparse_dev", "npp", "npp_dev", "nvidia_cudart", "nvidia_cudart_dev", "nvidia_cuobjdump", "nvidia_cuxxfilt", "nvidia_fatbinaryloader", "nvidia_nvcc", "nvidia_nvdisasm", "nvidia_nvml_dev", "nvidia_nvprof", "nvidia_nvprune", "nvidia_nvvm", "nvidia_ptxjitcompiler", "nvidia_ptxjitcompiler_dev", "nvidia_tools", "nvidia_visual_profiler", "nvrtc", "nvrtc_dev", "nvtx", "nvtx_dev"]'
 
       - name: Set Up Environment 🔧
         id: setup
