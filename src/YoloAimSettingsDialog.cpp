@@ -1,7 +1,6 @@
 #ifdef ENABLE_QT
 
 #include "YoloAimSettingsDialog.hpp"
-#include "OBSQTDisplay.hpp"
 #include "yolo-detector-filter.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -46,8 +45,6 @@ void YoloAimSettingsDialog::showSettingsDialog()
 YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     : QDialog(parent)
     , m_currentConfig(0)
-    , m_previewDisplay(nullptr)
-    , m_previewPlaceholder(nullptr)
     , m_showDetectionResultsCheck(nullptr)
     , m_showFOVCheck(nullptr)
     , m_showFOVCircleCheck(nullptr)
@@ -280,10 +277,6 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
             background: #a78bfa;
         }
         
-        QSplitter::handle {
-            background: #8b5cf6;
-        }
-        
         QDialogButtonBox QPushButton {
             min-width: 90px;
         }
@@ -291,13 +284,6 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
     
     setupUI();
     refreshSourceList();
-    
-    if (m_previewDisplay) {
-        m_previewDisplay->hide();
-    }
-    if (m_previewPlaceholder) {
-        m_previewPlaceholder->show();
-    }
 }
 
 YoloAimSettingsDialog::~YoloAimSettingsDialog()
@@ -385,75 +371,32 @@ void YoloAimSettingsDialog::setupUI()
     m_inferenceStatusLabel->setStyleSheet("color: #a78bfa; font-size: 13px; padding: 5px 10px;");
     topLayout->addWidget(m_inferenceStatusLabel);
     
-    topLayout->addStretch();
+    topLayout->addSpacing(30);
     
-    mainLayout->addLayout(topLayout);
-    
-    QSplitter* splitter = new QSplitter(Qt::Horizontal, this);
-    
-    QWidget* previewContainer = new QWidget(this);
-    QVBoxLayout* previewLayout = new QVBoxLayout(previewContainer);
-    previewLayout->setContentsMargins(0, 0, 0, 0);
-    
-    QLabel* previewLabel = new QLabel(QStringLiteral("📹 视频预览"), this);
-    previewLabel->setAlignment(Qt::AlignCenter);
-    previewLabel->setStyleSheet("color: #a78bfa; font-size: 14px; font-weight: bold; padding: 5px;");
-    previewLayout->addWidget(previewLabel);
-    
-    m_previewDisplay = new OBSQTDisplay(this);
-    m_previewDisplay->setMinimumSize(320, 180);
-    m_previewDisplay->SetBackgroundColor(0x0d0d15);
-    previewLayout->addWidget(m_previewDisplay, 1);
-    
-    m_previewPlaceholder = new QLabel(QStringLiteral("请选择视频源"), this);
-    m_previewPlaceholder->setAlignment(Qt::AlignCenter);
-    m_previewPlaceholder->setStyleSheet("background-color: #0a0a12; color: #a78bfa; font-size: 16px; border: 2px solid #8b5cf6; border-radius: 10px;");
-    m_previewPlaceholder->setMinimumSize(320, 180);
-    m_previewPlaceholder->hide();
-    previewLayout->addWidget(m_previewPlaceholder, 1);
-    
-    splitter->addWidget(previewContainer);
-    
-    QWidget* settingsContainer = new QWidget(this);
-    QVBoxLayout* settingsLayout = new QVBoxLayout(settingsContainer);
-    settingsLayout->setContentsMargins(0, 0, 0, 0);
-    
-    m_tabWidget = new QTabWidget(this);
-    
-    setupModelPage();
-    setupDetectionPage();
-    setupVisualPage();
-    setupBasicPage();
-    setupAdvancedPIDPage();
-    setupTriggerPage();
-    setupTrackingPage();
-    setupPredictorPage();
-    setupBezierPage();
-    setupMotionSimulatorPage();
-    setupNeuralPathPage();
-    
-    settingsLayout->addWidget(m_tabWidget);
-    
-    QHBoxLayout* configLayout = new QHBoxLayout();
     QLabel* configLabel = new QLabel(QStringLiteral("配置:"), this);
+    topLayout->addWidget(configLabel);
     m_configSelect = new QComboBox(this);
     for (int i = 0; i < 5; i++) {
         m_configSelect->addItem(QStringLiteral("配置 %1").arg(i + 1));
     }
+    m_configSelect->setMinimumWidth(120);
     connect(m_configSelect, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &YoloAimSettingsDialog::onConfigChanged);
+    topLayout->addWidget(m_configSelect);
     
-    configLayout->addWidget(configLabel);
-    configLayout->addWidget(m_configSelect);
-    configLayout->addStretch();
+    topLayout->addStretch();
     
-    settingsLayout->addLayout(configLayout);
+    mainLayout->addLayout(topLayout);
     
-    splitter->addWidget(settingsContainer);
+    m_tabWidget = new QTabWidget(this);
     
-    splitter->setSizes({400, 500});
+    setupModelDetectionPage();
+    setupVisualPage();
+    setupMouseControlPage();
+    setupTrackingPredictorPage();
+    setupMotionSimPage();
     
-    mainLayout->addWidget(splitter, 1);
+    mainLayout->addWidget(m_tabWidget, 1);
     
     QDialogButtonBox* buttonBox = new QDialogButtonBox(
         QDialogButtonBox::Save | QDialogButtonBox::Apply | QDialogButtonBox::Reset | QDialogButtonBox::Close,
@@ -468,7 +411,7 @@ void YoloAimSettingsDialog::setupUI()
     mainLayout->addWidget(buttonBox);
 }
 
-void YoloAimSettingsDialog::setupModelPage()
+void YoloAimSettingsDialog::setupModelDetectionPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
@@ -522,19 +465,10 @@ void YoloAimSettingsDialog::setupModelPage()
     modelLayout->addWidget(m_numThreadsSpin, row, 1);
     
     layout->addWidget(modelGroup);
-    layout->addStretch();
-    
-    m_tabWidget->addTab(page, QStringLiteral("📦 模型"));
-}
-
-void YoloAimSettingsDialog::setupDetectionPage()
-{
-    QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
     
     QGroupBox* detectGroup = new QGroupBox(QStringLiteral("🎯 检测设置"), page);
     QGridLayout* detectLayout = new QGridLayout(detectGroup);
-    int row = 0;
+    row = 0;
     
     detectLayout->addWidget(new QLabel(QStringLiteral("置信度阈值:"), page), row, 0);
     m_confidenceThresholdSpin = new QDoubleSpinBox(page);
@@ -610,7 +544,7 @@ void YoloAimSettingsDialog::setupDetectionPage()
     layout->addWidget(regionGroup);
     layout->addStretch();
     
-    m_tabWidget->addTab(page, QStringLiteral("🎯 检测"));
+    m_tabWidget->addTab(page, QStringLiteral("📦 模型检测"));
 }
 
 void YoloAimSettingsDialog::setupVisualPage()
@@ -759,454 +693,239 @@ void YoloAimSettingsDialog::setupVisualPage()
     m_tabWidget->addTab(page, QStringLiteral("👁 视觉"));
 }
 
-void YoloAimSettingsDialog::setupBasicPage()
+void YoloAimSettingsDialog::setupMouseControlPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
+    QScrollArea* scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    
+    QWidget* scrollContent = new QWidget();
+    QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+    
+    // 创建5套配置，每套包含：基础+高级PID+扳机+后坐力
     for (int i = 0; i < 5; i++) {
-        QWidget* configWidget = createConfigWidget(i);
-        configWidget->setVisible(i == 0);
-        layout->addWidget(configWidget);
+        QWidget* container = new QWidget(scrollContent);
+        QVBoxLayout* containerLayout = new QVBoxLayout(container);
+        containerLayout->setContentsMargins(0, 0, 0, 0);
+        
+        // 基础参数
+        QWidget* basicWidget = createConfigWidget(i);
+        containerLayout->addWidget(basicWidget);
+        
+        // 高级PID参数
+        QGroupBox* pidGroup = createAdvancedPIDGroup(i);
+        containerLayout->addWidget(pidGroup);
+        
+        // 扳机
+        m_configWidgets[i].autoTriggerGroup = createAutoTriggerGroup(i);
+        containerLayout->addWidget(m_configWidgets[i].autoTriggerGroup);
+        
+        // 后坐力
+        m_configWidgets[i].recoilGroup = createRecoilGroup(i);
+        containerLayout->addWidget(m_configWidgets[i].recoilGroup);
+        
+        containerLayout->addStretch();
+        
+        m_mouseConfigContainers[i] = container;
+        container->setVisible(i == 0);
+        scrollLayout->addWidget(container);
     }
     
-    m_tabWidget->addTab(page, QStringLiteral("⚙️ 基础"));
-}
-
-void YoloAimSettingsDialog::initConfigWidgetStruct(int configIndex)
-{
-    if (configIndex < 0 || configIndex >= 5) return;
+    scrollLayout->addStretch();
+    scrollArea->setWidget(scrollContent);
+    layout->addWidget(scrollArea);
     
-    m_configWidgets[configIndex].enabledCheck = nullptr;
-    m_configWidgets[configIndex].hotkeyCombo = nullptr;
-    m_configWidgets[configIndex].controllerTypeCombo = nullptr;
-    m_configWidgets[configIndex].pMinSpin = nullptr;
-    m_configWidgets[configIndex].pMaxSpin = nullptr;
-    m_configWidgets[configIndex].pSlopeSpin = nullptr;
-    m_configWidgets[configIndex].dSpin = nullptr;
-    m_configWidgets[configIndex].iSpin = nullptr;
-    m_configWidgets[configIndex].derivativeFilterAlphaSpin = nullptr;
-    m_configWidgets[configIndex].advTargetThresholdSpin = nullptr;
-    m_configWidgets[configIndex].advMinCoefficientSpin = nullptr;
-    m_configWidgets[configIndex].advMaxCoefficientSpin = nullptr;
-    m_configWidgets[configIndex].advTransitionSharpnessSpin = nullptr;
-    m_configWidgets[configIndex].advTransitionMidpointSpin = nullptr;
-    m_configWidgets[configIndex].advOutputSmoothingSpin = nullptr;
-    m_configWidgets[configIndex].advSpeedFactorSpin = nullptr;
-    m_configWidgets[configIndex].useOneEuroFilterCheck = nullptr;
-    m_configWidgets[configIndex].oneEuroMinCutoffSpin = nullptr;
-    m_configWidgets[configIndex].oneEuroBetaSpin = nullptr;
-    m_configWidgets[configIndex].oneEuroDCutoffSpin = nullptr;
-    m_configWidgets[configIndex].aimSmoothingXSpin = nullptr;
-    m_configWidgets[configIndex].aimSmoothingYSpin = nullptr;
-    m_configWidgets[configIndex].targetYOffsetSpin = nullptr;
-    m_configWidgets[configIndex].maxPixelMoveSpin = nullptr;
-    m_configWidgets[configIndex].deadZonePixelsSpin = nullptr;
-    m_configWidgets[configIndex].screenOffsetXSpin = nullptr;
-    m_configWidgets[configIndex].screenOffsetYSpin = nullptr;
-    m_configWidgets[configIndex].screenWidthSpin = nullptr;
-    m_configWidgets[configIndex].screenHeightSpin = nullptr;
-    m_configWidgets[configIndex].enableYAxisUnlockCheck = nullptr;
-    m_configWidgets[configIndex].yAxisUnlockDelaySpin = nullptr;
-    m_configWidgets[configIndex].autoTriggerGroup = nullptr;
-    m_configWidgets[configIndex].triggerRadiusSpin = nullptr;
-    m_configWidgets[configIndex].triggerCooldownSpin = nullptr;
-    m_configWidgets[configIndex].triggerFireDelaySpin = nullptr;
-    m_configWidgets[configIndex].triggerFireDurationSpin = nullptr;
-    m_configWidgets[configIndex].triggerIntervalSpin = nullptr;
-    m_configWidgets[configIndex].enableTriggerDelayRandomCheck = nullptr;
-    m_configWidgets[configIndex].triggerDelayRandomMinSpin = nullptr;
-    m_configWidgets[configIndex].triggerDelayRandomMaxSpin = nullptr;
-    m_configWidgets[configIndex].enableTriggerDurationRandomCheck = nullptr;
-    m_configWidgets[configIndex].triggerDurationRandomMinSpin = nullptr;
-    m_configWidgets[configIndex].triggerDurationRandomMaxSpin = nullptr;
-    m_configWidgets[configIndex].triggerMoveCompensationSpin = nullptr;
-    m_configWidgets[configIndex].recoilGroup = nullptr;
-    m_configWidgets[configIndex].recoilStrengthSpin = nullptr;
-    m_configWidgets[configIndex].recoilSpeedSpin = nullptr;
-    m_configWidgets[configIndex].recoilPidGainScaleSpin = nullptr;
-    m_configWidgets[configIndex].integralLimitSpin = nullptr;
-    m_configWidgets[configIndex].integralSeparationThresholdSpin = nullptr;
-    m_configWidgets[configIndex].integralDeadZoneSpin = nullptr;
-    m_configWidgets[configIndex].integralRateSpin = nullptr;
-    m_configWidgets[configIndex].pGainRampInitialScaleSpin = nullptr;
-    m_configWidgets[configIndex].pGainRampDurationSpin = nullptr;
-    m_configWidgets[configIndex].predictorGroup = nullptr;
-    m_configWidgets[configIndex].predictionWeightXSpin = nullptr;
-    m_configWidgets[configIndex].predictionWeightYSpin = nullptr;
-    m_configWidgets[configIndex].maxPredictionTimeSpin = nullptr;
-    m_configWidgets[configIndex].bezierGroup = nullptr;
-    m_configWidgets[configIndex].bezierCurvatureSpin = nullptr;
-    m_configWidgets[configIndex].bezierRandomnessSpin = nullptr;
+    m_tabWidget->addTab(page, QStringLiteral("🖱️ 鼠标控制"));
 }
 
-void YoloAimSettingsDialog::initAllConfigWidgetStructs()
-{
-    for (int i = 0; i < 5; i++) {
-        initConfigWidgetStruct(i);
-    }
-}
-
-void YoloAimSettingsDialog::setupAdvancedPIDPage()
+void YoloAimSettingsDialog::setupTrackingPredictorPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    QGroupBox* pidGroup = new QGroupBox(QStringLiteral("⚡ PID参数"), page);
-    QGridLayout* pidLayout = new QGridLayout(pidGroup);
+    QScrollArea* scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
     
-    int row = 0;
+    QWidget* scrollContent = new QWidget();
+    QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
     
-    pidLayout->addWidget(new QLabel(QStringLiteral("P最小:"), page), row, 0);
-    m_configWidgets[0].pMinSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].pMinSpin->setRange(0.0, 2.0);
-    m_configWidgets[0].pMinSpin->setDecimals(3);
-    m_configWidgets[0].pMinSpin->setSingleStep(0.001);
-    pidLayout->addWidget(m_configWidgets[0].pMinSpin, row, 1);
-    
-    pidLayout->addWidget(new QLabel(QStringLiteral("P最大:"), page), row, 2);
-    m_configWidgets[0].pMaxSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].pMaxSpin->setRange(0.0, 2.0);
-    m_configWidgets[0].pMaxSpin->setDecimals(3);
-    m_configWidgets[0].pMaxSpin->setSingleStep(0.001);
-    pidLayout->addWidget(m_configWidgets[0].pMaxSpin, row, 3);
-    row++;
-    
-    pidLayout->addWidget(new QLabel(QStringLiteral("P斜率:"), page), row, 0);
-    m_configWidgets[0].pSlopeSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].pSlopeSpin->setRange(0.0, 5.0);
-    m_configWidgets[0].pSlopeSpin->setDecimals(2);
-    pidLayout->addWidget(m_configWidgets[0].pSlopeSpin, row, 1);
-    
-    pidLayout->addWidget(new QLabel(QStringLiteral("D:"), page), row, 2);
-    m_configWidgets[0].dSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].dSpin->setRange(0.0, 0.1);
-    m_configWidgets[0].dSpin->setDecimals(4);
-    m_configWidgets[0].dSpin->setSingleStep(0.0001);
-    pidLayout->addWidget(m_configWidgets[0].dSpin, row, 3);
-    row++;
-    
-    pidLayout->addWidget(new QLabel(QStringLiteral("I:"), page), row, 0);
-    m_configWidgets[0].iSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].iSpin->setRange(0.0, 0.5);
-    m_configWidgets[0].iSpin->setDecimals(4);
-    m_configWidgets[0].iSpin->setSingleStep(0.0001);
-    pidLayout->addWidget(m_configWidgets[0].iSpin, row, 1);
-    
-    pidLayout->addWidget(new QLabel(QStringLiteral("微分滤波:"), page), row, 2);
-    m_configWidgets[0].derivativeFilterAlphaSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].derivativeFilterAlphaSpin->setRange(0.0, 1.0);
-    m_configWidgets[0].derivativeFilterAlphaSpin->setDecimals(2);
-    pidLayout->addWidget(m_configWidgets[0].derivativeFilterAlphaSpin, row, 3);
-    row++;
-    
-    layout->addWidget(pidGroup);
-    
-    QGroupBox* advGroup = new QGroupBox(QStringLiteral("🔧 高级参数"), page);
-    QGridLayout* advLayout = new QGridLayout(advGroup);
-    
-    row = 0;
-    advLayout->addWidget(new QLabel(QStringLiteral("目标阈值:"), page), row, 0);
-    m_configWidgets[0].advTargetThresholdSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].advTargetThresholdSpin->setRange(0.0, 100.0);
-    advLayout->addWidget(m_configWidgets[0].advTargetThresholdSpin, row, 1);
-    
-    advLayout->addWidget(new QLabel(QStringLiteral("最小系数:"), page), row, 2);
-    m_configWidgets[0].advMinCoefficientSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].advMinCoefficientSpin->setRange(0.0, 5.0);
-    advLayout->addWidget(m_configWidgets[0].advMinCoefficientSpin, row, 3);
-    row++;
-    
-    advLayout->addWidget(new QLabel(QStringLiteral("最大系数:"), page), row, 0);
-    m_configWidgets[0].advMaxCoefficientSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].advMaxCoefficientSpin->setRange(0.0, 5.0);
-    advLayout->addWidget(m_configWidgets[0].advMaxCoefficientSpin, row, 1);
-    
-    advLayout->addWidget(new QLabel(QStringLiteral("过渡锐度:"), page), row, 2);
-    m_configWidgets[0].advTransitionSharpnessSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].advTransitionSharpnessSpin->setRange(0.0, 20.0);
-    advLayout->addWidget(m_configWidgets[0].advTransitionSharpnessSpin, row, 3);
-    row++;
-    
-    advLayout->addWidget(new QLabel(QStringLiteral("过渡中点:"), page), row, 0);
-    m_configWidgets[0].advTransitionMidpointSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].advTransitionMidpointSpin->setRange(0.0, 1.0);
-    m_configWidgets[0].advTransitionMidpointSpin->setDecimals(2);
-    advLayout->addWidget(m_configWidgets[0].advTransitionMidpointSpin, row, 1);
-    
-    advLayout->addWidget(new QLabel(QStringLiteral("速度因子:"), page), row, 2);
-    m_configWidgets[0].advSpeedFactorSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].advSpeedFactorSpin->setRange(0.0, 5.0);
-    advLayout->addWidget(m_configWidgets[0].advSpeedFactorSpin, row, 3);
-    row++;
-    
-    layout->addWidget(advGroup);
-    
-    QGroupBox* oneEuroGroup = new QGroupBox(QStringLiteral("💫 One Euro Filter"), page);
-    QHBoxLayout* oneEuroLayout = new QHBoxLayout(oneEuroGroup);
-    
-    m_configWidgets[0].useOneEuroFilterCheck = new QCheckBox(QStringLiteral("启用"), page);
-    oneEuroLayout->addWidget(m_configWidgets[0].useOneEuroFilterCheck);
-    
-    oneEuroLayout->addWidget(new QLabel(QStringLiteral("最小截止:"), page));
-    m_configWidgets[0].oneEuroMinCutoffSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].oneEuroMinCutoffSpin->setRange(0.0, 10.0);
-    oneEuroLayout->addWidget(m_configWidgets[0].oneEuroMinCutoffSpin);
-    
-    oneEuroLayout->addWidget(new QLabel(QStringLiteral("Beta:"), page));
-    m_configWidgets[0].oneEuroBetaSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].oneEuroBetaSpin->setRange(0.0, 10.0);
-    oneEuroLayout->addWidget(m_configWidgets[0].oneEuroBetaSpin);
-    
-    oneEuroLayout->addWidget(new QLabel(QStringLiteral("D截止:"), page));
-    m_configWidgets[0].oneEuroDCutoffSpin = new QDoubleSpinBox(page);
-    m_configWidgets[0].oneEuroDCutoffSpin->setRange(0.0, 10.0);
-    oneEuroLayout->addWidget(m_configWidgets[0].oneEuroDCutoffSpin);
-    
-    oneEuroLayout->addStretch();
-    
-    layout->addWidget(oneEuroGroup);
-    
-    layout->addStretch();
-    
-    m_tabWidget->addTab(page, QStringLiteral("⚡ 高级PID"));
-}
-
-void YoloAimSettingsDialog::setupTriggerPage()
-{
-    QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
-    
-    m_configWidgets[0].autoTriggerGroup = createAutoTriggerGroup(0);
-    layout->addWidget(m_configWidgets[0].autoTriggerGroup);
-    
-    m_configWidgets[0].recoilGroup = createRecoilGroup(0);
-    layout->addWidget(m_configWidgets[0].recoilGroup);
-    
-    layout->addStretch();
-    
-    m_tabWidget->addTab(page, QStringLiteral("🎯 扳机"));
-}
-
-void YoloAimSettingsDialog::setupTrackingPage()
-{
-    QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
-    
-    QGroupBox* kalmanGroup = new QGroupBox(QStringLiteral("🎯 卡尔曼追踪"), page);
+    // Kalman追踪（全局）
+    QGroupBox* kalmanGroup = new QGroupBox(QStringLiteral("📍 卡尔曼追踪"), scrollContent);
     QFormLayout* kalmanLayout = new QFormLayout(kalmanGroup);
     
-    m_useKalmanTrackerCheck = new QCheckBox(QStringLiteral("启用卡尔曼追踪"), page);
+    m_useKalmanTrackerCheck = new QCheckBox(QStringLiteral("启用卡尔曼追踪"), scrollContent);
     m_useKalmanTrackerCheck->setToolTip(QStringLiteral("启用卡尔曼滤波器进行目标追踪，提供更稳定的目标ID和预测能力"));
     kalmanLayout->addRow(m_useKalmanTrackerCheck);
     
-    m_kalmanGenerateThresholdSpin = new QSpinBox(page);
+    m_kalmanGenerateThresholdSpin = new QSpinBox(scrollContent);
     m_kalmanGenerateThresholdSpin->setRange(1, 10);
     m_kalmanGenerateThresholdSpin->setValue(2);
     m_kalmanGenerateThresholdSpin->setToolTip(QStringLiteral("目标需要连续检测到的帧数才能被确认追踪"));
     kalmanLayout->addRow(QStringLiteral("追踪确认阈值:"), m_kalmanGenerateThresholdSpin);
     
-    m_kalmanTerminateCountSpin = new QSpinBox(page);
+    m_kalmanTerminateCountSpin = new QSpinBox(scrollContent);
     m_kalmanTerminateCountSpin->setRange(1, 10);
     m_kalmanTerminateCountSpin->setValue(5);
     m_kalmanTerminateCountSpin->setToolTip(QStringLiteral("目标丢失多少帧后停止追踪"));
     kalmanLayout->addRow(QStringLiteral("追踪丢失阈值:"), m_kalmanTerminateCountSpin);
     
-    layout->addWidget(kalmanGroup);
-    layout->addStretch();
+    scrollLayout->addWidget(kalmanGroup);
     
-    m_tabWidget->addTab(page, QStringLiteral("📍 追踪"));
+    // 每套配置：预测器+贝塞尔
+    for (int i = 0; i < 5; i++) {
+        QWidget* container = new QWidget(scrollContent);
+        QVBoxLayout* containerLayout = new QVBoxLayout(container);
+        containerLayout->setContentsMargins(0, 0, 0, 0);
+        
+        m_configWidgets[i].predictorGroup = createPredictorGroup(i);
+        containerLayout->addWidget(m_configWidgets[i].predictorGroup);
+        
+        m_configWidgets[i].bezierGroup = createBezierGroup(i);
+        containerLayout->addWidget(m_configWidgets[i].bezierGroup);
+        
+        containerLayout->addStretch();
+        
+        m_trackingConfigContainers[i] = container;
+        container->setVisible(i == 0);
+        scrollLayout->addWidget(container);
+    }
+    
+    scrollLayout->addStretch();
+    scrollArea->setWidget(scrollContent);
+    layout->addWidget(scrollArea);
+    
+    m_tabWidget->addTab(page, QStringLiteral("📍 追踪预测"));
 }
 
-void YoloAimSettingsDialog::setupPredictorPage()
+void YoloAimSettingsDialog::setupMotionSimPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
     
-    m_configWidgets[0].predictorGroup = createPredictorGroup(0);
-    layout->addWidget(m_configWidgets[0].predictorGroup);
+    QScrollArea* scrollArea = new QScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
     
-    layout->addStretch();
+    QWidget* scrollContent = new QWidget();
+    QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
     
-    m_tabWidget->addTab(page, QStringLiteral("🔮 预测"));
-}
-
-void YoloAimSettingsDialog::setupBezierPage()
-{
-    QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
-    
-    m_configWidgets[0].bezierGroup = createBezierGroup(0);
-    layout->addWidget(m_configWidgets[0].bezierGroup);
-    
-    layout->addStretch();
-    
-    m_tabWidget->addTab(page, QStringLiteral("🌊 贝塞尔"));
-}
-
-void YoloAimSettingsDialog::setupMotionSimulatorPage()
-{
-    QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
-    
-    // 启用开关
-    m_enableMotionSimulatorCheck = new QCheckBox(QStringLiteral("🎮 启用人类行为模拟"), page);
+    // MotionSimulator
+    m_enableMotionSimulatorCheck = new QCheckBox(QStringLiteral("🎮 启用人类行为模拟"), scrollContent);
     m_enableMotionSimulatorCheck->setToolTip(QStringLiteral("启用人类行为模拟器，使鼠标移动更自然"));
-    layout->addWidget(m_enableMotionSimulatorCheck);
+    scrollLayout->addWidget(m_enableMotionSimulatorCheck);
     
-    // 功能开关组
-    QGroupBox* featureGroup = new QGroupBox(QStringLiteral("🔧 功能开关"), page);
+    QGroupBox* featureGroup = new QGroupBox(QStringLiteral("🔧 功能开关"), scrollContent);
     QGridLayout* featureLayout = new QGridLayout(featureGroup);
-    
     int row = 0;
-    m_motionSimRandomPosCheck = new QCheckBox(QStringLiteral("随机落点"), page);
+    m_motionSimRandomPosCheck = new QCheckBox(QStringLiteral("随机落点"), scrollContent);
     m_motionSimRandomPosCheck->setToolTip(QStringLiteral("在目标范围内随机选择落点"));
     featureLayout->addWidget(m_motionSimRandomPosCheck, row, 0);
-    
-    m_motionSimOvershootCheck = new QCheckBox(QStringLiteral("过冲"), page);
+    m_motionSimOvershootCheck = new QCheckBox(QStringLiteral("过冲"), scrollContent);
     m_motionSimOvershootCheck->setToolTip(QStringLiteral("模拟人类移动时的过冲行为"));
     featureLayout->addWidget(m_motionSimOvershootCheck, row, 1);
     row++;
-    
-    m_motionSimMicroOvershootCheck = new QCheckBox(QStringLiteral("微过冲"), page);
+    m_motionSimMicroOvershootCheck = new QCheckBox(QStringLiteral("微过冲"), scrollContent);
     m_motionSimMicroOvershootCheck->setToolTip(QStringLiteral("模拟人类移动时的微小过冲"));
     featureLayout->addWidget(m_motionSimMicroOvershootCheck, row, 0);
-    
-    m_motionSimInertiaCheck = new QCheckBox(QStringLiteral("惯性停止"), page);
+    m_motionSimInertiaCheck = new QCheckBox(QStringLiteral("惯性停止"), scrollContent);
     m_motionSimInertiaCheck->setToolTip(QStringLiteral("模拟人类移动时的惯性停止效果"));
     featureLayout->addWidget(m_motionSimInertiaCheck, row, 1);
     row++;
-    
-    m_motionSimLeftBtnAdaptiveCheck = new QCheckBox(QStringLiteral("左键自适应"), page);
-    m_motionSimLeftBtnAdaptiveCheck->setToolTip(QStringLiteral("根据左键状态调整移动行为"));
+    m_motionSimLeftBtnAdaptiveCheck = new QCheckBox(QStringLiteral("左键自适应"), scrollContent);
     featureLayout->addWidget(m_motionSimLeftBtnAdaptiveCheck, row, 0);
-    
-    m_motionSimSprayModeCheck = new QCheckBox(QStringLiteral("连射模式"), page);
-    m_motionSimSprayModeCheck->setToolTip(QStringLiteral("启用连射模式下的特殊行为"));
+    m_motionSimSprayModeCheck = new QCheckBox(QStringLiteral("连射模式"), scrollContent);
     featureLayout->addWidget(m_motionSimSprayModeCheck, row, 1);
     row++;
-    
-    m_motionSimTapPauseCheck = new QCheckBox(QStringLiteral("点击暂停"), page);
-    m_motionSimTapPauseCheck->setToolTip(QStringLiteral("点击时暂停移动"));
+    m_motionSimTapPauseCheck = new QCheckBox(QStringLiteral("点击暂停"), scrollContent);
     featureLayout->addWidget(m_motionSimTapPauseCheck, row, 0);
-    
-    m_motionSimRetryCheck = new QCheckBox(QStringLiteral("重试"), page);
-    m_motionSimRetryCheck->setToolTip(QStringLiteral("未命中时自动重试"));
+    m_motionSimRetryCheck = new QCheckBox(QStringLiteral("重试"), scrollContent);
     featureLayout->addWidget(m_motionSimRetryCheck, row, 1);
+    scrollLayout->addWidget(featureGroup);
     
-    layout->addWidget(featureGroup);
-    
-    // 参数设置组
-    QGroupBox* paramsGroup = new QGroupBox(QStringLiteral("📊 参数设置"), page);
+    QGroupBox* paramsGroup = new QGroupBox(QStringLiteral("📊 参数设置"), scrollContent);
     QFormLayout* paramsLayout = new QFormLayout(paramsGroup);
-    
-    m_motionSimMaxRetrySpin = new QSpinBox(page);
+    m_motionSimMaxRetrySpin = new QSpinBox(scrollContent);
     m_motionSimMaxRetrySpin->setRange(0, 5);
     m_motionSimMaxRetrySpin->setValue(2);
-    m_motionSimMaxRetrySpin->setToolTip(QStringLiteral("未命中时的最大重试次数"));
     paramsLayout->addRow(QStringLiteral("最大重试次数:"), m_motionSimMaxRetrySpin);
-    
-    m_motionSimDelayMsSpin = new QSpinBox(page);
+    m_motionSimDelayMsSpin = new QSpinBox(scrollContent);
     m_motionSimDelayMsSpin->setRange(0, 500);
     m_motionSimDelayMsSpin->setValue(80);
     m_motionSimDelayMsSpin->setSuffix(QStringLiteral(" ms"));
-    m_motionSimDelayMsSpin->setToolTip(QStringLiteral("目标延迟时间（毫秒）"));
     paramsLayout->addRow(QStringLiteral("目标延迟:"), m_motionSimDelayMsSpin);
-    
-    m_motionSimDirectProbSpin = new QDoubleSpinBox(page);
+    m_motionSimDirectProbSpin = new QDoubleSpinBox(scrollContent);
     m_motionSimDirectProbSpin->setRange(0.0, 1.0);
     m_motionSimDirectProbSpin->setDecimals(2);
     m_motionSimDirectProbSpin->setSingleStep(0.01);
     m_motionSimDirectProbSpin->setValue(0.85);
-    m_motionSimDirectProbSpin->setToolTip(QStringLiteral("直接移动到目标的概率"));
     paramsLayout->addRow(QStringLiteral("直线移动概率:"), m_motionSimDirectProbSpin);
-    
-    m_motionSimOvershootProbSpin = new QDoubleSpinBox(page);
+    m_motionSimOvershootProbSpin = new QDoubleSpinBox(scrollContent);
     m_motionSimOvershootProbSpin->setRange(0.0, 1.0);
     m_motionSimOvershootProbSpin->setDecimals(2);
     m_motionSimOvershootProbSpin->setSingleStep(0.01);
     m_motionSimOvershootProbSpin->setValue(0.10);
-    m_motionSimOvershootProbSpin->setToolTip(QStringLiteral("过冲移动的概率"));
     paramsLayout->addRow(QStringLiteral("过冲概率:"), m_motionSimOvershootProbSpin);
-    
-    m_motionSimMicroOvshootProbSpin = new QDoubleSpinBox(page);
+    m_motionSimMicroOvshootProbSpin = new QDoubleSpinBox(scrollContent);
     m_motionSimMicroOvshootProbSpin->setRange(0.0, 1.0);
     m_motionSimMicroOvshootProbSpin->setDecimals(2);
     m_motionSimMicroOvshootProbSpin->setSingleStep(0.01);
     m_motionSimMicroOvshootProbSpin->setValue(0.05);
-    m_motionSimMicroOvshootProbSpin->setToolTip(QStringLiteral("微过冲移动的概率"));
     paramsLayout->addRow(QStringLiteral("微过冲概率:"), m_motionSimMicroOvshootProbSpin);
+    scrollLayout->addWidget(paramsGroup);
     
-    layout->addWidget(paramsGroup);
-    layout->addStretch();
-    
-    m_tabWidget->addTab(page, QStringLiteral("🎮 运动仿真"));
-}
-
-void YoloAimSettingsDialog::setupNeuralPathPage()
-{
-    QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
-    
-    // 启用开关
-    m_enableNeuralPathCheck = new QCheckBox(QStringLiteral("🧠 启用神经网络轨迹"), page);
+    // NeuralPath
+    m_enableNeuralPathCheck = new QCheckBox(QStringLiteral("🧠 启用神经网络轨迹"), scrollContent);
     m_enableNeuralPathCheck->setToolTip(QStringLiteral("启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹"));
-    layout->addWidget(m_enableNeuralPathCheck);
+    scrollLayout->addWidget(m_enableNeuralPathCheck);
     
-    // 说明文字
     QLabel* descLabel = new QLabel(QStringLiteral(
         "神经网络轨迹生成器使用预训练模型生成类人鼠标移动轨迹。\n"
         "相比贝塞尔曲线，神经网络生成的轨迹更自然、更难被检测。"
-    ), page);
+    ), scrollContent);
     descLabel->setWordWrap(true);
     descLabel->setStyleSheet(QStringLiteral("color: #a78bfa; padding: 10px; background: rgba(139, 92, 246, 0.1); border-radius: 5px;"));
-    layout->addWidget(descLabel);
+    scrollLayout->addWidget(descLabel);
     
-    // 参数设置组
-    QGroupBox* paramsGroup = new QGroupBox(QStringLiteral("📊 参数设置"), page);
-    QFormLayout* paramsLayout = new QFormLayout(paramsGroup);
-    
-    m_neuralPathPointsSpin = new QSpinBox(page);
+    QGroupBox* neuralParamsGroup = new QGroupBox(QStringLiteral("📊 神经轨迹参数"), scrollContent);
+    QFormLayout* neuralParamsLayout = new QFormLayout(neuralParamsGroup);
+    m_neuralPathPointsSpin = new QSpinBox(scrollContent);
     m_neuralPathPointsSpin->setRange(10, 100);
     m_neuralPathPointsSpin->setValue(25);
     m_neuralPathPointsSpin->setSuffix(QStringLiteral(" 点"));
-    m_neuralPathPointsSpin->setToolTip(QStringLiteral("轨迹点数量，越多越平滑但移动越慢"));
-    paramsLayout->addRow(QStringLiteral("轨迹点数量:"), m_neuralPathPointsSpin);
-    
-    m_neuralMouseStepSizeSpin = new QDoubleSpinBox(page);
+    neuralParamsLayout->addRow(QStringLiteral("轨迹点数量:"), m_neuralPathPointsSpin);
+    m_neuralMouseStepSizeSpin = new QDoubleSpinBox(scrollContent);
     m_neuralMouseStepSizeSpin->setRange(1.0, 20.0);
     m_neuralMouseStepSizeSpin->setDecimals(1);
     m_neuralMouseStepSizeSpin->setSingleStep(0.5);
     m_neuralMouseStepSizeSpin->setValue(4.0);
-    m_neuralMouseStepSizeSpin->setToolTip(QStringLiteral("每次移动的步长大小"));
-    paramsLayout->addRow(QStringLiteral("鼠标步长:"), m_neuralMouseStepSizeSpin);
-    
-    m_neuralTargetRadiusSpin = new QSpinBox(page);
+    neuralParamsLayout->addRow(QStringLiteral("鼠标步长:"), m_neuralMouseStepSizeSpin);
+    m_neuralTargetRadiusSpin = new QSpinBox(scrollContent);
     m_neuralTargetRadiusSpin->setRange(1, 50);
     m_neuralTargetRadiusSpin->setValue(8);
     m_neuralTargetRadiusSpin->setSuffix(QStringLiteral(" px"));
-    m_neuralTargetRadiusSpin->setToolTip(QStringLiteral("到达目标的判定半径"));
-    paramsLayout->addRow(QStringLiteral("目标半径:"), m_neuralTargetRadiusSpin);
-
-    m_neuralConsumePerFrameSpin = new QSpinBox(page);
+    neuralParamsLayout->addRow(QStringLiteral("目标半径:"), m_neuralTargetRadiusSpin);
+    m_neuralConsumePerFrameSpin = new QSpinBox(scrollContent);
     m_neuralConsumePerFrameSpin->setRange(1, 5);
     m_neuralConsumePerFrameSpin->setValue(2);
-    m_neuralConsumePerFrameSpin->setToolTip(QStringLiteral("每帧消费的路径点数量，越大移动越快但曲线越粗略（1=拟人,2=平衡,3+=快速）"));
-    paramsLayout->addRow(QStringLiteral("每帧消费点数:"), m_neuralConsumePerFrameSpin);
+    neuralParamsLayout->addRow(QStringLiteral("每帧消费点数:"), m_neuralConsumePerFrameSpin);
+    scrollLayout->addWidget(neuralParamsGroup);
     
-    layout->addWidget(paramsGroup);
-    
-    // 注意事项
     QLabel* noteLabel = new QLabel(QStringLiteral(
         "⚠️ 注意：神经网络轨迹与运动仿真模式互斥，启用其中一个会自动禁用另一个。"
-    ), page);
+    ), scrollContent);
     noteLabel->setWordWrap(true);
     noteLabel->setStyleSheet(QStringLiteral("color: #f59e0b; padding: 10px; background: rgba(245, 158, 11, 0.1); border-radius: 5px;"));
-    layout->addWidget(noteLabel);
+    scrollLayout->addWidget(noteLabel);
     
-    layout->addStretch();
+    scrollLayout->addStretch();
+    scrollArea->setWidget(scrollContent);
+    layout->addWidget(scrollArea);
     
-    m_tabWidget->addTab(page, QStringLiteral("🧠 神经轨迹"));
+    m_tabWidget->addTab(page, QStringLiteral("🎮 运动模拟"));
 }
 
 QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
@@ -1350,6 +1069,38 @@ QGroupBox* YoloAimSettingsDialog::createAutoTriggerGroup(int configIndex)
     m_configWidgets[configIndex].triggerMoveCompensationSpin = new QSpinBox(this);
     m_configWidgets[configIndex].triggerMoveCompensationSpin->setRange(0, 100);
     layout->addWidget(m_configWidgets[configIndex].triggerMoveCompensationSpin, row, 3);
+    row++;
+    
+    // 随机延迟
+    m_configWidgets[configIndex].enableTriggerDelayRandomCheck = new QCheckBox(QStringLiteral("启用随机延迟"), this);
+    layout->addWidget(m_configWidgets[configIndex].enableTriggerDelayRandomCheck, row, 0, 1, 4);
+    row++;
+    
+    layout->addWidget(new QLabel(QStringLiteral("延迟最小(ms):"), this), row, 0);
+    m_configWidgets[configIndex].triggerDelayRandomMinSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDelayRandomMinSpin->setRange(0, 1000);
+    layout->addWidget(m_configWidgets[configIndex].triggerDelayRandomMinSpin, row, 1);
+    
+    layout->addWidget(new QLabel(QStringLiteral("延迟最大(ms):"), this), row, 2);
+    m_configWidgets[configIndex].triggerDelayRandomMaxSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDelayRandomMaxSpin->setRange(0, 1000);
+    layout->addWidget(m_configWidgets[configIndex].triggerDelayRandomMaxSpin, row, 3);
+    row++;
+    
+    // 随机时长
+    m_configWidgets[configIndex].enableTriggerDurationRandomCheck = new QCheckBox(QStringLiteral("启用随机时长"), this);
+    layout->addWidget(m_configWidgets[configIndex].enableTriggerDurationRandomCheck, row, 0, 1, 4);
+    row++;
+    
+    layout->addWidget(new QLabel(QStringLiteral("时长最小(ms):"), this), row, 0);
+    m_configWidgets[configIndex].triggerDurationRandomMinSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDurationRandomMinSpin->setRange(0, 500);
+    layout->addWidget(m_configWidgets[configIndex].triggerDurationRandomMinSpin, row, 1);
+    
+    layout->addWidget(new QLabel(QStringLiteral("时长最大(ms):"), this), row, 2);
+    m_configWidgets[configIndex].triggerDurationRandomMaxSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDurationRandomMaxSpin->setRange(0, 500);
+    layout->addWidget(m_configWidgets[configIndex].triggerDurationRandomMaxSpin, row, 3);
     
     return group;
 }
@@ -1441,6 +1192,284 @@ QGroupBox* YoloAimSettingsDialog::createBezierGroup(int configIndex)
     return group;
 }
 
+QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
+{
+    QGroupBox* group = new QGroupBox(QStringLiteral("🎛️ 高级PID参数"), this);
+    QVBoxLayout* mainLayout = new QVBoxLayout(group);
+
+    // 基础PID参数
+    QGroupBox* basicPidGroup = new QGroupBox(QStringLiteral("📊 基础PID"), group);
+    QGridLayout* basicPidLayout = new QGridLayout(basicPidGroup);
+    int row = 0;
+
+    basicPidLayout->addWidget(new QLabel(QStringLiteral("P最小:"), group), row, 0);
+    m_configWidgets[configIndex].pMinSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pMinSpin->setRange(0.0, 2.0);
+    m_configWidgets[configIndex].pMinSpin->setDecimals(3);
+    m_configWidgets[configIndex].pMinSpin->setSingleStep(0.01);
+    basicPidLayout->addWidget(m_configWidgets[configIndex].pMinSpin, row, 1);
+
+    basicPidLayout->addWidget(new QLabel(QStringLiteral("P最大:"), group), row, 2);
+    m_configWidgets[configIndex].pMaxSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pMaxSpin->setRange(0.0, 5.0);
+    m_configWidgets[configIndex].pMaxSpin->setDecimals(3);
+    m_configWidgets[configIndex].pMaxSpin->setSingleStep(0.01);
+    basicPidLayout->addWidget(m_configWidgets[configIndex].pMaxSpin, row, 3);
+    row++;
+
+    basicPidLayout->addWidget(new QLabel(QStringLiteral("P斜率:"), group), row, 0);
+    m_configWidgets[configIndex].pSlopeSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pSlopeSpin->setRange(0.0, 10.0);
+    m_configWidgets[configIndex].pSlopeSpin->setDecimals(3);
+    m_configWidgets[configIndex].pSlopeSpin->setSingleStep(0.01);
+    basicPidLayout->addWidget(m_configWidgets[configIndex].pSlopeSpin, row, 1);
+
+    basicPidLayout->addWidget(new QLabel(QStringLiteral("D:"), group), row, 2);
+    m_configWidgets[configIndex].dSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].dSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].dSpin->setDecimals(4);
+    m_configWidgets[configIndex].dSpin->setSingleStep(0.001);
+    basicPidLayout->addWidget(m_configWidgets[configIndex].dSpin, row, 3);
+    row++;
+
+    basicPidLayout->addWidget(new QLabel(QStringLiteral("I:"), group), row, 0);
+    m_configWidgets[configIndex].iSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].iSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].iSpin->setDecimals(4);
+    m_configWidgets[configIndex].iSpin->setSingleStep(0.001);
+    basicPidLayout->addWidget(m_configWidgets[configIndex].iSpin, row, 1);
+
+    basicPidLayout->addWidget(new QLabel(QStringLiteral("D滤波α:"), group), row, 2);
+    m_configWidgets[configIndex].derivativeFilterAlphaSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].derivativeFilterAlphaSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].derivativeFilterAlphaSpin->setDecimals(3);
+    m_configWidgets[configIndex].derivativeFilterAlphaSpin->setSingleStep(0.01);
+    basicPidLayout->addWidget(m_configWidgets[configIndex].derivativeFilterAlphaSpin, row, 3);
+
+    mainLayout->addWidget(basicPidGroup);
+
+    // 高级PID系数
+    QGroupBox* advPidGroup = new QGroupBox(QStringLiteral("⚡ 高级PID系数"), group);
+    QGridLayout* advPidLayout = new QGridLayout(advPidGroup);
+    row = 0;
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("目标阈值:"), group), row, 0);
+    m_configWidgets[configIndex].advTargetThresholdSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advTargetThresholdSpin->setRange(0.0, 200.0);
+    m_configWidgets[configIndex].advTargetThresholdSpin->setDecimals(1);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advTargetThresholdSpin, row, 1);
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("最小系数:"), group), row, 2);
+    m_configWidgets[configIndex].advMinCoefficientSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advMinCoefficientSpin->setRange(0.0, 10.0);
+    m_configWidgets[configIndex].advMinCoefficientSpin->setDecimals(2);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advMinCoefficientSpin, row, 3);
+    row++;
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("最大系数:"), group), row, 0);
+    m_configWidgets[configIndex].advMaxCoefficientSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advMaxCoefficientSpin->setRange(0.0, 10.0);
+    m_configWidgets[configIndex].advMaxCoefficientSpin->setDecimals(2);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advMaxCoefficientSpin, row, 1);
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("过渡锐度:"), group), row, 2);
+    m_configWidgets[configIndex].advTransitionSharpnessSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advTransitionSharpnessSpin->setRange(0.0, 20.0);
+    m_configWidgets[configIndex].advTransitionSharpnessSpin->setDecimals(1);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advTransitionSharpnessSpin, row, 3);
+    row++;
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("过渡中点:"), group), row, 0);
+    m_configWidgets[configIndex].advTransitionMidpointSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advTransitionMidpointSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].advTransitionMidpointSpin->setDecimals(2);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advTransitionMidpointSpin, row, 1);
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("输出平滑:"), group), row, 2);
+    m_configWidgets[configIndex].advOutputSmoothingSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advOutputSmoothingSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].advOutputSmoothingSpin->setDecimals(2);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advOutputSmoothingSpin, row, 3);
+    row++;
+
+    advPidLayout->addWidget(new QLabel(QStringLiteral("速度因子:"), group), row, 0);
+    m_configWidgets[configIndex].advSpeedFactorSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advSpeedFactorSpin->setRange(0.0, 5.0);
+    m_configWidgets[configIndex].advSpeedFactorSpin->setDecimals(2);
+    advPidLayout->addWidget(m_configWidgets[configIndex].advSpeedFactorSpin, row, 1);
+
+    mainLayout->addWidget(advPidGroup);
+
+    // OneEuro滤波器
+    QGroupBox* oneEuroGroup = new QGroupBox(QStringLiteral("🔬 OneEuro滤波器"), group);
+    QGridLayout* oneEuroLayout = new QGridLayout(oneEuroGroup);
+    row = 0;
+
+    m_configWidgets[configIndex].useOneEuroFilterCheck = new QCheckBox(QStringLiteral("启用OneEuro滤波"), group);
+    oneEuroLayout->addWidget(m_configWidgets[configIndex].useOneEuroFilterCheck, row, 0, 1, 4);
+    row++;
+
+    oneEuroLayout->addWidget(new QLabel(QStringLiteral("最小截止:"), group), row, 0);
+    m_configWidgets[configIndex].oneEuroMinCutoffSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].oneEuroMinCutoffSpin->setRange(0.0, 10.0);
+    m_configWidgets[configIndex].oneEuroMinCutoffSpin->setDecimals(2);
+    oneEuroLayout->addWidget(m_configWidgets[configIndex].oneEuroMinCutoffSpin, row, 1);
+
+    oneEuroLayout->addWidget(new QLabel(QStringLiteral("Beta:"), group), row, 2);
+    m_configWidgets[configIndex].oneEuroBetaSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].oneEuroBetaSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].oneEuroBetaSpin->setDecimals(2);
+    oneEuroLayout->addWidget(m_configWidgets[configIndex].oneEuroBetaSpin, row, 3);
+    row++;
+
+    oneEuroLayout->addWidget(new QLabel(QStringLiteral("D截止:"), group), row, 0);
+    m_configWidgets[configIndex].oneEuroDCutoffSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].oneEuroDCutoffSpin->setRange(0.0, 10.0);
+    m_configWidgets[configIndex].oneEuroDCutoffSpin->setDecimals(2);
+    oneEuroLayout->addWidget(m_configWidgets[configIndex].oneEuroDCutoffSpin, row, 1);
+
+    mainLayout->addWidget(oneEuroGroup);
+
+    // 积分控制
+    QGroupBox* integralGroup = new QGroupBox(QStringLiteral("📐 积分控制"), group);
+    QGridLayout* integralLayout = new QGridLayout(integralGroup);
+    row = 0;
+
+    integralLayout->addWidget(new QLabel(QStringLiteral("积分限幅:"), group), row, 0);
+    m_configWidgets[configIndex].integralLimitSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].integralLimitSpin->setRange(0.0, 500.0);
+    m_configWidgets[configIndex].integralLimitSpin->setDecimals(1);
+    integralLayout->addWidget(m_configWidgets[configIndex].integralLimitSpin, row, 1);
+
+    integralLayout->addWidget(new QLabel(QStringLiteral("积分分离阈值:"), group), row, 2);
+    m_configWidgets[configIndex].integralSeparationThresholdSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].integralSeparationThresholdSpin->setRange(0.0, 200.0);
+    m_configWidgets[configIndex].integralSeparationThresholdSpin->setDecimals(1);
+    integralLayout->addWidget(m_configWidgets[configIndex].integralSeparationThresholdSpin, row, 3);
+    row++;
+
+    integralLayout->addWidget(new QLabel(QStringLiteral("积分死区:"), group), row, 0);
+    m_configWidgets[configIndex].integralDeadZoneSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].integralDeadZoneSpin->setRange(0.0, 50.0);
+    m_configWidgets[configIndex].integralDeadZoneSpin->setDecimals(1);
+    integralLayout->addWidget(m_configWidgets[configIndex].integralDeadZoneSpin, row, 1);
+
+    integralLayout->addWidget(new QLabel(QStringLiteral("积分速率:"), group), row, 2);
+    m_configWidgets[configIndex].integralRateSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].integralRateSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].integralRateSpin->setDecimals(4);
+    m_configWidgets[configIndex].integralRateSpin->setSingleStep(0.001);
+    integralLayout->addWidget(m_configWidgets[configIndex].integralRateSpin, row, 3);
+
+    mainLayout->addWidget(integralGroup);
+
+    // P增益爬坡
+    QGroupBox* rampGroup = new QGroupBox(QStringLiteral("📈 P增益爬坡"), group);
+    QGridLayout* rampLayout = new QGridLayout(rampGroup);
+    row = 0;
+
+    rampLayout->addWidget(new QLabel(QStringLiteral("初始缩放:"), group), row, 0);
+    m_configWidgets[configIndex].pGainRampInitialScaleSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pGainRampInitialScaleSpin->setRange(0.0, 1.0);
+    m_configWidgets[configIndex].pGainRampInitialScaleSpin->setDecimals(2);
+    rampLayout->addWidget(m_configWidgets[configIndex].pGainRampInitialScaleSpin, row, 1);
+
+    rampLayout->addWidget(new QLabel(QStringLiteral("爬坡时长(s):"), group), row, 2);
+    m_configWidgets[configIndex].pGainRampDurationSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pGainRampDurationSpin->setRange(0.0, 5.0);
+    m_configWidgets[configIndex].pGainRampDurationSpin->setDecimals(2);
+    rampLayout->addWidget(m_configWidgets[configIndex].pGainRampDurationSpin, row, 3);
+
+    mainLayout->addWidget(rampGroup);
+
+    return group;
+}
+
+void YoloAimSettingsDialog::initConfigWidgetStruct(int configIndex)
+{
+    auto& w = m_configWidgets[configIndex];
+    w.enabledCheck = nullptr;
+    w.hotkeyCombo = nullptr;
+    w.controllerTypeCombo = nullptr;
+    w.pMinSpin = nullptr;
+    w.pMaxSpin = nullptr;
+    w.pSlopeSpin = nullptr;
+    w.dSpin = nullptr;
+    w.iSpin = nullptr;
+    w.derivativeFilterAlphaSpin = nullptr;
+    w.advTargetThresholdSpin = nullptr;
+    w.advMinCoefficientSpin = nullptr;
+    w.advMaxCoefficientSpin = nullptr;
+    w.advTransitionSharpnessSpin = nullptr;
+    w.advTransitionMidpointSpin = nullptr;
+    w.advOutputSmoothingSpin = nullptr;
+    w.advSpeedFactorSpin = nullptr;
+    w.useOneEuroFilterCheck = nullptr;
+    w.oneEuroMinCutoffSpin = nullptr;
+    w.oneEuroBetaSpin = nullptr;
+    w.oneEuroDCutoffSpin = nullptr;
+    w.aimSmoothingXSpin = nullptr;
+    w.aimSmoothingYSpin = nullptr;
+    w.targetYOffsetSpin = nullptr;
+    w.maxPixelMoveSpin = nullptr;
+    w.deadZonePixelsSpin = nullptr;
+    w.screenOffsetXSpin = nullptr;
+    w.screenOffsetYSpin = nullptr;
+    w.screenWidthSpin = nullptr;
+    w.screenHeightSpin = nullptr;
+    w.enableYAxisUnlockCheck = nullptr;
+    w.yAxisUnlockDelaySpin = nullptr;
+    w.autoTriggerGroup = nullptr;
+    w.triggerRadiusSpin = nullptr;
+    w.triggerCooldownSpin = nullptr;
+    w.triggerFireDelaySpin = nullptr;
+    w.triggerFireDurationSpin = nullptr;
+    w.triggerIntervalSpin = nullptr;
+    w.enableTriggerDelayRandomCheck = nullptr;
+    w.triggerDelayRandomMinSpin = nullptr;
+    w.triggerDelayRandomMaxSpin = nullptr;
+    w.enableTriggerDurationRandomCheck = nullptr;
+    w.triggerDurationRandomMinSpin = nullptr;
+    w.triggerDurationRandomMaxSpin = nullptr;
+    w.triggerMoveCompensationSpin = nullptr;
+    w.recoilGroup = nullptr;
+    w.recoilStrengthSpin = nullptr;
+    w.recoilSpeedSpin = nullptr;
+    w.recoilPidGainScaleSpin = nullptr;
+    w.integralLimitSpin = nullptr;
+    w.integralSeparationThresholdSpin = nullptr;
+    w.integralDeadZoneSpin = nullptr;
+    w.integralRateSpin = nullptr;
+    w.pGainRampInitialScaleSpin = nullptr;
+    w.pGainRampDurationSpin = nullptr;
+    w.predictorGroup = nullptr;
+    w.predictionWeightXSpin = nullptr;
+    w.predictionWeightYSpin = nullptr;
+    w.maxPredictionTimeSpin = nullptr;
+    w.bezierGroup = nullptr;
+    w.bezierCurvatureSpin = nullptr;
+    w.bezierRandomnessSpin = nullptr;
+}
+
+void YoloAimSettingsDialog::initAllConfigWidgetStructs()
+{
+    for (int i = 0; i < 5; i++) {
+        initConfigWidgetStruct(i);
+        m_mouseConfigContainers[i] = nullptr;
+        m_trackingConfigContainers[i] = nullptr;
+    }
+}
+
+void YoloAimSettingsDialog::switchConfigVisibility()
+{
+    for (int i = 0; i < 5; i++) {
+        if (m_mouseConfigContainers[i])
+            m_mouseConfigContainers[i]->setVisible(i == m_currentConfig);
+        if (m_trackingConfigContainers[i])
+            m_trackingConfigContainers[i]->setVisible(i == m_currentConfig);
+    }
+}
+
 void YoloAimSettingsDialog::refreshSourceList()
 {
     m_sourceCombo->clear();
@@ -1467,18 +1496,6 @@ void YoloAimSettingsDialog::onSourceChanged(int index)
     
     if (!newSource.isEmpty()) {
         attachFilterToSource(newSource);
-        
-        obs_source_t* source = obs_get_source_by_name(newSource.toUtf8().constData());
-        if (source) {
-            m_previewDisplay->SetSource(source);
-            m_previewDisplay->show();
-            m_previewPlaceholder->hide();
-            obs_source_release(source);
-        }
-    } else {
-        m_previewDisplay->SetSource(nullptr);
-        m_previewDisplay->hide();
-        m_previewPlaceholder->show();
     }
     
     m_currentSource = newSource;
@@ -1487,8 +1504,13 @@ void YoloAimSettingsDialog::onSourceChanged(int index)
 
 void YoloAimSettingsDialog::onConfigChanged(int index)
 {
+    // 切换前先保存当前配置，避免丢失未保存的修改
+    if (index != m_currentConfig) {
+        saveSettings();
+    }
     m_currentConfig = index;
-    refreshConfigUI();
+    switchConfigVisibility();
+    loadSettings();
 }
 
 void YoloAimSettingsDialog::onPageChanged(int index)
@@ -1562,12 +1584,23 @@ void YoloAimSettingsDialog::loadSettings()
     if (w.advMaxCoefficientSpin) w.advMaxCoefficientSpin->setValue(obs_data_get_double(settings, QString("adv_max_coefficient_%1").arg(idx).toUtf8().constData()));
     if (w.advTransitionSharpnessSpin) w.advTransitionSharpnessSpin->setValue(obs_data_get_double(settings, QString("adv_transition_sharpness_%1").arg(idx).toUtf8().constData()));
     if (w.advTransitionMidpointSpin) w.advTransitionMidpointSpin->setValue(obs_data_get_double(settings, QString("adv_transition_midpoint_%1").arg(idx).toUtf8().constData()));
+    if (w.advOutputSmoothingSpin) w.advOutputSmoothingSpin->setValue(obs_data_get_double(settings, QString("adv_output_smoothing_%1").arg(idx).toUtf8().constData()));
     if (w.advSpeedFactorSpin) w.advSpeedFactorSpin->setValue(obs_data_get_double(settings, QString("adv_speed_factor_%1").arg(idx).toUtf8().constData()));
     
     if (w.useOneEuroFilterCheck) w.useOneEuroFilterCheck->setChecked(obs_data_get_bool(settings, QString("use_one_euro_filter_%1").arg(idx).toUtf8().constData()));
     if (w.oneEuroMinCutoffSpin) w.oneEuroMinCutoffSpin->setValue(obs_data_get_double(settings, QString("one_euro_min_cutoff_%1").arg(idx).toUtf8().constData()));
     if (w.oneEuroBetaSpin) w.oneEuroBetaSpin->setValue(obs_data_get_double(settings, QString("one_euro_beta_%1").arg(idx).toUtf8().constData()));
     if (w.oneEuroDCutoffSpin) w.oneEuroDCutoffSpin->setValue(obs_data_get_double(settings, QString("one_euro_d_cutoff_%1").arg(idx).toUtf8().constData()));
+    
+    // 积分控制
+    if (w.integralLimitSpin) w.integralLimitSpin->setValue(obs_data_get_double(settings, QString("integral_limit_%1").arg(idx).toUtf8().constData()));
+    if (w.integralSeparationThresholdSpin) w.integralSeparationThresholdSpin->setValue(obs_data_get_double(settings, QString("integral_separation_threshold_%1").arg(idx).toUtf8().constData()));
+    if (w.integralDeadZoneSpin) w.integralDeadZoneSpin->setValue(obs_data_get_double(settings, QString("integral_dead_zone_%1").arg(idx).toUtf8().constData()));
+    if (w.integralRateSpin) w.integralRateSpin->setValue(obs_data_get_double(settings, QString("integral_rate_%1").arg(idx).toUtf8().constData()));
+    
+    // P增益爬坡
+    if (w.pGainRampInitialScaleSpin) w.pGainRampInitialScaleSpin->setValue(obs_data_get_double(settings, QString("p_gain_ramp_initial_scale_%1").arg(idx).toUtf8().constData()));
+    if (w.pGainRampDurationSpin) w.pGainRampDurationSpin->setValue(obs_data_get_double(settings, QString("p_gain_ramp_duration_%1").arg(idx).toUtf8().constData()));
     
     if (w.aimSmoothingXSpin) w.aimSmoothingXSpin->setValue(obs_data_get_double(settings, QString("aim_smoothing_x_%1").arg(idx).toUtf8().constData()));
     if (w.aimSmoothingYSpin) w.aimSmoothingYSpin->setValue(obs_data_get_double(settings, QString("aim_smoothing_y_%1").arg(idx).toUtf8().constData()));
@@ -1590,6 +1623,16 @@ void YoloAimSettingsDialog::loadSettings()
     if (w.triggerFireDurationSpin) w.triggerFireDurationSpin->setValue(obs_data_get_int(settings, QString("trigger_fire_duration_%1").arg(idx).toUtf8().constData()));
     if (w.triggerIntervalSpin) w.triggerIntervalSpin->setValue(obs_data_get_int(settings, QString("trigger_interval_%1").arg(idx).toUtf8().constData()));
     if (w.triggerMoveCompensationSpin) w.triggerMoveCompensationSpin->setValue(obs_data_get_int(settings, QString("trigger_move_compensation_%1").arg(idx).toUtf8().constData()));
+    
+    // 随机触发延迟
+    if (w.enableTriggerDelayRandomCheck) w.enableTriggerDelayRandomCheck->setChecked(obs_data_get_bool(settings, QString("enable_trigger_delay_random_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerDelayRandomMinSpin) w.triggerDelayRandomMinSpin->setValue(obs_data_get_int(settings, QString("trigger_delay_random_min_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerDelayRandomMaxSpin) w.triggerDelayRandomMaxSpin->setValue(obs_data_get_int(settings, QString("trigger_delay_random_max_%1").arg(idx).toUtf8().constData()));
+    
+    // 随机触发持续时间
+    if (w.enableTriggerDurationRandomCheck) w.enableTriggerDurationRandomCheck->setChecked(obs_data_get_bool(settings, QString("enable_trigger_duration_random_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerDurationRandomMinSpin) w.triggerDurationRandomMinSpin->setValue(obs_data_get_int(settings, QString("trigger_duration_random_min_%1").arg(idx).toUtf8().constData()));
+    if (w.triggerDurationRandomMaxSpin) w.triggerDurationRandomMaxSpin->setValue(obs_data_get_int(settings, QString("trigger_duration_random_max_%1").arg(idx).toUtf8().constData()));
     
     if (w.recoilGroup) w.recoilGroup->setChecked(obs_data_get_bool(settings, QString("recoil_group_%1").arg(idx).toUtf8().constData()));
     if (w.recoilStrengthSpin) w.recoilStrengthSpin->setValue(obs_data_get_double(settings, QString("recoil_strength_%1").arg(idx).toUtf8().constData()));
@@ -1745,12 +1788,23 @@ void YoloAimSettingsDialog::saveSettings()
     if (w.advMaxCoefficientSpin) obs_data_set_double(settings, QString("adv_max_coefficient_%1").arg(idx).toUtf8().constData(), w.advMaxCoefficientSpin->value());
     if (w.advTransitionSharpnessSpin) obs_data_set_double(settings, QString("adv_transition_sharpness_%1").arg(idx).toUtf8().constData(), w.advTransitionSharpnessSpin->value());
     if (w.advTransitionMidpointSpin) obs_data_set_double(settings, QString("adv_transition_midpoint_%1").arg(idx).toUtf8().constData(), w.advTransitionMidpointSpin->value());
+    if (w.advOutputSmoothingSpin) obs_data_set_double(settings, QString("adv_output_smoothing_%1").arg(idx).toUtf8().constData(), w.advOutputSmoothingSpin->value());
     if (w.advSpeedFactorSpin) obs_data_set_double(settings, QString("adv_speed_factor_%1").arg(idx).toUtf8().constData(), w.advSpeedFactorSpin->value());
     
     if (w.useOneEuroFilterCheck) obs_data_set_bool(settings, QString("use_one_euro_filter_%1").arg(idx).toUtf8().constData(), w.useOneEuroFilterCheck->isChecked());
     if (w.oneEuroMinCutoffSpin) obs_data_set_double(settings, QString("one_euro_min_cutoff_%1").arg(idx).toUtf8().constData(), w.oneEuroMinCutoffSpin->value());
     if (w.oneEuroBetaSpin) obs_data_set_double(settings, QString("one_euro_beta_%1").arg(idx).toUtf8().constData(), w.oneEuroBetaSpin->value());
     if (w.oneEuroDCutoffSpin) obs_data_set_double(settings, QString("one_euro_d_cutoff_%1").arg(idx).toUtf8().constData(), w.oneEuroDCutoffSpin->value());
+    
+    // 积分控制
+    if (w.integralLimitSpin) obs_data_set_double(settings, QString("integral_limit_%1").arg(idx).toUtf8().constData(), w.integralLimitSpin->value());
+    if (w.integralSeparationThresholdSpin) obs_data_set_double(settings, QString("integral_separation_threshold_%1").arg(idx).toUtf8().constData(), w.integralSeparationThresholdSpin->value());
+    if (w.integralDeadZoneSpin) obs_data_set_double(settings, QString("integral_dead_zone_%1").arg(idx).toUtf8().constData(), w.integralDeadZoneSpin->value());
+    if (w.integralRateSpin) obs_data_set_double(settings, QString("integral_rate_%1").arg(idx).toUtf8().constData(), w.integralRateSpin->value());
+    
+    // P增益爬坡
+    if (w.pGainRampInitialScaleSpin) obs_data_set_double(settings, QString("p_gain_ramp_initial_scale_%1").arg(idx).toUtf8().constData(), w.pGainRampInitialScaleSpin->value());
+    if (w.pGainRampDurationSpin) obs_data_set_double(settings, QString("p_gain_ramp_duration_%1").arg(idx).toUtf8().constData(), w.pGainRampDurationSpin->value());
     
     if (w.aimSmoothingXSpin) obs_data_set_double(settings, QString("aim_smoothing_x_%1").arg(idx).toUtf8().constData(), w.aimSmoothingXSpin->value());
     if (w.aimSmoothingYSpin) obs_data_set_double(settings, QString("aim_smoothing_y_%1").arg(idx).toUtf8().constData(), w.aimSmoothingYSpin->value());
@@ -1773,6 +1827,16 @@ void YoloAimSettingsDialog::saveSettings()
     if (w.triggerFireDurationSpin) obs_data_set_int(settings, QString("trigger_fire_duration_%1").arg(idx).toUtf8().constData(), w.triggerFireDurationSpin->value());
     if (w.triggerIntervalSpin) obs_data_set_int(settings, QString("trigger_interval_%1").arg(idx).toUtf8().constData(), w.triggerIntervalSpin->value());
     if (w.triggerMoveCompensationSpin) obs_data_set_int(settings, QString("trigger_move_compensation_%1").arg(idx).toUtf8().constData(), w.triggerMoveCompensationSpin->value());
+    
+    // 随机触发延迟
+    if (w.enableTriggerDelayRandomCheck) obs_data_set_bool(settings, QString("enable_trigger_delay_random_%1").arg(idx).toUtf8().constData(), w.enableTriggerDelayRandomCheck->isChecked());
+    if (w.triggerDelayRandomMinSpin) obs_data_set_int(settings, QString("trigger_delay_random_min_%1").arg(idx).toUtf8().constData(), w.triggerDelayRandomMinSpin->value());
+    if (w.triggerDelayRandomMaxSpin) obs_data_set_int(settings, QString("trigger_delay_random_max_%1").arg(idx).toUtf8().constData(), w.triggerDelayRandomMaxSpin->value());
+    
+    // 随机触发持续时间
+    if (w.enableTriggerDurationRandomCheck) obs_data_set_bool(settings, QString("enable_trigger_duration_random_%1").arg(idx).toUtf8().constData(), w.enableTriggerDurationRandomCheck->isChecked());
+    if (w.triggerDurationRandomMinSpin) obs_data_set_int(settings, QString("trigger_duration_random_min_%1").arg(idx).toUtf8().constData(), w.triggerDurationRandomMinSpin->value());
+    if (w.triggerDurationRandomMaxSpin) obs_data_set_int(settings, QString("trigger_duration_random_max_%1").arg(idx).toUtf8().constData(), w.triggerDurationRandomMaxSpin->value());
     
     if (w.recoilGroup) obs_data_set_bool(settings, QString("recoil_group_%1").arg(idx).toUtf8().constData(), w.recoilGroup->isChecked());
     if (w.recoilStrengthSpin) obs_data_set_double(settings, QString("recoil_strength_%1").arg(idx).toUtf8().constData(), w.recoilStrengthSpin->value());

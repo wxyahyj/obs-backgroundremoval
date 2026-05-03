@@ -15,11 +15,8 @@
 #include <QSlider>
 #include <QGroupBox>
 #include <QScrollArea>
-#include <QSplitter>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
-
-class OBSQTDisplay;
 
 class YoloAimSettingsDialog : public QDialog
 {
@@ -45,17 +42,11 @@ private:
     YoloAimSettingsDialog& operator=(const YoloAimSettingsDialog&) = delete;
     
     void setupUI();
-    void setupModelPage();
-    void setupDetectionPage();
+    void setupModelDetectionPage();
     void setupVisualPage();
-    void setupBasicPage();
-    void setupAdvancedPIDPage();
-    void setupTriggerPage();
-    void setupTrackingPage();
-    void setupPredictorPage();
-    void setupBezierPage();
-    void setupMotionSimulatorPage();
-    void setupNeuralPathPage();
+    void setupMouseControlPage();
+    void setupTrackingPredictorPage();
+    void setupMotionSimPage();
     
     void loadSettings();
     void saveSettings();
@@ -70,18 +61,18 @@ private:
     static YoloAimSettingsDialog* dialogInstance;
     
     QWidget* createConfigWidget(int configIndex);
+    QGroupBox* createAdvancedPIDGroup(int configIndex);
     QGroupBox* createAutoTriggerGroup(int configIndex);
     QGroupBox* createRecoilGroup(int configIndex);
     QGroupBox* createPredictorGroup(int configIndex);
     QGroupBox* createBezierGroup(int configIndex);
     void initConfigWidgetStruct(int configIndex);
     void initAllConfigWidgetStructs();
+    void switchConfigVisibility();
     
     QComboBox* m_sourceCombo;
     QTabWidget* m_tabWidget;
     QComboBox* m_configSelect;
-    OBSQTDisplay* m_previewDisplay;
-    QLabel* m_previewPlaceholder;
     
     QCheckBox* m_showDetectionResultsCheck;
     QCheckBox* m_showFOVCheck;
@@ -172,6 +163,10 @@ private:
     
     int m_currentConfig;
     QString m_currentSource;
+    
+    // 每套配置的容器widget，用于切换可见性
+    QWidget* m_mouseConfigContainers[5];
+    QWidget* m_trackingConfigContainers[5];
     
     struct ConfigWidgets {
         QCheckBox* enabledCheck;
