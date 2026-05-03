@@ -13,11 +13,7 @@ enum class ControllerType {
 
 enum class AlgorithmType {
     AdvancedPID,      // 高级PID（当前使用的自适应PID）
-    StandardPID,      // 标准PID（经典PID）
-    ChrisPID,         // ChrisPID（克里斯控制器）
-    DynamicPID,       // 动态PID（动态阈值状态机）
-    AdaptivePID,      // 自适应PID（P_PID控制器）
-    IncrementalPID    // 增量式PID（MIST控制器）
+    DynamicPID        // 动态PID（动态阈值状态机）
 };
 
 // PID数据回调函数类型
@@ -143,20 +139,6 @@ struct MouseControllerConfig {
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
     float maxPredictionTime = 0.1f;        // 最大预测时间(秒)
-
-    // 标准PID参数（经典PID算法）
-    float stdKp = 0.3f;           // 比例系数
-    float stdKi = 0.01f;          // 积分系数
-    float stdKd = 0.005f;         // 微分系数
-    float stdOutputLimit = 50.0f; // 输出限幅
-    float stdDeadZone = 0.3f;     // 死区
-    float stdIntegralLimit = 100.0f;      // 积分限幅
-    float stdIntegralDeadzone = 1.0f;     // 积分死区
-    float stdIntegralThreshold = 50.0f;   // 积分分离阈值
-    float stdIntegralRate = 0.015f;       // 积分增益变化率
-    float stdDerivativeFilterAlpha = 0.2f; // 微分滤波系数（和高级PID一致）
-    float stdSmoothingX = 0.7f;   // 标准PID输出X轴平滑系数
-    float stdSmoothingY = 0.5f;   // 标准PID输出Y轴平滑系数
     
     // 持续自瞄和自动压枪配置
     bool continuousAimEnabled = false;
@@ -169,18 +151,6 @@ struct MouseControllerConfig {
     bool enableBezierMovement = false;
     float bezierCurvature = 0.3f;
     float bezierRandomness = 0.2f;
-    
-    // ChrisPID参数（完全复刻克里斯控制器）
-    float chrisKp = 0.45f;
-    float chrisKi = 0.02f;
-    float chrisKd = 0.04f;
-    float chrisPredWeightX = 0.5f;
-    float chrisPredWeightY = 0.1f;
-    float chrisInitScale = 0.6f;
-    float chrisRampTime = 0.5f;
-    float chrisOutputMax = 150.0f;
-    float chrisIMax = 100.0f;
-    float chrisDFilterAlpha = 0.3f;  // D项滤波系数
     
     // 动态PID参数（动态阈值状态机控制器）
     float dynamicKp = 0.5f;
@@ -196,61 +166,11 @@ struct MouseControllerConfig {
     float dynamicErrorTolerance = 3.0f;        // 误差变化容限
     float dynamicSmoothingFactor = 0.8f;       // 平滑因子
     
-    // AdaptivePID参数（自适应PID控制器 - P_PID）
-    float adaptiveBaseKp = 0.5f;               // 基础比例系数
-    float adaptiveBaseKi = 0.1f;               // 基础积分系数
-    float adaptiveBaseKd = 0.05f;              // 基础微分系数
-    float adaptiveIntegralThreshold = 5.0f;    // 积分增益调整阈值
-    float adaptiveKpThreshold = 5.0f;          // Kp增益调整阈值
-    float adaptiveIntegralRate = 0.1f;         // 积分增益变化速率
-    float adaptiveKpRate = 0.1f;               // Kp增益变化速率
-    float adaptiveLargeErrorRate = 0.1f;       // 大误差变化速率
-    float adaptiveMaxOutput = 1000.0f;         // 最大输出限幅
-    float adaptiveMaxIntegral = 1000.0f;       // 最大积分限幅
-    bool adaptiveUsePredictor = true;          // 是否启用预测器
-    float adaptivePredWeightX = 0.5f;          // X轴预测权重
-    float adaptivePredWeightY = 0.1f;          // Y轴预测权重
-    float adaptiveMaxPredTime = 0.1f;          // 最大预测时间
-    float adaptiveOutputSmoothing = 0.7f;      // 输出平滑系数
-    float adaptiveDerivativeFilterAlpha = 0.3f; // 微分滤波系数
-    
-    // IncrementalPID参数（增量式PID控制器 - MIST）
-    float incrementalKp = 0.5f;                 // 比例系数
-    float incrementalKi = 0.1f;                 // 积分系数
-    float incrementalKd = 0.05f;                // 微分系数
-    float incrementalSpeedX = 1.0f;             // X轴速度
-    float incrementalSpeedY = 1.0f;             // Y轴速度
-    int incrementalAimRadius = 200;             // 瞄准半径
-    bool incrementalJitterEnabled = false;      // 抖动开关
-    bool incrementalPidEnabled = true;          // PID开关（仅X轴）
-    bool incrementalSideCompEnabled = false;    // 侧向补偿开关
-    float incrementalSideCompCap = 5.0f;        // 侧向补偿上限
-    float incrementalSideCompDenom = 1.0f;      // 侧向补偿分母
-    float incrementalInputAlpha = 0.3f;         // 输入滤波系数
-    float incrementalDAlpha = 0.2f;             // D项滤波系数
-    float incrementalOutputAlpha = 0.4f;        // 输出滤波系数
-    
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重
     float trackingWeightCenter = 0.3f;    // 中心点距离权重
     float trackingWeightAspect = 0.15f;   // 宽高比距离权重
     float trackingWeightArea = 0.15f;     // 面积距离权重
-    
-    // MotionSimulator 人类行为模拟器配置
-    bool enableMotionSimulator = false;        // 是否启用人类行为模拟
-    bool motionSimRandomPos = true;            // 随机落点
-    bool motionSimOvershoot = true;            // 过冲
-    bool motionSimMicroOvershoot = true;       // 微过冲
-    bool motionSimInertia = true;              // 惯性停止
-    bool motionSimLeftBtnAdaptive = true;      // 左键自适应
-    bool motionSimSprayMode = true;            // 连射模式
-    bool motionSimTapPause = true;             // 点击暂停
-    bool motionSimRetry = true;                // 重试
-    int motionSimMaxRetry = 2;                 // 最大重试次数
-    int motionSimDelayMs = 80;                 // 目标延迟(毫秒)
-    float motionSimDirectProb = 0.85f;         // 直线移动概率
-    float motionSimOvershootProb = 0.10f;      // 过冲概率
-    float motionSimMicroOvshootProb = 0.05f;   // 微过冲概率
     
     // 神经网络轨迹生成器配置
     bool enableNeuralPath = false;             // 是否启用神经网络轨迹
@@ -260,11 +180,6 @@ struct MouseControllerConfig {
     int neuralConsumePerFrame = 2;             // 每帧消费路径点数（加速执行）
     bool enableNeuralPathDebug = false;        // 是否输出神经网络调试日志
 
-    // 目标稳定性检测配置
-    bool enableStabilityCheck = false;         // 是否启用稳定性检测
-    int stabilityRequiredFrames = 3;           // 需要连续稳定的帧数
-    float stabilityPositionThreshold = 5.0f;   // 位置稳定性阈值（像素）
-    float stabilitySizeThreshold = 0.1f;       // 尺寸稳定性阈值（相对变化）
 };
 
 class MouseControllerInterface {

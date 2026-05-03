@@ -63,8 +63,6 @@ AbstractMouseController::AbstractMouseController()
     , currentTargetScore(0.0f)
     , bezierPhase(0.0f)
     , pidDataCallback_(nullptr)
-    , enableMotionSimulator_(false)
-    , motionSimInitialized_(false)
     , enableNeuralPath_(false)
     , neuralPathInitialized_(false)
     , enableNeuralPathDebug_(false)
@@ -76,10 +74,6 @@ AbstractMouseController::AbstractMouseController()
     targetPos = { 0, 0 };
     cachedScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     cachedScreenHeight = GetSystemMetrics(SM_CYSCREEN);
-    
-    // 初始化 MotionSimulator
-    motionSimulator_.initializeImage(cachedScreenWidth, cachedScreenHeight);
-    motionSimulator_.setImageCenter(cachedScreenWidth / 2.0, cachedScreenHeight / 2.0);
 }
 
 void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfig)
@@ -98,78 +92,10 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     // 更新DerivativePredictor参数
     predictor.setMaxPredictionTime(config.maxPredictionTime);
     
-    // 更新MotionSimulator配置
-    enableMotionSimulator_ = config.enableMotionSimulator;
-    if (enableMotionSimulator_) {
-        motionSimulator_.configSwitches(
-            config.motionSimRandomPos,
-            config.motionSimOvershoot,
-            config.motionSimMicroOvershoot,
-            config.motionSimInertia,
-            config.motionSimLeftBtnAdaptive,
-            config.motionSimSprayMode,
-            config.motionSimTapPause,
-            config.motionSimRetry
-        );
-        motionSimulator_.configParams(
-            config.motionSimMaxRetry,
-            config.motionSimDelayMs,
-            config.motionSimDirectProb,
-            config.motionSimOvershootProb,
-            config.motionSimMicroOvshootProb
-        );
-    }
-    
     // 更新神经网络轨迹生成器配置
     enableNeuralPath_ = config.enableNeuralPath;
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
-    
-    // 更新稳定性检测器配置
-    stabilityAnalyzer_.setEnabled(config.enableStabilityCheck);
-    stabilityAnalyzer_.setConfig(
-        config.stabilityRequiredFrames,
-        config.stabilityPositionThreshold,
-        config.stabilitySizeThreshold
-    );
-    
-    // 更新AdaptivePID控制器配置
-    AdaptivePIDConfig adaptiveConfig;
-    adaptiveConfig.baseKp = config.adaptiveBaseKp;
-    adaptiveConfig.baseKi = config.adaptiveBaseKi;
-    adaptiveConfig.baseKd = config.adaptiveBaseKd;
-    adaptiveConfig.integralGainThreshold = config.adaptiveIntegralThreshold;
-    adaptiveConfig.kpGainThreshold = config.adaptiveKpThreshold;
-    adaptiveConfig.integralGainRate = config.adaptiveIntegralRate;
-    adaptiveConfig.kpGainRate = config.adaptiveKpRate;
-    adaptiveConfig.largeErrorRate = config.adaptiveLargeErrorRate;
-    adaptiveConfig.maxOutput = config.adaptiveMaxOutput;
-    adaptiveConfig.maxIntegral = config.adaptiveMaxIntegral;
-    adaptiveConfig.usePredictor = config.adaptiveUsePredictor;
-    adaptiveConfig.predWeightX = config.adaptivePredWeightX;
-    adaptiveConfig.predWeightY = config.adaptivePredWeightY;
-    adaptiveConfig.maxPredTime = config.adaptiveMaxPredTime;
-    adaptiveConfig.outputSmoothing = config.adaptiveOutputSmoothing;
-    adaptiveConfig.derivativeFilterAlpha = config.adaptiveDerivativeFilterAlpha;
-    adaptiveController_.setConfig(adaptiveConfig);
-    
-    // 更新IncrementalPID控制器配置
-    IncrementalPIDConfig incrementalConfig;
-    incrementalConfig.kp = config.incrementalKp;
-    incrementalConfig.ki = config.incrementalKi;
-    incrementalConfig.kd = config.incrementalKd;
-    incrementalConfig.speedX = config.incrementalSpeedX;
-    incrementalConfig.speedY = config.incrementalSpeedY;
-    incrementalConfig.aimRadius = config.incrementalAimRadius;
-    incrementalConfig.jitterEnabled = config.incrementalJitterEnabled;
-    incrementalConfig.pidEnabled = config.incrementalPidEnabled;
-    incrementalConfig.sideCompEnabled = config.incrementalSideCompEnabled;
-    incrementalConfig.sideCompCap = config.incrementalSideCompCap;
-    incrementalConfig.sideCompDenom = config.incrementalSideCompDenom;
-    incrementalConfig.inputAlpha = config.incrementalInputAlpha;
-    incrementalConfig.dAlpha = config.incrementalDAlpha;
-    incrementalConfig.outputAlpha = config.incrementalOutputAlpha;
-    incrementalController_.setConfig(incrementalConfig);
     
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
@@ -225,8 +151,6 @@ void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detec
     config.inferenceFrameHeight = frameHeight;
     config.cropOffsetX = cropX;
     config.cropOffsetY = cropY;
-    currentFrameWidth_ = frameWidth;
-    currentFrameHeight_ = frameHeight;
 }
 
 void AbstractMouseController::tick()
@@ -297,11 +221,9 @@ void AbstractMouseController::tick()
             // 目标丢失时只重置预测器，不重置积分项
             // 这样积分可以继续累积，PI控制才能真正发挥作用
             predictor.reset();
-            chrisController_.resetPredictor();
             resetMotionState();
         }
-        // 目标丢失时重置稳定性检测器
-        stabilityAnalyzer_.reset();
+        // 目标丢失时重置自动扳机
         if (autoTriggerHolding) {
             auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
             if (fireElapsed >= currentFireDuration) {
@@ -350,22 +272,6 @@ void AbstractMouseController::tick()
         obs_log(LOG_INFO, "[%s] NEURAL PATH STATUS: enabled=%d, initialized=%d, hasDetections=%zu",
                 getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0,
                 currentDetections.size());
-    }
-
-    // 稳定性检测：目标不稳定时跳过追踪
-    auto stabilityResult = stabilityAnalyzer_.analyze(target, config.inferenceFrameWidth, config.inferenceFrameHeight);
-    if (!stabilityResult.isStable) {
-        // 目标不稳定，使用平滑后的目标但降低响应
-        if (stabilityResult.stableFrameCount > 0 && enableNeuralPathDebug_) {
-            obs_log(LOG_INFO, "[%s] TARGET UNSTABLE: stableFrames=%d/%d, score=%.2f",
-                    getLogPrefix(), stabilityResult.stableFrameCount, 
-                    stabilityAnalyzer_.getRequiredStableFrames(),
-                    stabilityResult.stabilityScore);
-        }
-        // 使用平滑后的目标坐标
-        if (stabilityResult.stableFrameCount > 0) {
-            *target = stabilityResult.smoothedTarget;
-        }
     }
 
     float targetPixelX = target->centerX * config.inferenceFrameWidth;
@@ -458,44 +364,6 @@ void AbstractMouseController::tick()
             return;
         }
     }
-    
-    // MotionSimulator 人类行为模拟
-    if (enableMotionSimulator_) {
-        if (!motionSimInitialized_) {
-            motionSimulator_.initializeImage(config.inferenceFrameWidth, config.inferenceFrameHeight);
-            motionSimulator_.setImageCenter(fovCenterX, fovCenterY);
-            motionSimInitialized_ = true;
-        }
-        
-        bool leftBtnPressed = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-        
-        motionSimulator_.tick(
-            targetPixelX - targetPixelW / 2.0,
-            targetPixelY - targetPixelH / 2.0,
-            targetPixelW,
-            targetPixelH,
-            leftBtnPressed
-        );
-        
-        int dx = motionSimulator_.lastDx();
-        int dy = motionSimulator_.lastDy();
-        
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = targetPixelX - fovCenterX;
-            data.errorY = targetPixelY - fovCenterY;
-            data.outputX = static_cast<float>(dx);
-            data.outputY = static_cast<float>(dy);
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.algorithmType = 4; // MotionSimulator
-            data.isFiring = leftBtnPressed;
-            pidDataCallback_(data);
-        }
-        
-        moveMouse(dx, dy);
-        return;
-    }
 
     if (deltaTime > 0.001f) {
         targetVelocityX = (targetPixelX - previousTargetX) / deltaTime;
@@ -570,193 +438,7 @@ void AbstractMouseController::tick()
 
     float moveX, moveY;
 
-    if (config.algorithmType == AlgorithmType::StandardPID) {
-        float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
-        float fusionErrorX = errorX;
-        float fusionErrorY = errorY;
-        
-        if (config.useDerivativePredictor) {
-            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
-            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            fusionErrorX += config.predictionWeightX * derivPredictedX;
-            fusionErrorY += config.predictionWeightY * derivPredictedY;
-        }
-
-        float rawMoveX = calculateStandardPID(fusionErrorX, stdIntegralX, stdIntegralGainX, 
-                                      stdLastErrorX, stdFilteredDeltaErrorX, deltaTime);
-        float rawMoveY = calculateStandardPID(fusionErrorY, stdIntegralY, stdIntegralGainY, 
-                                      stdLastErrorY, stdFilteredDeltaErrorY, deltaTime);
-        
-        moveX = stdPreviousMoveX * (1.0f - config.stdSmoothingX) + rawMoveX * config.stdSmoothingX;
-        moveY = stdPreviousMoveY * (1.0f - config.stdSmoothingY) + rawMoveY * config.stdSmoothingY;
-        stdPreviousMoveX = moveX;
-        stdPreviousMoveY = moveY;
-        
-        static int stdLogCounter = 0;
-        if (++stdLogCounter >= 30) {
-            stdLogCounter = 0;
-            blog(LOG_INFO, "[%s标准PID] errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | rawMoveX=%.1f rawMoveY=%.1f | moveX=%.1f moveY=%.1f",
-                 getLogPrefix(), errorX, errorY, fusionErrorX, fusionErrorY, rawMoveX, rawMoveY, moveX, moveY);
-            if (config.useDerivativePredictor) {
-                blog(LOG_INFO, "[%s标准PID] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
-                     getLogPrefix(), derivPredictedX, derivPredictedY, config.predictionWeightX, config.predictionWeightY,
-                     config.predictionWeightX * derivPredictedX, config.predictionWeightY * derivPredictedY);
-            }
-        }
-        
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.stdKp;
-            data.currentKi = config.stdKi;
-            data.currentKd = config.stdKd;
-
-            // 标准PID分项
-            float pOutX = config.stdKp * fusionErrorX;
-            float pOutY = config.stdKp * fusionErrorY;
-            float iOutX = config.stdKi * stdIntegralX;
-            float iOutY = config.stdKi * stdIntegralY;
-
-            data.pTermX = pOutX;
-            data.pTermY = pOutY;
-            data.iTermX = iOutX;
-            data.iTermY = iOutY;
-            data.dTermX = rawMoveX - pOutX - iOutX; // D项 = 输出 - P - I（近似）
-            data.dTermY = rawMoveY - pOutY - iOutY;
-
-            // 积分状态
-            data.integralAbsX = std::abs(stdIntegralX);
-            data.integralAbsY = std::abs(stdIntegralY);
-            float iLimitStd = 100.0f; // 标准PID无显式限幅，用默认值
-            data.integralLimitX = iLimitStd;
-            data.integralLimitY = iLimitStd;
-            data.integralRatioX = std::min(1.0f, data.integralAbsX / iLimitStd);
-            data.integralRatioY = std::min(1.0f, data.integralAbsY / iLimitStd);
-
-            // 控制模式诊断
-            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
-            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
-            if (!hasTarget) {
-                data.controlMode = 0;
-            } else if (errDist < 5.0f) {
-                data.controlMode = 2; // LOCKED
-            } else {
-                data.controlMode = 1; // TRACKING
-            }
-
-            data.algorithmType = 1; // StandardPID
-            data.isFiring = isFiring;
-            data.smoothingFactorX = config.stdSmoothingX;
-            data.smoothingFactorY = config.stdSmoothingY;
-
-            pidDataCallback_(data);
-        }
-        
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = errorX;
-        previousErrorY = errorY;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-    } else if (config.algorithmType == AlgorithmType::ChrisPID) {
-        ChrisPIDConfig chrisConfig;
-        chrisConfig.kp = config.chrisKp;
-        chrisConfig.ki = config.chrisKi;
-        chrisConfig.kd = config.chrisKd;
-        chrisConfig.predWeightX = config.chrisPredWeightX;
-        chrisConfig.predWeightY = config.chrisPredWeightY;
-        chrisConfig.initScale = config.chrisInitScale;
-        chrisConfig.rampTime = config.chrisRampTime;
-        chrisConfig.outputMax = config.chrisOutputMax;
-        chrisConfig.iMax = config.chrisIMax;
-        chrisConfig.dFilterAlpha = config.chrisDFilterAlpha;
-        
-        chrisController_.setConfig(chrisConfig);
-        double currentTime = std::chrono::duration<double>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        chrisController_.update(errorX, errorY, currentTime, moveX, moveY);
-        
-        static int chrisLogCounter = 0;
-        if (++chrisLogCounter >= 30) {
-            chrisLogCounter = 0;
-            blog(LOG_INFO, "[ChrisPID] errorX=%.1f errorY=%.1f | moveX=%.1f moveY=%.1f | kp=%.2f",
-                 errorX, errorY, moveX, moveY, config.chrisKp);
-        }
-        
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.chrisKp * chrisController_.getCurrentScale();
-            data.currentKi = config.chrisKi;
-            data.currentKd = config.chrisKd;
-
-            // 从 ChrisPID 获取分项值
-            auto terms = chrisController_.getLastDebugTerms();
-            data.pTermX = terms.pTermX;
-            data.pTermY = terms.pTermY;
-            data.iTermX = terms.iTermX;
-            data.iTermY = terms.iTermY;
-            data.dTermX = terms.dTermX;
-            data.dTermY = terms.dTermY;
-
-            // 积分状态
-            float iLimitChris = (config.chrisIMax > 0.0f) ? config.chrisIMax : 100.0f;
-            data.integralAbsX = std::abs(terms.iTermX);
-            data.integralAbsY = std::abs(terms.iTermY);
-            data.integralLimitX = iLimitChris;
-            data.integralLimitY = iLimitChris;
-            data.integralRatioX = std::min(1.0f, data.integralAbsX / iLimitChris);
-            data.integralRatioY = std::min(1.0f, data.integralAbsY / iLimitChris);
-
-            // 控制模式诊断
-            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
-            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
-            float maxIRatio = std::max(data.integralRatioX, data.integralRatioY);
-            if (!hasTarget) {
-                data.controlMode = 0; // IDLE
-            } else if (maxIRatio > 0.8f) {
-                data.controlMode = 3; // I_SATURATION
-            } else if (errDist < 10.0f && maxIRatio < 0.4f) {
-                data.controlMode = 2; // LOCKED
-            } else {
-                data.controlMode = 1; // TRACKING
-            }
-
-            data.algorithmType = 2; // ChrisPID
-            data.isFiring = isFiring;
-
-            pidDataCallback_(data);
-        }
-        
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
-    } else if (config.algorithmType == AlgorithmType::AdvancedPID) {
+    if (config.algorithmType == AlgorithmType::AdvancedPID) {
         // 融合误差模式：P、I项基于融合误差，D项基于原始误差
         float fusionErrorX = errorX;
         float fusionErrorY = errorY;
@@ -953,156 +635,6 @@ void AbstractMouseController::tick()
         previousErrorX = errorX;
         previousErrorY = errorY;
         
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
-        stdLastErrorX = errorX;
-        stdLastErrorY = errorY;
-        stdFilteredDeltaErrorX = 0.0f;
-        stdFilteredDeltaErrorY = 0.0f;
-    }
-    else if (config.algorithmType == AlgorithmType::AdaptivePID) {
-        // AdaptivePID：自适应PID控制器（P_PID）
-        double currentTime = std::chrono::duration<double>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        float outX, outY;
-        adaptiveController_.update(errorX, errorY, currentTime, outX, outY);
-        moveX = outX;
-        moveY = outY;
-
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.adaptiveBaseKp;
-            data.currentKi = config.adaptiveBaseKi;
-            data.currentKd = config.adaptiveBaseKd;
-
-            auto debugTerms = adaptiveController_.getLastDebugTerms();
-            data.pTermX = debugTerms.pTermX;
-            data.pTermY = debugTerms.pTermY;
-            data.iTermX = debugTerms.iTermX;
-            data.iTermY = debugTerms.iTermY;
-            data.dTermX = debugTerms.dTermX;
-            data.dTermY = debugTerms.dTermY;
-
-            data.integralAbsX = std::abs(data.iTermX);
-            data.integralAbsY = std::abs(data.iTermY);
-            data.integralLimitX = config.adaptiveMaxIntegral;
-            data.integralLimitY = config.adaptiveMaxIntegral;
-            data.integralRatioX = std::min(1.0f, data.integralAbsX / config.adaptiveMaxIntegral);
-            data.integralRatioY = std::min(1.0f, data.integralAbsY / config.adaptiveMaxIntegral);
-
-            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
-            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
-            if (!hasTarget) {
-                data.controlMode = 0;
-            } else if (errDist < 10.0f) {
-                data.controlMode = 2;
-            } else {
-                data.controlMode = 1;
-            }
-
-            data.algorithmType = 4;
-            data.isFiring = isFiring;
-            data.smoothingFactorX = config.adaptiveOutputSmoothing;
-            data.smoothingFactorY = config.adaptiveOutputSmoothing;
-
-            pidDataCallback_(data);
-        }
-
-        // 重置其他算法状态
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-        integralGainX = 0.0f;
-        integralGainY = 0.0f;
-        stdIntegralX = 0.0f;
-        stdIntegralY = 0.0f;
-        stdIntegralGainX = 0.0f;
-        stdIntegralGainY = 0.0f;
-        stdLastErrorX = errorX;
-        stdLastErrorY = errorY;
-        stdFilteredDeltaErrorX = 0.0f;
-        stdFilteredDeltaErrorY = 0.0f;
-    }
-    else if (config.algorithmType == AlgorithmType::IncrementalPID) {
-        // IncrementalPID：增量式PID控制器（MIST）
-        float outX, outY;
-        incrementalController_.update(errorX, errorY, outX, outY);
-        moveX = outX;
-        moveY = outY;
-
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.incrementalKp;
-            data.currentKi = config.incrementalKi;
-            data.currentKd = config.incrementalKd;
-
-            auto debugTerms = incrementalController_.getLastDebugTerms();
-            data.pTermX = debugTerms.pTerm;
-            data.pTermY = 0;
-            data.iTermX = debugTerms.iTerm;
-            data.iTermY = 0;
-            data.dTermX = debugTerms.dTerm;
-            data.dTermY = 0;
-
-            data.integralAbsX = 0;
-            data.integralAbsY = 0;
-            data.integralLimitX = 0;
-            data.integralLimitY = 0;
-            data.integralRatioX = 0;
-            data.integralRatioY = 0;
-
-            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
-            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
-            if (!hasTarget) {
-                data.controlMode = 0;
-            } else if (errDist < 10.0f) {
-                data.controlMode = 2;
-            } else {
-                data.controlMode = 1;
-            }
-
-            data.algorithmType = 5;
-            data.isFiring = isFiring;
-            data.smoothingFactorX = 0;
-            data.smoothingFactorY = 0;
-
-            pidDataCallback_(data);
-        }
-
-        // 重置其他算法状态
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-        integralGainX = 0.0f;
-        integralGainY = 0.0f;
         stdIntegralX = 0.0f;
         stdIntegralY = 0.0f;
         stdIntegralGainX = 0.0f;
@@ -1508,60 +1040,6 @@ float AbstractMouseController::getCurrentPGain()
     float currentScale = config.pGainRampInitialScale + (1.0f - config.pGainRampInitialScale) * rampFactor;
     
     return currentScale;
-}
-
-float AbstractMouseController::calculateStandardPID(float error, float& integral, float& integralGain, 
-                                             float& lastError, float& filteredDeltaError, float deltaTime)
-{
-    UNUSED_PARAMETER(deltaTime);
-    
-    if (std::abs(error) < config.stdDeadZone) {
-        error = 0.0f;
-    }
-
-    float kp = config.stdKp * error;
-
-    if (adjustStandardIntegral(error, lastError, integralGain))
-    {
-        integral += error;
-        integral = std::clamp(integral, -config.stdIntegralLimit, config.stdIntegralLimit);
-    }
-    else
-    {
-        integral = 0;
-    }
-
-    float ki = (std::abs(integral) > config.stdIntegralDeadzone) ? config.stdKi * integral : 0;
-
-    float deltaError = error - lastError;
-    filteredDeltaError = config.stdDerivativeFilterAlpha * deltaError + 
-                         (1.0f - config.stdDerivativeFilterAlpha) * filteredDeltaError;
-    float kd = config.stdKd * filteredDeltaError;
-
-    float output = kp + ki + kd;
-
-    output = std::clamp(output, -config.stdOutputLimit, config.stdOutputLimit);
-
-    lastError = error;
-
-    return output;
-}
-
-bool AbstractMouseController::adjustStandardIntegral(float error, float lastError, float& integralGain)
-{
-    float errorDerivative = std::abs(error - lastError);
-
-    if (std::abs(error) < config.stdIntegralThreshold) {
-        float adaptRate = config.stdIntegralRate * (1.0f - errorDerivative / (config.stdIntegralThreshold * 2.0f));
-        adaptRate = (adaptRate < 0.0f) ? 0.0f : ((adaptRate > config.stdIntegralRate) ? config.stdIntegralRate : adaptRate);
-        integralGain = (integralGain + adaptRate > 1.0f) ? 1.0f : integralGain + adaptRate;
-    }
-    else {
-        float decay = 0.1f + 0.9f * std::tanh(std::abs(error) / (config.stdIntegralThreshold * 2.0f));
-        integralGain *= (1.0f - 0.05f * decay);
-    }
-    integralGain = (integralGain < 0.0f) ? 0.0f : ((integralGain > 1.0f) ? 1.0f : integralGain);
-    return integralGain > 0.01f;
 }
 
 void AbstractMouseController::resetPidState()

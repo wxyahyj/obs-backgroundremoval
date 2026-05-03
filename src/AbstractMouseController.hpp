@@ -12,14 +12,9 @@
 #include <string>
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
-#include "ChrisPIDController.hpp"
 #include "DynamicPIDController.hpp"
-#include "AdaptivePIDController.hpp"
-#include "IncrementalPIDController.hpp"
 #include "OneEuroFilter.hpp"
-#include "MotionSimulator.hpp"
 #include "curve.hpp"
-#include "TargetStabilityAnalyzer.hpp"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -59,17 +54,6 @@ protected:
     float integralGainX;
     float integralGainY;
     
-    float stdIntegralX;
-    float stdIntegralY;
-    float stdIntegralGainX;
-    float stdIntegralGainY;
-    float stdLastErrorX;
-    float stdLastErrorY;
-    float stdFilteredDeltaErrorX;
-    float stdFilteredDeltaErrorY;
-    float stdPreviousMoveX;
-    float stdPreviousMoveY;
-    
     bool advHasReachedX;
     bool advHasReachedY;
     int advStableCountX;
@@ -84,14 +68,8 @@ protected:
     
     DerivativePredictor predictor;
 
-    ChrisAimController chrisController_;
-
     DynamicPIDAxis dynamicPidX;  // 动态PID X轴控制器
     DynamicPIDAxis dynamicPidY;  // 动态PID Y轴控制器
-
-    AdaptiveAimController adaptiveController_;  // 自适应PID控制器
-
-    IncrementalPIDAdapter incrementalController_;  // 增量式PID控制器
 
     OneEuroFilter oneEuroX;  // 高级PID一欧元滤波器X轴
     OneEuroFilter oneEuroY;  // 高级PID一欧元滤波器Y轴
@@ -125,11 +103,6 @@ protected:
     
     PidDataCallback pidDataCallback_;
     
-    // MotionSimulator 人类行为模拟器
-    MotionSimulator motionSimulator_;
-    bool enableMotionSimulator_;
-    bool motionSimInitialized_;
-    
     // 神经网络轨迹生成器
     MMousePredictor neuralPathPredictor_;
     bool enableNeuralPath_;
@@ -139,11 +112,6 @@ protected:
     size_t neuralPathIndex_;
     float lastNeuralTargetX_;  // 上一个目标X坐标
     float lastNeuralTargetY_;  // 上一个目标Y坐标
-
-    // 目标稳定性分析器
-    TargetStabilityAnalyzer stabilityAnalyzer_;
-    int currentFrameWidth_ = 0;
-    int currentFrameHeight_ = 0;
 
     // 准星位置（瞄准起点），-1表示使用画面中心
     float aimOriginX_ = -1.0f;
@@ -161,9 +129,6 @@ protected:
     float calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor);
     float calculateIntegral(float error, float& integral, float& integralGain, float lastError, float deltaTime);
     bool adjustIntegralGain(float error, float lastError, float& integralGain);
-    float calculateStandardPID(float error, float& integral, float& integralGain, 
-                               float& lastError, float& filteredDeltaError, float deltaTime);
-    bool adjustStandardIntegral(float error, float lastError, float& integralGain);
     Detection* selectTarget();
     POINT convertToScreenCoordinates(const Detection& det);
     void resetPidState();

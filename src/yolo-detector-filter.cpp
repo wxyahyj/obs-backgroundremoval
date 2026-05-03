@@ -709,9 +709,7 @@ const char *yolo_detector_filter_getname(void *unused)
 
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
-static bool onMotionSimulatorChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
-static bool onStabilityCheckChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings);
 static void setConfigPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
 static void setBezierMovementPropertiesVisible(obs_properties_t *props, int configIndex, bool visible);
@@ -872,37 +870,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *showKalmanTrajectoriesProp = obs_properties_add_bool(props, "show_kalman_trajectories", "显示预测轨迹");
 	obs_property_set_long_description(showKalmanTrajectoriesProp, "在画面上显示卡尔曼滤波器预测的轨迹线（黄色）");
 
-	// MotionSimulator 人类行为模拟器设置
-	obs_property_t *enableMotionSimulatorProp = obs_properties_add_bool(props, "enable_motion_simulator", "启用人类行为模拟");
-	obs_property_set_long_description(enableMotionSimulatorProp, "启用人类行为模拟器，使鼠标移动更自然");
-	obs_property_set_modified_callback(enableMotionSimulatorProp, onMotionSimulatorChanged);
-	obs_property_t *motionSimRandomPosProp = obs_properties_add_bool(props, "motion_sim_random_pos", "随机落点");
-	obs_property_set_long_description(motionSimRandomPosProp, "在目标范围内随机选择落点");
-	obs_property_t *motionSimOvershootProp = obs_properties_add_bool(props, "motion_sim_overshoot", "过冲");
-	obs_property_set_long_description(motionSimOvershootProp, "模拟人类移动时的过冲行为");
-	obs_property_t *motionSimMicroOvershootProp = obs_properties_add_bool(props, "motion_sim_micro_overshoot", "微过冲");
-	obs_property_set_long_description(motionSimMicroOvershootProp, "模拟人类移动时的微小过冲");
-	obs_property_t *motionSimInertiaProp = obs_properties_add_bool(props, "motion_sim_inertia", "惯性停止");
-	obs_property_set_long_description(motionSimInertiaProp, "模拟人类移动时的惯性停止效果");
-	obs_property_t *motionSimLeftBtnAdaptiveProp = obs_properties_add_bool(props, "motion_sim_left_btn_adaptive", "左键自适应");
-	obs_property_set_long_description(motionSimLeftBtnAdaptiveProp, "根据左键状态调整移动行为");
-	obs_property_t *motionSimSprayModeProp = obs_properties_add_bool(props, "motion_sim_spray_mode", "连射模式");
-	obs_property_set_long_description(motionSimSprayModeProp, "启用连射模式下的特殊行为");
-	obs_property_t *motionSimTapPauseProp = obs_properties_add_bool(props, "motion_sim_tap_pause", "点击暂停");
-	obs_property_set_long_description(motionSimTapPauseProp, "点击时暂停移动");
-	obs_property_t *motionSimRetryProp = obs_properties_add_bool(props, "motion_sim_retry", "重试");
-	obs_property_set_long_description(motionSimRetryProp, "未命中时自动重试");
-	obs_property_t *motionSimMaxRetryProp = obs_properties_add_int_slider(props, "motion_sim_max_retry", "最大重试次数", 0, 5, 1);
-	obs_property_set_long_description(motionSimMaxRetryProp, "未命中时的最大重试次数");
-	obs_property_t *motionSimDelayMsProp = obs_properties_add_int_slider(props, "motion_sim_delay_ms", "目标延迟(ms)", 0, 500, 10);
-	obs_property_set_long_description(motionSimDelayMsProp, "目标延迟时间（毫秒）");
-	obs_property_t *motionSimDirectProbProp = obs_properties_add_float_slider(props, "motion_sim_direct_prob", "直线移动概率", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(motionSimDirectProbProp, "直接移动到目标的概率");
-	obs_property_t *motionSimOvershootProbProp = obs_properties_add_float_slider(props, "motion_sim_overshoot_prob", "过冲概率", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(motionSimOvershootProbProp, "过冲移动的概率");
-	obs_property_t *motionSimMicroOvshootProbProp = obs_properties_add_float_slider(props, "motion_sim_micro_ovshoot_prob", "微过冲概率", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(motionSimMicroOvshootProbProp, "微过冲移动的概率");
-
 	// 神经网络轨迹生成器设置
 	obs_property_t *enableNeuralPathProp = obs_properties_add_bool(props, "enable_neural_path", "启用神经网络轨迹");
 	obs_property_set_long_description(enableNeuralPathProp, "启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹");
@@ -917,17 +884,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(neuralConsumeProp, "每帧消费的路径点数量，越大移动越快但曲线越粗略（1=拟人,2=平衡,3+=快速）");
 	obs_property_t *enableNeuralPathDebugProp = obs_properties_add_bool(props, "enable_neural_path_debug", "神经网络调试日志");
 	obs_property_set_long_description(enableNeuralPathDebugProp, "开启后会输出详细的神经网络轨迹运行日志，用于调试");
-
-	// 稳定性检测设置
-	obs_property_t *enableStabilityProp = obs_properties_add_bool(props, "enable_stability_check", "启用稳定性检测");
-	obs_property_set_long_description(enableStabilityProp, "启用后只有目标稳定才会开始追踪，减少抖动");
-	obs_property_set_modified_callback(enableStabilityProp, onStabilityCheckChanged);
-	obs_property_t *stabilityFramesProp = obs_properties_add_int_slider(props, "stability_required_frames", "稳定帧数", 1, 10, 1);
-	obs_property_set_long_description(stabilityFramesProp, "需要连续多少帧目标位置稳定才开始追踪");
-	obs_property_t *stabilityPosThresholdProp = obs_properties_add_float_slider(props, "stability_position_threshold", "位置阈值(像素)", 1.0, 20.0, 0.5);
-	obs_property_set_long_description(stabilityPosThresholdProp, "目标位置变化小于此阈值才认为稳定");
-	obs_property_t *stabilitySizeThresholdProp = obs_properties_add_float_slider(props, "stability_size_threshold", "尺寸阈值", 0.01, 0.5, 0.01);
-	obs_property_set_long_description(stabilitySizeThresholdProp, "目标尺寸相对变化小于此阈值才认为稳定");
 
 #ifdef _WIN32
 	obs_property_t *configSelectList = obs_properties_add_list(props, "mouse_config_select", "配置选择", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1261,54 +1217,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机；AdaptivePID是P_PID自适应控制器；IncrementalPID是MIST增量式PID控制器");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
-	// 标准PID配置分组
-	obs_properties_add_group(props, "std_pid_group", "标准PID配置", OBS_GROUP_NORMAL, nullptr);
-	
-	// 标准PID参数
-	obs_property_t *stdKpProp = obs_properties_add_float_slider(props, "std_kp_global", "标准PID-Kp", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(stdKpProp, "标准PID的比例系数");
-	obs_property_t *stdKiProp = obs_properties_add_float_slider(props, "std_ki_global", "标准PID-Ki", 0.0, 1.0, 0.001);
-	obs_property_set_long_description(stdKiProp, "标准PID的积分系数");
-	obs_property_t *stdKdProp = obs_properties_add_float_slider(props, "std_kd_global", "标准PID-Kd", 0.0, 1.0, 0.001);
-	obs_property_set_long_description(stdKdProp, "标准PID的微分系数");
-	obs_property_t *stdOutputLimitProp = obs_properties_add_float_slider(props, "std_output_limit_global", "输出限幅", 1.0, 200.0, 1.0);
-	obs_property_set_long_description(stdOutputLimitProp, "PID输出的最大值限制");
-	obs_property_t *stdDeadZoneProp = obs_properties_add_float_slider(props, "std_dead_zone_global", "死区", 0.0, 10.0, 0.1);
-	obs_property_set_long_description(stdDeadZoneProp, "误差小于此值时不输出");
-	obs_property_t *stdIntegralLimitProp = obs_properties_add_float_slider(props, "std_integral_limit_global", "积分限幅", 0.0, 500.0, 10.0);
-	obs_property_set_long_description(stdIntegralLimitProp, "积分项的最大值限制");
-	obs_property_t *stdIntegralDeadzoneProp = obs_properties_add_float_slider(props, "std_integral_deadzone_global", "积分死区", 0.0, 50.0, 0.5);
-	obs_property_set_long_description(stdIntegralDeadzoneProp, "积分小于此值时不计入积分");
-	obs_property_t *stdIntegralThresholdProp = obs_properties_add_float_slider(props, "std_integral_threshold_global", "积分分离阈值", 0.0, 200.0, 1.0);
-	obs_property_set_long_description(stdIntegralThresholdProp, "误差超过此值时暂停积分");
-	obs_property_t *stdIntegralRateProp = obs_properties_add_float_slider(props, "std_integral_rate_global", "积分增益率", 0.0, 0.1, 0.001);
-	obs_property_set_long_description(stdIntegralRateProp, "积分增益的变化速率");
-	obs_property_t *stdDerivativeFilterProp = obs_properties_add_float_slider(props, "std_derivative_filter_alpha_global", "微分滤波系数", 0.01, 1.0, 0.01);
-	obs_property_set_long_description(stdDerivativeFilterProp, "标准PID微分项低通滤波系数，值越大响应越快，值越小越平滑但延迟");
-
-	// ChrisPID参数
-	obs_properties_add_group(props, "chris_pid_group", "ChrisPID配置", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *chrisKpProp = obs_properties_add_float_slider(props, "chris_kp", "ChrisPID-Kp", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(chrisKpProp, "ChrisPID比例系数");
-	obs_property_t *chrisKiProp = obs_properties_add_float_slider(props, "chris_ki", "ChrisPID-Ki", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(chrisKiProp, "ChrisPID积分系数");
-	obs_property_t *chrisKdProp = obs_properties_add_float_slider(props, "chris_kd", "ChrisPID-Kd", 0.0, 0.1, 0.001);
-	obs_property_set_long_description(chrisKdProp, "ChrisPID微分系数");
-	obs_property_t *chrisPredWeightXProp = obs_properties_add_float_slider(props, "chris_pred_weight_x", "X轴预测权重", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(chrisPredWeightXProp, "ChrisPID X轴预测权重");
-	obs_property_t *chrisPredWeightYProp = obs_properties_add_float_slider(props, "chris_pred_weight_y", "Y轴预测权重", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(chrisPredWeightYProp, "ChrisPID Y轴预测权重");
-	obs_property_t *chrisInitScaleProp = obs_properties_add_float_slider(props, "chris_init_scale", "P增益初始缩放", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(chrisInitScaleProp, "ChrisPID P增益初始缩放比例，用于P-Gain Ramp");
-	obs_property_t *chrisRampTimeProp = obs_properties_add_float_slider(props, "chris_ramp_time", "P增益爬坡时间", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(chrisRampTimeProp, "ChrisPID P增益从初始值爬升到1.0的时间（秒）");
-	obs_property_t *chrisOutputMaxProp = obs_properties_add_float_slider(props, "chris_output_max", "输出最大值", 0.0, 500.0, 1.0);
-	obs_property_set_long_description(chrisOutputMaxProp, "ChrisPID输出最大值限制");
-	obs_property_t *chrisIMaxProp = obs_properties_add_float_slider(props, "chris_i_max", "积分限幅", 0.0, 500.0, 1.0);
-	obs_property_set_long_description(chrisIMaxProp, "ChrisPID积分项限幅，防止积分饱和");
-	obs_property_t *chrisDFilterAlphaProp = obs_properties_add_float_slider(props, "chris_d_filter_alpha", "D项滤波系数", 0.1, 1.0, 0.05);
-	obs_property_set_long_description(chrisDFilterAlphaProp, "ChrisPID D项滤波系数，1.0=无滤波，0.1=强滤波");
-
 	obs_properties_add_group(props, "dynamic_pid_group", "动态PID配置", OBS_GROUP_NORMAL, nullptr);
 	obs_property_t *dynamicKpProp = obs_properties_add_float_slider(props, "dynamic_kp", "动态PID-Kp", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(dynamicKpProp, "动态PID比例系数");
@@ -1334,66 +1242,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(dynamicToleranceProp, "误差变化小于此值时认为稳定");
 	obs_property_t *dynamicSmoothingProp = obs_properties_add_float_slider(props, "dynamic_smoothing_factor", "输出平滑因子", 0.0, 1.0, 0.05);
 	obs_property_set_long_description(dynamicSmoothingProp, "输出EMA平滑系数，1.0=不平滑");
-
-	// AdaptivePID参数（自适应PID控制器 - P_PID）
-	obs_properties_add_group(props, "adaptive_pid_group", "AdaptivePID配置", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *adaptiveBaseKpProp = obs_properties_add_float_slider(props, "adaptive_base_kp", "基础Kp", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(adaptiveBaseKpProp, "AdaptivePID基础比例系数");
-	obs_property_t *adaptiveBaseKiProp = obs_properties_add_float_slider(props, "adaptive_base_ki", "基础Ki", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(adaptiveBaseKiProp, "AdaptivePID基础积分系数");
-	obs_property_t *adaptiveBaseKdProp = obs_properties_add_float_slider(props, "adaptive_base_kd", "基础Kd", 0.0, 0.5, 0.001);
-	obs_property_set_long_description(adaptiveBaseKdProp, "AdaptivePID基础微分系数");
-	obs_property_t *adaptiveIntegralThresholdProp = obs_properties_add_float_slider(props, "adaptive_integral_threshold", "积分增益阈值", 1.0, 50.0, 0.5);
-	obs_property_set_long_description(adaptiveIntegralThresholdProp, "积分增益调整阈值，误差小于此值时增大积分增益");
-	obs_property_t *adaptiveKpThresholdProp = obs_properties_add_float_slider(props, "adaptive_kp_threshold", "Kp增益阈值", 1.0, 50.0, 0.5);
-	obs_property_set_long_description(adaptiveKpThresholdProp, "Kp增益调整阈值，误差小于此值时增大Kp增益");
-	obs_property_t *adaptiveIntegralRateProp = obs_properties_add_float_slider(props, "adaptive_integral_rate", "积分增益变化率", 0.01, 1.0, 0.01);
-	obs_property_set_long_description(adaptiveIntegralRateProp, "积分增益的变化速率");
-	obs_property_t *adaptiveKpRateProp = obs_properties_add_float_slider(props, "adaptive_kp_rate", "Kp增益变化率", 0.01, 1.0, 0.01);
-	obs_property_set_long_description(adaptiveKpRateProp, "Kp增益的变化速率");
-	obs_property_t *adaptiveLargeErrorRateProp = obs_properties_add_float_slider(props, "adaptive_large_error_rate", "大误差变化率", 0.01, 1.0, 0.01);
-	obs_property_set_long_description(adaptiveLargeErrorRateProp, "大误差时增益衰减速率");
-	obs_property_t *adaptiveMaxOutputProp = obs_properties_add_float_slider(props, "adaptive_max_output", "最大输出", 100.0, 2000.0, 10.0);
-	obs_property_set_long_description(adaptiveMaxOutputProp, "输出最大值限制");
-	obs_property_t *adaptiveMaxIntegralProp = obs_properties_add_float_slider(props, "adaptive_max_integral", "最大积分", 100.0, 2000.0, 10.0);
-	obs_property_set_long_description(adaptiveMaxIntegralProp, "积分项最大值限制");
-	obs_property_t *adaptiveUsePredictorProp = obs_properties_add_bool(props, "adaptive_use_predictor", "启用预测器");
-	obs_property_set_long_description(adaptiveUsePredictorProp, "是否启用导数预测器");
-	obs_property_t *adaptivePredWeightXProp = obs_properties_add_float_slider(props, "adaptive_pred_weight_x", "X轴预测权重", 0.0, 2.0, 0.05);
-	obs_property_set_long_description(adaptivePredWeightXProp, "X轴预测融合权重");
-	obs_property_t *adaptivePredWeightYProp = obs_properties_add_float_slider(props, "adaptive_pred_weight_y", "Y轴预测权重", 0.0, 2.0, 0.05);
-	obs_property_set_long_description(adaptivePredWeightYProp, "Y轴预测融合权重");
-	obs_property_t *adaptiveMaxPredTimeProp = obs_properties_add_float_slider(props, "adaptive_max_pred_time", "最大预测时间", 0.01, 0.5, 0.01);
-	obs_property_set_long_description(adaptiveMaxPredTimeProp, "预测器最大预测时间（秒）");
-	obs_property_t *adaptiveOutputSmoothingProp = obs_properties_add_float_slider(props, "adaptive_output_smoothing", "输出平滑", 0.0, 1.0, 0.05);
-	obs_property_set_long_description(adaptiveOutputSmoothingProp, "输出EMA平滑系数，0=完全平滑，1=不平滑");
-	obs_property_t *adaptiveDerivativeFilterProp = obs_properties_add_float_slider(props, "adaptive_derivative_filter", "微分滤波系数", 0.0, 1.0, 0.05);
-	obs_property_set_long_description(adaptiveDerivativeFilterProp, "微分项低通滤波系数");
-
-	// IncrementalPID参数（增量式PID控制器 - MIST）
-	obs_properties_add_group(props, "incremental_pid_group", "IncrementalPID配置", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *incrementalKpProp = obs_properties_add_float_slider(props, "incremental_kp", "Kp", 0.0, 2.0, 0.01);
-	obs_property_set_long_description(incrementalKpProp, "比例系数，值越大响应越快，但可能震荡");
-	obs_property_t *incrementalKiProp = obs_properties_add_float_slider(props, "incremental_ki", "Ki", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(incrementalKiProp, "积分系数，消除稳态误差，值过大可能超调");
-	obs_property_t *incrementalKdProp = obs_properties_add_float_slider(props, "incremental_kd", "Kd", 0.0, 1.0, 0.01);
-	obs_property_set_long_description(incrementalKdProp, "微分系数，抑制震荡，值过大可能抖动");
-	obs_property_t *incrementalSpeedXProp = obs_properties_add_float_slider(props, "incremental_speed_x", "X轴速度", 0.0, 3.0, 0.05);
-	obs_property_set_long_description(incrementalSpeedXProp, "X轴移动速度倍率，1.0为原始速度");
-	obs_property_t *incrementalSpeedYProp = obs_properties_add_float_slider(props, "incremental_speed_y", "Y轴速度", 0.0, 3.0, 0.05);
-	obs_property_set_long_description(incrementalSpeedYProp, "Y轴移动速度倍率，1.0为原始速度");
-	obs_property_t *incrementalAimRadiusProp = obs_properties_add_int_slider(props, "incremental_aim_radius", "瞄准半径", 10, 500, 10);
-	obs_property_set_long_description(incrementalAimRadiusProp, "目标检测半径，超出此范围不跟踪");
-	obs_property_t *incrementalJitterProp = obs_properties_add_bool(props, "incremental_jitter", "启用抖动");
-	obs_property_set_long_description(incrementalJitterProp, "添加随机抖动增加自然感，模拟人类操作");
-	obs_property_t *incrementalPidEnabledProp = obs_properties_add_bool(props, "incremental_pid_enabled", "启用PID（仅X轴）");
-	obs_property_set_long_description(incrementalPidEnabledProp, "仅X轴使用PID处理，Y轴直接移动");
-	obs_property_t *incrementalSideCompProp = obs_properties_add_bool(props, "incremental_side_comp", "启用侧向补偿");
-	obs_property_set_long_description(incrementalSideCompProp, "检测连续同向移动并补偿，防止漂移");
-	obs_property_t *incrementalSideCompCapProp = obs_properties_add_float_slider(props, "incremental_side_comp_cap", "侧向补偿上限", 0.0, 20.0, 0.5);
-	obs_property_set_long_description(incrementalSideCompCapProp, "侧向补偿最大值，限制补偿幅度");
-	obs_property_t *incrementalSideCompDenomProp = obs_properties_add_float_slider(props, "incremental_side_comp_denom", "侧向补偿分母", 0.1, 10.0, 0.1);
-	obs_property_set_long_description(incrementalSideCompDenomProp, "侧向补偿计算分母，值越小补偿越强");
 
 	// ========== 页面7: 准星检测 ==========
 #ifdef _WIN32
@@ -1717,27 +1565,6 @@ static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *prop
 	return true;
 }
 
-static bool onMotionSimulatorChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
-{
-	bool useMotionSim = obs_data_get_bool(settings, "enable_motion_simulator");
-	
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_random_pos"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_overshoot"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_inertia"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_left_btn_adaptive"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_spray_mode"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_tap_pause"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_retry"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_max_retry"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_delay_ms"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_direct_prob"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot_prob"), useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_ovshoot_prob"), useMotionSim);
-	
-	return true;
-}
-
 static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
@@ -1746,17 +1573,6 @@ static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *propert
 	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), useNeuralPath);
-	
-	return true;
-}
-
-static bool onStabilityCheckChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
-{
-	bool useStability = obs_data_get_bool(settings, "enable_stability_check");
-	
-	obs_property_set_visible(obs_properties_get(props, "stability_required_frames"), useStability);
-	obs_property_set_visible(obs_properties_get(props, "stability_position_threshold"), useStability);
-	obs_property_set_visible(obs_properties_get(props, "stability_size_threshold"), useStability);
 	
 	return true;
 }
@@ -1857,23 +1673,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_frames"), page == 5 && useKalman);
 	obs_property_set_visible(obs_properties_get(props, "show_kalman_trajectories"), page == 5 && useKalman);
 	
-	// MotionSimulator 人类行为模拟器设置（页面5）
-	bool useMotionSim = obs_data_get_bool(settings, "enable_motion_simulator");
-	obs_property_set_visible(obs_properties_get(props, "enable_motion_simulator"), page == 5);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_random_pos"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_overshoot"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_inertia"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_left_btn_adaptive"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_spray_mode"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_tap_pause"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_retry"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_max_retry"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_delay_ms"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_direct_prob"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_overshoot_prob"), page == 5 && useMotionSim);
-	obs_property_set_visible(obs_properties_get(props, "motion_sim_micro_ovshoot_prob"), page == 5 && useMotionSim);
-	
 	// 神经网络轨迹生成器设置（页面5）
 	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
 	obs_property_set_visible(obs_properties_get(props, "enable_neural_path"), page == 5);
@@ -1881,13 +1680,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), page == 5 && useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), page == 5 && useNeuralPath);
 	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), page == 5 && useNeuralPath);
-	
-	// 稳定性检测设置（页面5）
-	bool useStability = obs_data_get_bool(settings, "enable_stability_check");
-	obs_property_set_visible(obs_properties_get(props, "enable_stability_check"), page == 5);
-	obs_property_set_visible(obs_properties_get(props, "stability_required_frames"), page == 5 && useStability);
-	obs_property_set_visible(obs_properties_get(props, "stability_position_threshold"), page == 5 && useStability);
-	obs_property_set_visible(obs_properties_get(props, "stability_size_threshold"), page == 5 && useStability);
 	
 	// 多指标融合追踪权重（页面5）
 	obs_property_set_visible(obs_properties_get(props, "tracking_weight_iou"), page == 5);
@@ -1915,82 +1707,20 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 算法选择（在页面3始终显示）
 	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 3);
 	
-	// 标准PID参数组（选择1时显示）
-	obs_property_set_visible(obs_properties_get(props, "std_pid_group"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_kp_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_ki_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_kd_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_output_limit_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_dead_zone_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_limit_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_deadzone_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_threshold_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_integral_rate_global"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "std_derivative_filter_alpha_global"), page == 3 && algorithm == 1);
-
-	// ChrisPID参数组（选择2时显示）
-	obs_property_set_visible(obs_properties_get(props, "chris_pid_group"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_kp"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_ki"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_kd"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_pred_weight_x"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_pred_weight_y"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_init_scale"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_ramp_time"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_output_max"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_i_max"), page == 3 && algorithm == 2);
-	obs_property_set_visible(obs_properties_get(props, "chris_d_filter_alpha"), page == 3 && algorithm == 2);
-
-	// 动态PID参数组（选择3时显示）
-	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_speed_multiplier"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_min_coefficient"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_max_coefficient"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_sharpness"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_midpoint"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_min_data_points"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_error_tolerance"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_smoothing_factor"), page == 3 && algorithm == 3);
-
-	// AdaptivePID参数组（选择4时显示）
-	obs_property_set_visible(obs_properties_get(props, "adaptive_pid_group"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_base_kp"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_base_ki"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_base_kd"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_integral_threshold"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_kp_threshold"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_integral_rate"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_kp_rate"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_large_error_rate"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_max_output"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_max_integral"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_use_predictor"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_pred_weight_x"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_pred_weight_y"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_max_pred_time"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_output_smoothing"), page == 3 && algorithm == 4);
-	obs_property_set_visible(obs_properties_get(props, "adaptive_derivative_filter"), page == 3 && algorithm == 4);
-
-	// IncrementalPID参数组（选择5时显示）
-	obs_property_set_visible(obs_properties_get(props, "incremental_pid_group"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_kp"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_ki"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_kd"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_speed_x"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_speed_y"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_aim_radius"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_jitter"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_pid_enabled"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp_cap"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_side_comp_denom"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_input_alpha"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_d_alpha"), page == 3 && algorithm == 5);
-	obs_property_set_visible(obs_properties_get(props, "incremental_output_alpha"), page == 3 && algorithm == 5);
+	// 动态PID参数组（选择1时显示，因为现在只有两种算法：AdvancedPID=0, DynamicPID=1）
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_speed_multiplier"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_min_coefficient"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_max_coefficient"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_sharpness"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_midpoint"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_min_data_points"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_error_tolerance"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_smoothing_factor"), page == 3 && algorithm == 1);
 
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
