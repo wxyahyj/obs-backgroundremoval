@@ -9,6 +9,14 @@
 #include <vector>
 #include "models/Detection.h"
 
+// 准心形状类型
+enum class CrosshairShapeType {
+	Any = 0,        // 任意形状（不过滤）
+	Cross = 1,      // 十字形（+字准心）
+	Dot = 2,        // 点状（圆点准心）
+	TShape = 3      // T字形
+};
+
 // 准星检测器配置
 struct CrosshairDetectorConfig {
 	bool enabled = false;
@@ -51,6 +59,14 @@ struct CrosshairDetectorConfig {
 	int maxArea = 5000;          // 最大白色像素数 (像素)
 	int detectEveryNFrames = 1;  // 检测帧间隔 (1-60)
 	int searchRadius = 0;        // 搜索半径（像素，0=自动1/6帧宽，仅搜索准星附近区域）
+
+	// 轮廓形状过滤
+	bool shapeFilterEnabled = false;    // 是否启用形状过滤
+	CrosshairShapeType shapeType = CrosshairShapeType::Any;  // 形状类型
+	float minFillRatio = 0.05f;         // 最小填充率（轮廓面积/boundingRect面积）
+	float maxFillRatio = 0.8f;          // 最大填充率
+	float minAspectRatio = 0.3f;        // 最小纵横比（宽/高）
+	float maxAspectRatio = 3.0f;        // 最大纵横比
 
 	// 可视化
 	bool colorIsolationView = false;  // 颜色隔离视图（黑底只显示匹配颜色+检测框）
@@ -115,6 +131,16 @@ private:
 
 	// 子矩阵分位数过滤：将二值图划分为网格，低于阈值的子区域清零
 	void filterBySubMatrixQuantile(cv::Mat& binaryMask, int rows, int cols, float threshold);
+
+	// 轮廓形状过滤：检查mask是否符合指定形状特征
+	// 返回是否通过过滤，同时输出形状特征信息
+	bool filterByShape(const cv::Mat& mask, 
+	                   float& outFillRatio, 
+	                   float& outAspectRatio,
+	                   bool& outHasCrossPoint);
+
+	// 检测十字形特征：在mask中寻找交叉点
+	bool detectCrossShape(const cv::Mat& mask);
 
 	// 模板匹配精确定位：在候选区域内做matchTemplate
 	// 返回是否精确定位成功，如果成功则更新centerX/centerY和confidence

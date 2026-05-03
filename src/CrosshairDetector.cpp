@@ -277,6 +277,9 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	lastMaskRoiX_ = roiX; lastMaskRoiY_ = roiY;
 	lastMaskRoiW_ = roiW; lastMaskRoiH_ = roiH;
 
+	// 统计原始mask白色像素数（用于诊断）
+	int originalWhitePixels = cv::countNonZero(mask);
+
 	// ========== 第3步：形态学过滤 ==========
 	if (config_.erodeIterations > 0 && config_.morphKernelSize > 0) {
 		cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
@@ -306,7 +309,10 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	// 准心是细线条，dilate后仍可能分裂成多个小碎片，用轮廓面积过滤不可靠
 	// 改用mask质心：直接计算所有白色像素的加权中心点，更稳定
 	cv::Moments m = cv::moments(mask, true);
-	if (m.m00 <= 0) return results; // mask中没有白色像素
+	if (m.m00 <= 0) {
+		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 形态学处理后mask无白色像素 (原始mask有%d个白色像素)", originalWhitePixels);
+		return results; // mask中没有白色像素
+	}
 
 	// 质心坐标（ROI坐标系）
 	float cx = static_cast<float>(m.m10 / m.m00);
@@ -316,7 +322,21 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	double totalArea = m.m00;
 
 	// 可选面积过滤：太少可能是噪点，太多可能匹配了整个背景
-	if (totalArea < config_.minArea || totalArea > config_.maxArea) return results;
+	if (totalArea < config_.minArea || totalArea > config_.maxArea) {
+		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 面积过滤 totalArea=%.0f, minArea=%d, maxArea=%d (原始mask有%d个白色像素)",
+		        totalArea, config_.minArea, config_.maxArea, originalWhitePixels);
+		return results;
+	}
+
+	// ========== 第6步：轮廓形状过滤 ==========
+	if (config_.shapeFilterEnabled && config_.shapeType != CrosshairShapeType::Any) {
+		float fillRatio, aspectRatio;
+		bool hasCrossPoint;
+		if (!filterByShape(mask, fillRatio, aspectRatio, hasCrossPoint)) {
+			// 形状过滤失败，日志已在filterByShape中输出
+			return results;
+		}
+	}
 
 	// 转换到全帧坐标系
 	cx += roiX;
@@ -471,6 +491,151 @@ bool CrosshairDetector::refineByTemplateMatch(const cv::Mat& bgrFrame,
 	outConfidence = bestConfidence;
 
 	return true;
+}
+
+bool CrosshairDetector::filterByShape(const cv::Mat& mask, 
+                                       float& outFillRatio, 
+                                       float& outAspectRatio,
+                                       bool& outHasCrossPoint)
+{
+	if (mask.empty()) return false;
+
+	// 找到所有轮廓
+	std::vector<std::vector<cv::Point>> contours;
+	cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+	if (contours.empty()) {
+		obs_log(LOG_INFO, "[CrosshairDetector] 形状过滤失败: 无轮廓");
+		return false;
+	}
+
+	// 找到最大轮廓（准心主体）
+	int maxIdx = -1;
+	double maxArea = 0;
+	for (int i = 0; i < static_cast<int>(contours.size()); ++i) {
+		double area = cv::contourArea(contours[i]);
+		if (area > maxArea) {
+			maxArea = area;
+			maxIdx = i;
+		}
+	}
+
+	if (maxIdx < 0) {
+		obs_log(LOG_INFO, "[CrosshairDetector] 形状过滤失败: 无有效轮廓");
+		return false;
+	}
+
+	// 计算boundingRect
+	cv::Rect bbox = cv::boundingRect(contours[maxIdx]);
+	
+	// 计算填充率 = 轮廓面积 / boundingRect面积
+	double bboxArea = bbox.width * bbox.height;
+	outFillRatio = static_cast<float>(maxArea / bboxArea);
+
+	// 计算纵横比 = 宽 / 高
+	outAspectRatio = static_cast<float>(bbox.width) / std::max(1, bbox.height);
+
+	// 检测十字形特征
+	outHasCrossPoint = detectCrossShape(mask);
+
+	// 根据形状类型进行过滤
+	bool passed = true;
+	std::string rejectReason;
+
+	if (config_.shapeType == CrosshairShapeType::Cross) {
+		// 十字形准心：填充率低（线条细），纵横比接近1，有交叉点
+		if (outFillRatio > config_.maxFillRatio) {
+			passed = false;
+			rejectReason = "填充率过高(非十字形)";
+		}
+		if (outAspectRatio < config_.minAspectRatio || outAspectRatio > config_.maxAspectRatio) {
+			passed = false;
+			rejectReason = "纵横比不符合";
+		}
+		if (!outHasCrossPoint) {
+			passed = false;
+			rejectReason = "无十字交叉点";
+		}
+	}
+	else if (config_.shapeType == CrosshairShapeType::Dot) {
+		// 点状准心：填充率高（接近圆形），纵横比接近1，无交叉点
+		if (outFillRatio < config_.minFillRatio) {
+			passed = false;
+			rejectReason = "填充率过低(非点状)";
+		}
+		if (outAspectRatio < config_.minAspectRatio || outAspectRatio > config_.maxAspectRatio) {
+			passed = false;
+			rejectReason = "纵横比不符合";
+		}
+		// 点状不需要交叉点，反而有交叉点可能不是点状
+	}
+	else if (config_.shapeType == CrosshairShapeType::TShape) {
+		// T字形：填充率低，纵横比接近1，有交叉点但不完全对称
+		if (outFillRatio > config_.maxFillRatio) {
+			passed = false;
+			rejectReason = "填充率过高(非T字形)";
+		}
+		if (outAspectRatio < config_.minAspectRatio || outAspectRatio > config_.maxAspectRatio) {
+			passed = false;
+			rejectReason = "纵横比不符合";
+		}
+	}
+	// Any类型不做额外过滤
+
+	if (!passed) {
+		obs_log(LOG_INFO, "[CrosshairDetector] 形状过滤失败: %s (填充率=%.2f, 纵横比=%.2f, 交叉点=%d)",
+		        rejectReason.c_str(), outFillRatio, outAspectRatio, outHasCrossPoint ? 1 : 0);
+	}
+
+	return passed;
+}
+
+bool CrosshairDetector::detectCrossShape(const cv::Mat& mask)
+{
+	// 十字形检测方法：在mask中心区域检测是否有交叉点
+	// 方法：对mask进行细化（骨架化），然后检测交叉点
+
+	if (mask.empty()) return false;
+
+	// 复制mask，避免修改原始数据
+	cv::Mat maskCopy = mask.clone();
+
+	// 使用形态学骨架化
+	cv::Mat skel(mask.size(), CV_8UC1, cv::Scalar(0));
+	cv::Mat temp;
+	cv::Mat eroded;
+	
+	cv::Mat element = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3));
+	
+	bool done = false;
+	int iterations = 0;
+	const int maxIterations = 20;  // 防止无限循环
+
+	do {
+		cv::erode(maskCopy, eroded, element);
+		cv::dilate(eroded, temp, element);
+		cv::subtract(maskCopy, temp, temp);
+		cv::bitwise_or(skel, temp, skel);
+		eroded.copyTo(maskCopy);
+		
+		done = (cv::countNonZero(eroded) == 0);
+		iterations++;
+	} while (!done && iterations < maxIterations);
+
+	// 在骨架图中检测交叉点
+	// 交叉点特征：周围有多个方向的骨架线
+	cv::Mat crossKernel = (cv::Mat_<uchar>(3, 3) << 
+		0, 1, 0,
+		1, 1, 1,
+		0, 1, 0);
+	
+	cv::Mat hitResult;
+	cv::morphologyEx(skel, hitResult, cv::MORPH_HITMISS, crossKernel);
+	
+	int crossPoints = cv::countNonZero(hitResult);
+	
+	// 如果有交叉点，返回true
+	return crossPoints > 0;
 }
 
 #endif // _WIN32

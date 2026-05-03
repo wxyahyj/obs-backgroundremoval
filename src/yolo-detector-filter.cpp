@@ -1519,6 +1519,25 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(chMinAreaProp, "检测候选区域的最小像素面积");
 	obs_property_t *chMaxAreaProp = obs_properties_add_int_slider(props, "crosshair_max_area", "最大面积", 1, 50000, 100);
 	obs_property_set_long_description(chMaxAreaProp, "检测候选区域的最大像素面积");
+
+	// 轮廓形状过滤
+	obs_property_t *chShapeFilterProp = obs_properties_add_bool(props, "crosshair_shape_filter_enabled", "启用形状过滤");
+	obs_property_set_long_description(chShapeFilterProp, "根据轮廓形状特征过滤，提高准心识别准确度");
+	obs_property_t *chShapeTypeProp = obs_properties_add_list(props, "crosshair_shape_type", "准心形状", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(chShapeTypeProp, "任意形状", 0);
+	obs_property_list_add_int(chShapeTypeProp, "十字形 (+字)", 1);
+	obs_property_list_add_int(chShapeTypeProp, "点状 (圆点)", 2);
+	obs_property_list_add_int(chShapeTypeProp, "T字形", 3);
+	obs_property_set_long_description(chShapeTypeProp, "选择准心形状类型，CS:GO选十字形，三角洲选点状");
+	obs_property_t *chMinFillRatioProp = obs_properties_add_float_slider(props, "crosshair_min_fill_ratio", "最小填充率", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(chMinFillRatioProp, "轮廓面积/包围盒面积的最小值，点状准心建议0.3以上");
+	obs_property_t *chMaxFillRatioProp = obs_properties_add_float_slider(props, "crosshair_max_fill_ratio", "最大填充率", 0.0, 1.0, 0.05);
+	obs_property_set_long_description(chMaxFillRatioProp, "轮廓面积/包围盒面积的最大值，十字准心建议0.5以下");
+	obs_property_t *chMinAspectProp = obs_properties_add_float_slider(props, "crosshair_min_aspect_ratio", "最小纵横比", 0.1, 5.0, 0.1);
+	obs_property_set_long_description(chMinAspectProp, "宽/高的最小值，十字和点状建议0.5以上");
+	obs_property_t *chMaxAspectProp = obs_properties_add_float_slider(props, "crosshair_max_aspect_ratio", "最大纵横比", 0.1, 5.0, 0.1);
+	obs_property_set_long_description(chMaxAspectProp, "宽/高的最大值，十字和点状建议2.0以下");
+
 	obs_property_t *chSearchRadiusProp = obs_properties_add_int_slider(props, "crosshair_search_radius", "搜索半径", 0, 960, 10);
 	obs_property_set_long_description(chSearchRadiusProp, "准星搜索范围半径（像素，0=自动1/6帧宽），越小越快但可能漏检偏移大的准星");
 	obs_property_t *chDetectIntervalProp = obs_properties_add_int_slider(props, "crosshair_detect_interval", "检测帧间隔", 1, 60, 1);
@@ -2005,6 +2024,12 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "crosshair_match_threshold"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_min_area"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_max_area"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_shape_filter_enabled"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_shape_type"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_min_fill_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_max_fill_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_min_aspect_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_max_aspect_ratio"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_detect_interval"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_search_radius"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_color_isolation"), page == 7);
@@ -2385,6 +2410,12 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "crosshair_match_threshold", 0.6);
     obs_data_set_default_int(settings, "crosshair_min_area", 10);
     obs_data_set_default_int(settings, "crosshair_max_area", 5000);
+    obs_data_set_default_bool(settings, "crosshair_shape_filter_enabled", false);
+    obs_data_set_default_int(settings, "crosshair_shape_type", 0);
+    obs_data_set_default_double(settings, "crosshair_min_fill_ratio", 0.05);
+    obs_data_set_default_double(settings, "crosshair_max_fill_ratio", 0.8);
+    obs_data_set_default_double(settings, "crosshair_min_aspect_ratio", 0.3);
+    obs_data_set_default_double(settings, "crosshair_max_aspect_ratio", 3.0);
     obs_data_set_default_int(settings, "crosshair_detect_interval", 1);
     obs_data_set_default_int(settings, "crosshair_search_radius", 0);
     obs_data_set_default_bool(settings, "crosshair_color_isolation", false);
@@ -2938,6 +2969,12 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		chCfg.matchThreshold = (float)obs_data_get_double(settings, "crosshair_match_threshold");
 		chCfg.minArea = (int)obs_data_get_int(settings, "crosshair_min_area");
 		chCfg.maxArea = (int)obs_data_get_int(settings, "crosshair_max_area");
+		chCfg.shapeFilterEnabled = obs_data_get_bool(settings, "crosshair_shape_filter_enabled");
+		chCfg.shapeType = static_cast<CrosshairShapeType>(obs_data_get_int(settings, "crosshair_shape_type"));
+		chCfg.minFillRatio = (float)obs_data_get_double(settings, "crosshair_min_fill_ratio");
+		chCfg.maxFillRatio = (float)obs_data_get_double(settings, "crosshair_max_fill_ratio");
+		chCfg.minAspectRatio = (float)obs_data_get_double(settings, "crosshair_min_aspect_ratio");
+		chCfg.maxAspectRatio = (float)obs_data_get_double(settings, "crosshair_max_aspect_ratio");
 		chCfg.detectEveryNFrames = (int)obs_data_get_int(settings, "crosshair_detect_interval");
 		chCfg.searchRadius = (int)obs_data_get_int(settings, "crosshair_search_radius");
 		chCfg.colorIsolationView = obs_data_get_bool(settings, "crosshair_color_isolation");

@@ -1313,6 +1313,12 @@ Detection* AbstractMouseController::selectTarget()
     int fovCenterY = frameHeight / 2;
     float fovRadius = static_cast<float>(config.fovRadiusPixels);
 
+    // 准星位置优先：如果有准星检测结果，用准星位置作为目标选择中心
+    if (aimOriginX_ >= 0.0f && aimOriginY_ >= 0.0f) {
+        fovCenterX = static_cast<int>(aimOriginX_);
+        fovCenterY = static_cast<int>(aimOriginY_);
+    }
+
     // 计算所有在FOV内的目标分数
     Detection* bestTarget = nullptr;
     float bestScore = -1.0f;
