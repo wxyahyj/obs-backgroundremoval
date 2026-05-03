@@ -21,7 +21,6 @@
       "name": "opencv4",
       "default-features": false,
       "features": [
-        "imgcodecs",
         "jpeg",
         "png",
         "tiff",
