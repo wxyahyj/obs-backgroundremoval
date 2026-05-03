@@ -56,6 +56,7 @@ if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
 
   add_library(OpenCV::opencv_core ALIAS opencv_core)
   add_library(OpenCV::opencv_imgproc ALIAS opencv_imgproc)
+  add_library(OpenCV::opencv_imgcodecs ALIAS opencv_imgcodecs)
 elseif(USE_PKGCONFIG)
   # Use pkg-config to find dependencies (Arch Linux, etc.)
 
@@ -81,6 +82,9 @@ elseif(USE_PKGCONFIG)
   add_library(OpenCV::opencv_imgproc INTERFACE IMPORTED)
   target_link_libraries(OpenCV::opencv_imgproc INTERFACE opencv_imgproc)
   target_link_directories(OpenCV::opencv_imgproc INTERFACE ${PC_OPENCV_LIBRARY_DIRS})
+  add_library(OpenCV::opencv_imgcodecs INTERFACE IMPORTED)
+  target_link_libraries(OpenCV::opencv_imgcodecs INTERFACE opencv_imgcodecs)
+  target_link_directories(OpenCV::opencv_imgcodecs INTERFACE ${PC_OPENCV_LIBRARY_DIRS})
   
   # nlohmann_json (header-only, try find_package first)
   find_package(nlohmann_json CONFIG QUIET)
@@ -207,7 +211,7 @@ else()
   endif()
 endif()
 
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc nlohmann_json::nlohmann_json Eigen3::Eigen)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc OpenCV::opencv_imgcodecs nlohmann_json::nlohmann_json Eigen3::Eigen)
 
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)
