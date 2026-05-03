@@ -4980,6 +4980,11 @@ static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frame
 void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Filter created");
+#ifdef USE_TENSORRT_YOLO
+	obs_log(LOG_INFO, "[YOLO Detector] TensorRT-YOLO backend: ENABLED (compiled)");
+#else
+	obs_log(LOG_INFO, "[YOLO Detector] TensorRT-YOLO backend: DISABLED (not compiled)");
+#endif
 	try {
 		// Create the instance as a shared_ptr
 		auto instance = std::make_shared<yolo_detector_filter>();
