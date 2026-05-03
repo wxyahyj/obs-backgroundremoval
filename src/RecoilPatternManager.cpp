@@ -1,7 +1,6 @@
 #ifdef _WIN32
 
 #include "RecoilPatternManager.hpp"
-#include "LogitechMacroConverter.hpp"
 #include <obs-module.h>
 #include <plugin-support.h>
 #include <fstream>
@@ -16,99 +15,6 @@ RecoilPatternManager& RecoilPatternManager::getInstance()
 {
     static RecoilPatternManager instance;
     return instance;
-}
-
-bool RecoilPatternManager::importFromLogitechMacro(const std::string& filePath, const std::string& weaponName)
-{
-    ParsedMacro macro;
-    if (!LogitechMacroConverter::parseFile(filePath, macro)) {
-        return false;
-    }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    RecoilPattern pattern;
-    pattern.weaponName = weaponName;
-    pattern.totalDurationMs = 0;
-    pattern.totalMoveX = 0;
-    pattern.totalMoveY = 0;
-    
-    int currentDelay = 0;
-    
-    for (const auto& event : macro.events) {
-        if (event.type == MacroEvent::MouseMove) {
-            RecoilMove move;
-            move.dx = event.dx;
-            move.dy = event.dy;
-            move.delayMs = currentDelay > 0 ? currentDelay : 1;
-            pattern.moves.push_back(move);
-            
-            pattern.totalMoveX += event.dx;
-            pattern.totalMoveY += event.dy;
-            pattern.totalDurationMs += move.delayMs;
-            currentDelay = 0;
-        }
-        else if (event.type == MacroEvent::Delay) {
-            currentDelay += event.delayMs;
-        }
-    }
-    
-    if (pattern.moves.empty()) {
-        return false;
-    }
-    
-    patterns_[weaponName] = pattern;
-    
-    saveToFile(getConfigFilePath());
-    
-    obs_log(LOG_INFO, "[RecoilPatternManager] Imported pattern '%s': %zu moves, total move (%d, %d), duration %dms",
-            weaponName.c_str(), pattern.moves.size(), 
-            pattern.totalMoveX, pattern.totalMoveY, pattern.totalDurationMs);
-    
-    return true;
-}
-
-bool RecoilPatternManager::importFromString(const std::string& xmlContent, const std::string& weaponName)
-{
-    ParsedMacro macro;
-    if (!LogitechMacroConverter::parseString(xmlContent, macro)) {
-        return false;
-    }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    RecoilPattern pattern;
-    pattern.weaponName = weaponName;
-    pattern.totalDurationMs = 0;
-    pattern.totalMoveX = 0;
-    pattern.totalMoveY = 0;
-    
-    int currentDelay = 0;
-    
-    for (const auto& event : macro.events) {
-        if (event.type == MacroEvent::MouseMove) {
-            RecoilMove move;
-            move.dx = event.dx;
-            move.dy = event.dy;
-            move.delayMs = currentDelay > 0 ? currentDelay : 1;
-            pattern.moves.push_back(move);
-            
-            pattern.totalMoveX += event.dx;
-            pattern.totalMoveY += event.dy;
-            pattern.totalDurationMs += move.delayMs;
-            currentDelay = 0;
-        }
-        else if (event.type == MacroEvent::Delay) {
-            currentDelay += event.delayMs;
-        }
-    }
-    
-    if (pattern.moves.empty()) {
-        return false;
-    }
-    
-    patterns_[weaponName] = pattern;
-    return true;
 }
 
 bool RecoilPatternManager::hasPattern(const std::string& weaponName) const

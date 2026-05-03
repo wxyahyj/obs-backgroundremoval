@@ -32,8 +32,6 @@ class RecoilPatternManager {
 public:
     static RecoilPatternManager& getInstance();
     
-    bool importFromLogitechMacro(const std::string& filePath, const std::string& weaponName);
-    bool importFromString(const std::string& xmlContent, const std::string& weaponName);
     bool hasPattern(const std::string& weaponName) const;
     const RecoilPattern* getPattern(const std::string& weaponName) const;
     std::vector<std::string> getWeaponNames() const;

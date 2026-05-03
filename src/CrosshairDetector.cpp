@@ -360,13 +360,13 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 		cand.score += areaScore;
 
 		// 2. 距离理想中心的评分
-		float distToIdeal = std::sqrt(std::pow(cand.cx - idealCenterX, 2) + std::pow(cand.cy - idealCenterY, 2));
+		float distToIdeal = static_cast<float>(std::sqrt(std::pow(cand.cx - idealCenterX, 2) + std::pow(cand.cy - idealCenterY, 2)));
 		float distScore = std::max(0.0f, 100.0f - distToIdeal / 3.0f);
 		cand.score += distScore;
 
 		// 3. 如果有前一帧结果，距离前一帧位置的评分（权重最高）
 		if (hasLastDetection_) {
-			float distToLast = std::sqrt(std::pow(cand.cx - lastCenterX, 2) + std::pow(cand.cy - lastCenterY, 2));
+			float distToLast = static_cast<float>(std::sqrt(std::pow(cand.cx - lastCenterX, 2) + std::pow(cand.cy - lastCenterY, 2)));
 			float lastPosScore = std::max(0.0f, 200.0f - distToLast / 2.0f);
 			cand.score += lastPosScore;
 		}
