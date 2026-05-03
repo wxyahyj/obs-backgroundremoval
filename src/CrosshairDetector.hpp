@@ -35,20 +35,20 @@ struct CrosshairDetectorConfig {
 	// 形态学参数
 	int morphKernelSize = 3;     // 核大小 (1-15)
 	int erodeIterations = 0;     // 腐蚀迭代 (0-5)，准星细小建议0
-	int dilateIterations = 1;    // 膨胀迭代 (0-10)，轻微膨胀连接断裂线条
+	int dilateIterations = 3;    // 膨胀迭代 (0-10)，准心线条细需要多次膨胀连接断裂线条
 
-	// 子矩阵分位数过滤
-	int gridRows = 4;            // 网格行数 (2-20)，准星细小时用更粗网格
+	// 子矩阵分位数过滤（准心场景下通常禁用，quantileThreshold=0表示不过滤）
+	int gridRows = 4;            // 网格行数 (2-20)
 	int gridCols = 4;            // 网格列数 (2-20)
-	float quantileThreshold = 0.01f; // 分位数阈值 (0.0-1.0)，准星稀疏时设低
+	float quantileThreshold = 0.0f; // 分位数阈值 (0.0-1.0)，0=不过滤，准心太稀疏必须禁用
 
 	// 模板匹配
 	float matchThreshold = 0.6f; // 匹配阈值 (0.0-1.0)
 	std::string templateImagePath; // 模板图片路径
 
 	// 通用参数
-	int minArea = 10;            // 最小面积 (像素)
-	int maxArea = 5000;          // 最大面积 (像素)
+	int minArea = 2;             // 最小白色像素数 (像素)，质心定位不怕碎片，2就够了
+	int maxArea = 5000;          // 最大白色像素数 (像素)
 	int detectEveryNFrames = 1;  // 检测帧间隔 (1-60)
 	int searchRadius = 0;        // 搜索半径（像素，0=自动1/6帧宽，仅搜索准星附近区域）
 

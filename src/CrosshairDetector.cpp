@@ -61,48 +61,71 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 	px = std::max(0, std::min(bgrFrame.cols - 1, px));
 	py = std::max(0, std::min(bgrFrame.rows - 1, py));
 
-	// 采样策略：准星通常很细（1-2像素），3x3均值会被背景色严重稀释
-	// 改为：在5x5区域内找饱和度最高的像素（准星颜色通常高饱和度）
-	int r = 2;
-	int x0 = std::max(0, px - r), x1 = std::min(bgrFrame.cols, px + r + 1);
-	int y0 = std::max(0, py - r), y1 = std::min(bgrFrame.rows, py + r + 1);
+	// 采样策略：准星设计就是为了在背景上醒目，所以准星像素 = 与局部背景差异最大的像素
+	// 第一步：采样9x9区域，计算局部均值（被背景主导，准星只占1-2像素）
+	// 第二步：在中心3x3（准星实际所在位置）找与背景差异最大的像素
+	int outerR = 4; // 9x9背景采样区
+	int x0 = std::max(0, px - outerR), x1 = std::min(bgrFrame.cols, px + outerR + 1);
+	int y0 = std::max(0, py - outerR), y1 = std::min(bgrFrame.rows, py + outerR + 1);
 
 	cv::Mat patch;
 	bgrFrame(cv::Rect(x0, y0, x1 - x0, y1 - y0)).copyTo(patch);
-	cv::Mat hsvPatch;
-	cv::cvtColor(patch, hsvPatch, cv::COLOR_BGR2HSV);
 
-	// 在采样区域内找饱和度最高的像素（准星通常使用鲜艳颜色，S值最高）
+	// 计算整个9x9区域的BGR均值作为背景参考（准星仅1-2像素，对均值影响极小）
+	cv::Scalar bgMean = cv::mean(patch);
+
+	// 在中心3x3区域内，找与背景均值差异最大的像素
+	int innerR = 1; // 3x3搜索区
+	int localCX = px - x0; // 点击点在patch中的坐标
+	int localCY = py - y0;
+
 	int bestIdx = -1;
-	int maxS = -1;
-	for (int i = 0; i < hsvPatch.rows * hsvPatch.cols; ++i) {
-		int s = hsvPatch.data[i * 3 + 1]; // S通道
-		int v = hsvPatch.data[i * 3 + 2]; // V通道
-		// 只看有一定亮度的像素（避免采到纯黑噪点）
-		if (v > 30 && s > maxS) {
-			maxS = s;
-			bestIdx = i;
+	double maxDist = -1;
+	for (int dy = -innerR; dy <= innerR; ++dy) {
+		for (int dx = -innerR; dx <= innerR; ++dx) {
+			int yy = localCY + dy, xx = localCX + dx;
+			if (yy < 0 || yy >= patch.rows || xx < 0 || xx >= patch.cols) continue;
+			int i = yy * patch.cols + xx;
+			double db = static_cast<double>(patch.data[i * 3])     - bgMean[0];
+			double dg = static_cast<double>(patch.data[i * 3 + 1]) - bgMean[1];
+			double dr = static_cast<double>(patch.data[i * 3 + 2]) - bgMean[2];
+			double dist = db * db + dg * dg + dr * dr;
+			if (dist > maxDist) {
+				maxDist = dist;
+				bestIdx = i;
+			}
 		}
 	}
 
-	int h, s, v;
-	int bVal, gVal, rVal;
-	if (bestIdx >= 0) {
-		// 取饱和度最高像素的HSV值
-		h = hsvPatch.data[bestIdx * 3];
-		s = hsvPatch.data[bestIdx * 3 + 1];
-		v = hsvPatch.data[bestIdx * 3 + 2];
-		// 同时记录BGR值（patch是BGR格式）
-		bVal = patch.data[bestIdx * 3];
-		gVal = patch.data[bestIdx * 3 + 1];
-		rVal = patch.data[bestIdx * 3 + 2];
-	} else {
-		// 回退：取中心像素
-		h = hsvPatch.at<cv::Vec3b>(hsvPatch.rows / 2, hsvPatch.cols / 2)[0];
-		s = hsvPatch.at<cv::Vec3b>(hsvPatch.rows / 2, hsvPatch.cols / 2)[1];
-		v = hsvPatch.at<cv::Vec3b>(hsvPatch.rows / 2, hsvPatch.cols / 2)[2];
-		auto& bgr = patch.at<cv::Vec3b>(patch.rows / 2, patch.cols / 2);
-		bVal = bgr[0]; gVal = bgr[1]; rVal = bgr[2];
+	// 如果3x3区域没找到有效像素，回退到整个patch中找
+	if (bestIdx < 0) {
+		for (int i = 0; i < patch.rows * patch.cols; ++i) {
+			double db = static_cast<double>(patch.data[i * 3])     - bgMean[0];
+			double dg = static_cast<double>(patch.data[i * 3 + 1]) - bgMean[1];
+			double dr = static_cast<double>(patch.data[i * 3 + 2]) - bgMean[2];
+			double dist = db * db + dg * dg + dr * dr;
+			if (dist > maxDist) {
+				maxDist = dist;
+				bestIdx = i;
+			}
+		}
+	}
+
+	// 将选中的BGR像素转为HSV
+	int bVal = patch.data[bestIdx * 3];
+	int gVal = patch.data[bestIdx * 3 + 1];
+	int rVal = patch.data[bestIdx * 3 + 2];
+	cv::Mat bestBgr(1, 1, CV_8UC3, cv::Scalar(bVal, gVal, rVal));
+	cv::Mat bestHsv;
+	cv::cvtColor(bestBgr, bestHsv, cv::COLOR_BGR2HSV);
+	int h = bestHsv.at<cv::Vec3b>(0, 0)[0];
+	int s = bestHsv.at<cv::Vec3b>(0, 0)[1];
+	int v = bestHsv.at<cv::Vec3b>(0, 0)[2];
+
+	// 低对比度警告：如果最大对比度太小，说明没有明显的准星像素
+	if (maxDist < 30.0 * 30.0) { // RGB欧氏距离 < 30
+		obs_log(LOG_WARNING, "[CrosshairDetector] Low contrast at pick point (dist=%.1f). "
+		        "准星颜色与背景太接近，自动取色可能不准确，建议手动输入RGB。", std::sqrt(maxDist));
 	}
 
 	// 按容差计算HSV范围
@@ -113,8 +136,11 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 	config_.vMin = v - config_.vTolerance;
 	config_.vMax = v + config_.vTolerance;
 
-	// S和V下限至少为1，避免匹配到灰色/黑色区域
-	config_.sMin = std::max(1, config_.sMin);
+	// S和V下限：如果取到的准星本身就是低饱和度（如白色），不能强制sMin>=1
+	// 只在准星颜色高饱和度时才抬高sMin，避免误匹配灰色噪点
+	if (s >= 20) {
+		config_.sMin = std::max(1, config_.sMin);
+	}
 	config_.vMin = std::max(1, config_.vMin);
 
 	clampHSV(config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
@@ -129,8 +155,9 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 	config_.colorPicked = true;
 	config_.pickingColor = false;
 
-	obs_log(LOG_INFO, "[CrosshairDetector] Color picked at (%.2f, %.2f): RGB(%d,%d,%d) HSV(%d,%d,%d) -> range H[%d-%d] S[%d-%d] V[%d-%d]",
-	        normX, normY, rVal, gVal, bVal, h, s, v,
+	obs_log(LOG_INFO, "[CrosshairDetector] Color picked at (%.2f, %.2f): RGB(%d,%d,%d) HSV(%d,%d,%d) contrast=%.0f bg(%.0f,%.0f,%.0f) -> range H[%d-%d] S[%d-%d] V[%d-%d]",
+	        normX, normY, rVal, gVal, bVal, h, s, v, std::sqrt(maxDist),
+	        bgMean[2], bgMean[1], bgMean[0],
 	        config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
 
 	return true;
@@ -158,7 +185,7 @@ void CrosshairDetector::applyManualRgb(int r, int g, int b)
 	config_.vMin = v - config_.vTolerance;
 	config_.vMax = v + config_.vTolerance;
 
-	config_.sMin = std::max(1, config_.sMin);
+	config_.sMin = (s >= 20) ? std::max(1, config_.sMin) : config_.sMin;
 	config_.vMin = std::max(1, config_.vMin);
 
 	clampHSV(config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
@@ -264,82 +291,96 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	}
 
 	// ========== 第4步：子矩阵分位数过滤 ==========
-	filterBySubMatrixQuantile(mask, config_.gridRows, config_.gridCols, config_.quantileThreshold);
+	// 注意：准心线条极细（1-2像素），在网格子区域中占比极低，
+	// 默认quantileThreshold=0跳过此步骤，避免误杀准心像素
+	if (config_.quantileThreshold > 0.0f) {
+		filterBySubMatrixQuantile(mask, config_.gridRows, config_.gridCols, config_.quantileThreshold);
+	}
 
 	// 保存调试掩码
 	if (config_.showDebugMask) {
 		debugMask_ = mask.clone();
 	}
 
-	// ========== 第5步：轮廓提取+候选区域 ==========
-	std::vector<std::vector<cv::Point>> contours;
-	cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+	// ========== 第5步：准心定位 ==========
+	// 准心是细线条，dilate后仍可能分裂成多个小碎片，用轮廓面积过滤不可靠
+	// 改用mask质心：直接计算所有白色像素的加权中心点，更稳定
+	cv::Moments m = cv::moments(mask, true);
+	if (m.m00 <= 0) return results; // mask中没有白色像素
 
-	for (const auto& contour : contours) {
-		double area = cv::contourArea(contour);
-		if (area < config_.minArea || area > config_.maxArea) continue;
+	// 质心坐标（ROI坐标系）
+	float cx = static_cast<float>(m.m10 / m.m00);
+	float cy = static_cast<float>(m.m01 / m.m00);
 
-		cv::Rect bbox = cv::boundingRect(contour);
+	// 白像素总面积（用于置信度）
+	double totalArea = m.m00;
 
-		// 候选区域中心（ROI坐标系）
-		float cx = bbox.x + bbox.width * 0.5f;
-		float cy = bbox.y + bbox.height * 0.5f;
+	// 可选面积过滤：太少可能是噪点，太多可能匹配了整个背景
+	if (totalArea < config_.minArea || totalArea > config_.maxArea) return results;
 
-		// 转换到全帧坐标系
-		cx += roiX;
-		cy += roiY;
+	// 转换到全帧坐标系
+	cx += roiX;
+	cy += roiY;
 
-		// FOV圆形过滤：排除FOV外的候选
-		float dx = cx / imgW - fovCenterX;
-		float dy = cy / imgH - fovCenterY;
-		float dist = std::sqrt(dx * dx + dy * dy);
-		if (dist > fovRadiusNorm * 1.1f) continue; // 留10%余量
+	// FOV圆形过滤
+	float dx = cx / imgW - fovCenterX;
+	float dy = cy / imgH - fovCenterY;
+	float dist = std::sqrt(dx * dx + dy * dy);
+	if (dist > fovRadiusNorm * 1.1f) return results;
 
-		// 转换为归一化坐标
-		float normCX = cx / imgW;
-		float normCY = cy / imgH;
-		float normW = static_cast<float>(bbox.width) / imgW;
-		float normH = static_cast<float>(bbox.height) / imgH;
-		float normX = (bbox.x + roiX) / static_cast<float>(imgW);
-		float normY = (bbox.y + roiY) / static_cast<float>(imgH);
+	// 转换为归一化坐标
+	float normCX = cx / imgW;
+	float normCY = cy / imgH;
 
-		// 默认confidence基于面积占比
-		float confidence = static_cast<float>(area) / config_.maxArea;
-		confidence = std::min(1.0f, std::max(0.1f, confidence));
+	// 置信度：白色像素越多越可靠，但归一化到0-1
+	float confidence = static_cast<float>(std::min(1.0, totalArea / config_.maxArea));
+	confidence = std::max(0.1f, confidence);
 
-		// ========== 第6步：模板匹配精确定位 ==========
-		if (!templateImage_.empty()) {
-			float refinedX = normCX, refinedY = normCY, refinedConf = confidence;
-			bool matched = refineByTemplateMatch(bgrFrame,
-			                                     cv::Rect(static_cast<int>(normX * imgW),
-			                                              static_cast<int>(normY * imgH),
-			                                              static_cast<int>(normW * imgW),
-			                                              static_cast<int>(normH * imgH)),
-			                                     refinedX, refinedY, refinedConf,
-			                                     frameWidth, frameHeight, cropX, cropY);
-			if (matched) {
-				normCX = refinedX;
-				normCY = refinedY;
-				confidence = refinedConf;
-			}
-		}
+	// 构建Detection结果
+	Detection det;
+	det.classId = -2;  // 准星检测专用classId
+	det.className = "crosshair";
+	det.confidence = confidence;
+	det.centerX = normCX;
+	det.centerY = normCY;
 
-		// 构建Detection结果
-		Detection det;
-		det.classId = -2;  // 准星检测专用classId
-		det.className = "crosshair";
-		det.confidence = confidence;
-		det.x = normX;
-		det.y = normY;
-		det.width = normW;
-		det.height = normH;
-		det.centerX = normCX;
-		det.centerY = normCY;
-		det.trackId = -1;
-		det.lostFrames = 0;
-
-		results.push_back(det);
+	// 计算包围盒（mask中白色像素的范围，ROI坐标系 → 归一化）
+	std::vector<cv::Point> whitePixels;
+	cv::findNonZero(mask, whitePixels);
+	if (!whitePixels.empty()) {
+		cv::Rect bbox = cv::boundingRect(whitePixels);
+		det.x = (bbox.x + roiX) / static_cast<float>(imgW);
+		det.y = (bbox.y + roiY) / static_cast<float>(imgH);
+		det.width = static_cast<float>(bbox.width) / imgW;
+		det.height = static_cast<float>(bbox.height) / imgH;
+	} else {
+		det.x = normCX;
+		det.y = normCY;
+		det.width = 0.01f;
+		det.height = 0.01f;
 	}
+
+	det.trackId = -1;
+	det.lostFrames = 0;
+
+	// ========== 第6步：模板匹配精确定位（可选） ==========
+	if (!templateImage_.empty()) {
+		float refinedX = normCX, refinedY = normCY, refinedConf = confidence;
+		bool matched = refineByTemplateMatch(bgrFrame,
+		                                     cv::Rect(static_cast<int>(det.x * imgW),
+		                                              static_cast<int>(det.y * imgH),
+		                                              static_cast<int>(det.width * imgW),
+		                                              static_cast<int>(det.height * imgH)),
+		                                     refinedX, refinedY, refinedConf,
+		                                     frameWidth, frameHeight, cropX, cropY);
+		if (matched) {
+			det.centerX = refinedX;
+			det.centerY = refinedY;
+			det.confidence = refinedConf;
+		}
+	}
+
+	results.push_back(det);
 
 	return results;
 }
