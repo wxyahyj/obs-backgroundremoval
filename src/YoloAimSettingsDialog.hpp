@@ -129,22 +129,6 @@ private:
     QSpinBox* m_kalmanGenerateThresholdSpin;
     QSpinBox* m_kalmanTerminateCountSpin;
     
-    // MotionSimulator 人类行为模拟器设置
-    QCheckBox* m_enableMotionSimulatorCheck;
-    QCheckBox* m_motionSimRandomPosCheck;
-    QCheckBox* m_motionSimOvershootCheck;
-    QCheckBox* m_motionSimMicroOvershootCheck;
-    QCheckBox* m_motionSimInertiaCheck;
-    QCheckBox* m_motionSimLeftBtnAdaptiveCheck;
-    QCheckBox* m_motionSimSprayModeCheck;
-    QCheckBox* m_motionSimTapPauseCheck;
-    QCheckBox* m_motionSimRetryCheck;
-    QSpinBox* m_motionSimMaxRetrySpin;
-    QSpinBox* m_motionSimDelayMsSpin;
-    QDoubleSpinBox* m_motionSimDirectProbSpin;
-    QDoubleSpinBox* m_motionSimOvershootProbSpin;
-    QDoubleSpinBox* m_motionSimMicroOvshootProbSpin;
-    
     // 神经网络轨迹生成器设置
     QCheckBox* m_enableNeuralPathCheck;
     QSpinBox* m_neuralPathPointsSpin;

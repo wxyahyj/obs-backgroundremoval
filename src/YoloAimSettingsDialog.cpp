@@ -813,70 +813,6 @@ void YoloAimSettingsDialog::setupMotionSimPage()
     QWidget* scrollContent = new QWidget();
     QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
     
-    // MotionSimulator
-    m_enableMotionSimulatorCheck = new QCheckBox(QStringLiteral("🎮 启用人类行为模拟"), scrollContent);
-    m_enableMotionSimulatorCheck->setToolTip(QStringLiteral("启用人类行为模拟器，使鼠标移动更自然"));
-    scrollLayout->addWidget(m_enableMotionSimulatorCheck);
-    
-    QGroupBox* featureGroup = new QGroupBox(QStringLiteral("🔧 功能开关"), scrollContent);
-    QGridLayout* featureLayout = new QGridLayout(featureGroup);
-    int row = 0;
-    m_motionSimRandomPosCheck = new QCheckBox(QStringLiteral("随机落点"), scrollContent);
-    m_motionSimRandomPosCheck->setToolTip(QStringLiteral("在目标范围内随机选择落点"));
-    featureLayout->addWidget(m_motionSimRandomPosCheck, row, 0);
-    m_motionSimOvershootCheck = new QCheckBox(QStringLiteral("过冲"), scrollContent);
-    m_motionSimOvershootCheck->setToolTip(QStringLiteral("模拟人类移动时的过冲行为"));
-    featureLayout->addWidget(m_motionSimOvershootCheck, row, 1);
-    row++;
-    m_motionSimMicroOvershootCheck = new QCheckBox(QStringLiteral("微过冲"), scrollContent);
-    m_motionSimMicroOvershootCheck->setToolTip(QStringLiteral("模拟人类移动时的微小过冲"));
-    featureLayout->addWidget(m_motionSimMicroOvershootCheck, row, 0);
-    m_motionSimInertiaCheck = new QCheckBox(QStringLiteral("惯性停止"), scrollContent);
-    m_motionSimInertiaCheck->setToolTip(QStringLiteral("模拟人类移动时的惯性停止效果"));
-    featureLayout->addWidget(m_motionSimInertiaCheck, row, 1);
-    row++;
-    m_motionSimLeftBtnAdaptiveCheck = new QCheckBox(QStringLiteral("左键自适应"), scrollContent);
-    featureLayout->addWidget(m_motionSimLeftBtnAdaptiveCheck, row, 0);
-    m_motionSimSprayModeCheck = new QCheckBox(QStringLiteral("连射模式"), scrollContent);
-    featureLayout->addWidget(m_motionSimSprayModeCheck, row, 1);
-    row++;
-    m_motionSimTapPauseCheck = new QCheckBox(QStringLiteral("点击暂停"), scrollContent);
-    featureLayout->addWidget(m_motionSimTapPauseCheck, row, 0);
-    m_motionSimRetryCheck = new QCheckBox(QStringLiteral("重试"), scrollContent);
-    featureLayout->addWidget(m_motionSimRetryCheck, row, 1);
-    scrollLayout->addWidget(featureGroup);
-    
-    QGroupBox* paramsGroup = new QGroupBox(QStringLiteral("📊 参数设置"), scrollContent);
-    QFormLayout* paramsLayout = new QFormLayout(paramsGroup);
-    m_motionSimMaxRetrySpin = new QSpinBox(scrollContent);
-    m_motionSimMaxRetrySpin->setRange(0, 5);
-    m_motionSimMaxRetrySpin->setValue(2);
-    paramsLayout->addRow(QStringLiteral("最大重试次数:"), m_motionSimMaxRetrySpin);
-    m_motionSimDelayMsSpin = new QSpinBox(scrollContent);
-    m_motionSimDelayMsSpin->setRange(0, 500);
-    m_motionSimDelayMsSpin->setValue(80);
-    m_motionSimDelayMsSpin->setSuffix(QStringLiteral(" ms"));
-    paramsLayout->addRow(QStringLiteral("目标延迟:"), m_motionSimDelayMsSpin);
-    m_motionSimDirectProbSpin = new QDoubleSpinBox(scrollContent);
-    m_motionSimDirectProbSpin->setRange(0.0, 1.0);
-    m_motionSimDirectProbSpin->setDecimals(2);
-    m_motionSimDirectProbSpin->setSingleStep(0.01);
-    m_motionSimDirectProbSpin->setValue(0.85);
-    paramsLayout->addRow(QStringLiteral("直线移动概率:"), m_motionSimDirectProbSpin);
-    m_motionSimOvershootProbSpin = new QDoubleSpinBox(scrollContent);
-    m_motionSimOvershootProbSpin->setRange(0.0, 1.0);
-    m_motionSimOvershootProbSpin->setDecimals(2);
-    m_motionSimOvershootProbSpin->setSingleStep(0.01);
-    m_motionSimOvershootProbSpin->setValue(0.10);
-    paramsLayout->addRow(QStringLiteral("过冲概率:"), m_motionSimOvershootProbSpin);
-    m_motionSimMicroOvshootProbSpin = new QDoubleSpinBox(scrollContent);
-    m_motionSimMicroOvshootProbSpin->setRange(0.0, 1.0);
-    m_motionSimMicroOvshootProbSpin->setDecimals(2);
-    m_motionSimMicroOvshootProbSpin->setSingleStep(0.01);
-    m_motionSimMicroOvshootProbSpin->setValue(0.05);
-    paramsLayout->addRow(QStringLiteral("微过冲概率:"), m_motionSimMicroOvshootProbSpin);
-    scrollLayout->addWidget(paramsGroup);
-    
     // NeuralPath
     m_enableNeuralPathCheck = new QCheckBox(QStringLiteral("🧠 启用神经网络轨迹"), scrollContent);
     m_enableNeuralPathCheck->setToolTip(QStringLiteral("启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹"));
@@ -1717,22 +1653,6 @@ void YoloAimSettingsDialog::loadSettings()
     if (m_kalmanGenerateThresholdSpin) m_kalmanGenerateThresholdSpin->setValue(obs_data_get_int(settings, "kalman_generate_threshold"));
     if (m_kalmanTerminateCountSpin) m_kalmanTerminateCountSpin->setValue(obs_data_get_int(settings, "kalman_terminate_count"));
     
-    // MotionSimulator 人类行为模拟器设置
-    if (m_enableMotionSimulatorCheck) m_enableMotionSimulatorCheck->setChecked(obs_data_get_bool(settings, "enable_motion_simulator"));
-    if (m_motionSimRandomPosCheck) m_motionSimRandomPosCheck->setChecked(obs_data_get_bool(settings, "motion_sim_random_pos"));
-    if (m_motionSimOvershootCheck) m_motionSimOvershootCheck->setChecked(obs_data_get_bool(settings, "motion_sim_overshoot"));
-    if (m_motionSimMicroOvershootCheck) m_motionSimMicroOvershootCheck->setChecked(obs_data_get_bool(settings, "motion_sim_micro_overshoot"));
-    if (m_motionSimInertiaCheck) m_motionSimInertiaCheck->setChecked(obs_data_get_bool(settings, "motion_sim_inertia"));
-    if (m_motionSimLeftBtnAdaptiveCheck) m_motionSimLeftBtnAdaptiveCheck->setChecked(obs_data_get_bool(settings, "motion_sim_left_btn_adaptive"));
-    if (m_motionSimSprayModeCheck) m_motionSimSprayModeCheck->setChecked(obs_data_get_bool(settings, "motion_sim_spray_mode"));
-    if (m_motionSimTapPauseCheck) m_motionSimTapPauseCheck->setChecked(obs_data_get_bool(settings, "motion_sim_tap_pause"));
-    if (m_motionSimRetryCheck) m_motionSimRetryCheck->setChecked(obs_data_get_bool(settings, "motion_sim_retry"));
-    if (m_motionSimMaxRetrySpin) m_motionSimMaxRetrySpin->setValue(obs_data_get_int(settings, "motion_sim_max_retry"));
-    if (m_motionSimDelayMsSpin) m_motionSimDelayMsSpin->setValue(obs_data_get_int(settings, "motion_sim_delay_ms"));
-    if (m_motionSimDirectProbSpin) m_motionSimDirectProbSpin->setValue(obs_data_get_double(settings, "motion_sim_direct_prob"));
-    if (m_motionSimOvershootProbSpin) m_motionSimOvershootProbSpin->setValue(obs_data_get_double(settings, "motion_sim_overshoot_prob"));
-    if (m_motionSimMicroOvshootProbSpin) m_motionSimMicroOvshootProbSpin->setValue(obs_data_get_double(settings, "motion_sim_micro_ovshoot_prob"));
-    
     // 神经网络轨迹生成器设置
     if (m_enableNeuralPathCheck) m_enableNeuralPathCheck->setChecked(obs_data_get_bool(settings, "enable_neural_path"));
     if (m_neuralPathPointsSpin) m_neuralPathPointsSpin->setValue(obs_data_get_int(settings, "neural_path_points"));
@@ -1905,22 +1825,6 @@ void YoloAimSettingsDialog::saveSettings()
     if (m_useKalmanTrackerCheck) obs_data_set_bool(settings, "use_kalman_tracker", m_useKalmanTrackerCheck->isChecked());
     if (m_kalmanGenerateThresholdSpin) obs_data_set_int(settings, "kalman_generate_threshold", m_kalmanGenerateThresholdSpin->value());
     if (m_kalmanTerminateCountSpin) obs_data_set_int(settings, "kalman_terminate_count", m_kalmanTerminateCountSpin->value());
-    
-    // MotionSimulator 人类行为模拟器设置
-    if (m_enableMotionSimulatorCheck) obs_data_set_bool(settings, "enable_motion_simulator", m_enableMotionSimulatorCheck->isChecked());
-    if (m_motionSimRandomPosCheck) obs_data_set_bool(settings, "motion_sim_random_pos", m_motionSimRandomPosCheck->isChecked());
-    if (m_motionSimOvershootCheck) obs_data_set_bool(settings, "motion_sim_overshoot", m_motionSimOvershootCheck->isChecked());
-    if (m_motionSimMicroOvershootCheck) obs_data_set_bool(settings, "motion_sim_micro_overshoot", m_motionSimMicroOvershootCheck->isChecked());
-    if (m_motionSimInertiaCheck) obs_data_set_bool(settings, "motion_sim_inertia", m_motionSimInertiaCheck->isChecked());
-    if (m_motionSimLeftBtnAdaptiveCheck) obs_data_set_bool(settings, "motion_sim_left_btn_adaptive", m_motionSimLeftBtnAdaptiveCheck->isChecked());
-    if (m_motionSimSprayModeCheck) obs_data_set_bool(settings, "motion_sim_spray_mode", m_motionSimSprayModeCheck->isChecked());
-    if (m_motionSimTapPauseCheck) obs_data_set_bool(settings, "motion_sim_tap_pause", m_motionSimTapPauseCheck->isChecked());
-    if (m_motionSimRetryCheck) obs_data_set_bool(settings, "motion_sim_retry", m_motionSimRetryCheck->isChecked());
-    if (m_motionSimMaxRetrySpin) obs_data_set_int(settings, "motion_sim_max_retry", m_motionSimMaxRetrySpin->value());
-    if (m_motionSimDelayMsSpin) obs_data_set_int(settings, "motion_sim_delay_ms", m_motionSimDelayMsSpin->value());
-    if (m_motionSimDirectProbSpin) obs_data_set_double(settings, "motion_sim_direct_prob", m_motionSimDirectProbSpin->value());
-    if (m_motionSimOvershootProbSpin) obs_data_set_double(settings, "motion_sim_overshoot_prob", m_motionSimOvershootProbSpin->value());
-    if (m_motionSimMicroOvshootProbSpin) obs_data_set_double(settings, "motion_sim_micro_ovshoot_prob", m_motionSimMicroOvshootProbSpin->value());
     
     // 神经网络轨迹生成器设置
     if (m_enableNeuralPathCheck) obs_data_set_bool(settings, "enable_neural_path", m_enableNeuralPathCheck->isChecked());

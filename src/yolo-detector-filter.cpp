@@ -429,11 +429,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int neuralTargetRadius;
 		int neuralConsumePerFrame;  // 每帧消费路径点数（加速执行）
 		bool enableNeuralPathDebug;
-		// 稳定性检测参数
-		bool enableStabilityCheck;
-		int stabilityRequiredFrames;
-		float stabilityPositionThreshold;
-		float stabilitySizeThreshold;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -520,18 +515,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::string configName;
 	std::string configList;
 
-	// ChrisPID参数
-	float chrisKp;
-	float chrisKi;
-	float chrisKd;
-	float chrisPredWeightX;
-	float chrisPredWeightY;
-	float chrisInitScale;
-	float chrisRampTime;
-	float chrisOutputMax;
-	float chrisIMax;
-	float chrisDFilterAlpha;
-
 	// DynamicPID参数
 	float dynamicKp;
 	float dynamicKi;
@@ -545,40 +528,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int   dynamicMinDataPoints;
 	float dynamicErrorTolerance;
 	float dynamicSmoothingFactor;
-	
-	// AdaptivePID参数
-	float adaptiveBaseKp;
-	float adaptiveBaseKi;
-	float adaptiveBaseKd;
-	float adaptiveIntegralThreshold;
-	float adaptiveKpThreshold;
-	float adaptiveIntegralRate;
-	float adaptiveKpRate;
-	float adaptiveLargeErrorRate;
-	float adaptiveMaxOutput;
-	float adaptiveMaxIntegral;
-	bool adaptiveUsePredictor;
-	float adaptivePredWeightX;
-	float adaptivePredWeightY;
-	float adaptiveMaxPredTime;
-	float adaptiveOutputSmoothing;
-	float adaptiveDerivativeFilterAlpha;
-	
-	// IncrementalPID参数
-	float incrementalKp;
-	float incrementalKi;
-	float incrementalKd;
-	float incrementalSpeedX;
-	float incrementalSpeedY;
-	int incrementalAimRadius;
-	bool incrementalJitterEnabled;
-	bool incrementalPidEnabled;
-	bool incrementalSideCompEnabled;
-	float incrementalSideCompCap;
-	float incrementalSideCompDenom;
-	float incrementalInputAlpha;
-	float incrementalDAlpha;
-	float incrementalOutputAlpha;
 	
 	// 准星检测器
 	CrosshairDetector crosshairDetector;
@@ -2266,34 +2215,14 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		}
 	}
 
-	// MotionSimulator 人类行为模拟器参数（全局设置，应用到所有配置）
+	// 神经网络轨迹生成器参数（全局设置，应用到所有配置）
 	for (int i = 0; i < yolo_detector_filter::MAX_CONFIGS; i++) {
-		tf->mouseConfigs[i].enableMotionSimulator = obs_data_get_bool(settings, "enable_motion_simulator");
-		tf->mouseConfigs[i].motionSimRandomPos = obs_data_get_bool(settings, "motion_sim_random_pos");
-		tf->mouseConfigs[i].motionSimOvershoot = obs_data_get_bool(settings, "motion_sim_overshoot");
-		tf->mouseConfigs[i].motionSimMicroOvershoot = obs_data_get_bool(settings, "motion_sim_micro_overshoot");
-		tf->mouseConfigs[i].motionSimInertia = obs_data_get_bool(settings, "motion_sim_inertia");
-		tf->mouseConfigs[i].motionSimLeftBtnAdaptive = obs_data_get_bool(settings, "motion_sim_left_btn_adaptive");
-		tf->mouseConfigs[i].motionSimSprayMode = obs_data_get_bool(settings, "motion_sim_spray_mode");
-		tf->mouseConfigs[i].motionSimTapPause = obs_data_get_bool(settings, "motion_sim_tap_pause");
-		tf->mouseConfigs[i].motionSimRetry = obs_data_get_bool(settings, "motion_sim_retry");
-		tf->mouseConfigs[i].motionSimMaxRetry = (int)obs_data_get_int(settings, "motion_sim_max_retry");
-		tf->mouseConfigs[i].motionSimDelayMs = (int)obs_data_get_int(settings, "motion_sim_delay_ms");
-		tf->mouseConfigs[i].motionSimDirectProb = (float)obs_data_get_double(settings, "motion_sim_direct_prob");
-		tf->mouseConfigs[i].motionSimOvershootProb = (float)obs_data_get_double(settings, "motion_sim_overshoot_prob");
-		tf->mouseConfigs[i].motionSimMicroOvshootProb = (float)obs_data_get_double(settings, "motion_sim_micro_ovshoot_prob");
-		// 神经网络轨迹生成器参数（全局设置，应用到所有配置）
 		tf->mouseConfigs[i].enableNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
 		tf->mouseConfigs[i].neuralPathPoints = (int)obs_data_get_int(settings, "neural_path_points");
 		tf->mouseConfigs[i].neuralMouseStepSize = obs_data_get_double(settings, "neural_mouse_step_size");
 		tf->mouseConfigs[i].neuralTargetRadius = (int)obs_data_get_int(settings, "neural_target_radius");
 		tf->mouseConfigs[i].neuralConsumePerFrame = (int)obs_data_get_int(settings, "neural_consume_per_frame");
 		tf->mouseConfigs[i].enableNeuralPathDebug = obs_data_get_bool(settings, "enable_neural_path_debug");
-		// 稳定性检测参数（全局设置，应用到所有配置）
-		tf->mouseConfigs[i].enableStabilityCheck = obs_data_get_bool(settings, "enable_stability_check");
-		tf->mouseConfigs[i].stabilityRequiredFrames = (int)obs_data_get_int(settings, "stability_required_frames");
-		tf->mouseConfigs[i].stabilityPositionThreshold = (float)obs_data_get_double(settings, "stability_position_threshold");
-		tf->mouseConfigs[i].stabilitySizeThreshold = (float)obs_data_get_double(settings, "stability_size_threshold");
 	}
 	
 	// 日志：神经网络配置读取结果
@@ -5028,18 +4957,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 		instance->configName = "";
 		instance->configList = "";
 
-		// ChrisPID参数初始化
-		instance->chrisKp = 0.45f;
-		instance->chrisKi = 0.02f;
-		instance->chrisKd = 0.04f;
-		instance->chrisPredWeightX = 0.5f;
-		instance->chrisPredWeightY = 0.1f;
-		instance->chrisInitScale = 0.6f;
-		instance->chrisRampTime = 0.5f;
-		instance->chrisOutputMax = 150.0f;
-		instance->chrisIMax = 100.0f;
-		instance->chrisDFilterAlpha = 0.3f;
-		
 #ifdef _WIN32
 		// GPU纹理推理初始化
 		instance->useGpuTextureInference = false;

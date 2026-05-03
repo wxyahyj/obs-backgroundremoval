@@ -87,18 +87,6 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.useDerivativePredictor = true;
     config.predictionWeightX = 0.3f;
     config.predictionWeightY = 0.1f;
-    config.stdKp = 0.3f;
-    config.stdKi = 0.01f;
-    config.stdKd = 0.005f;
-    config.stdOutputLimit = 50.0f;
-    config.stdDeadZone = 0.3f;
-    config.stdIntegralLimit = 100.0f;
-    config.stdIntegralDeadzone = 1.0f;
-    config.stdIntegralThreshold = 50.0f;
-    config.stdIntegralRate = 0.015f;
-    config.stdDerivativeFilterAlpha = 0.2f;
-    config.stdSmoothingX = 0.7f;
-    config.stdSmoothingY = 0.5f;
     config.continuousAimEnabled = false;
     config.autoRecoilControlEnabled = false;
     config.recoilStrength = 5.0f;
@@ -235,18 +223,6 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["useDerivativePredictor"] = config.useDerivativePredictor;
     j["predictionWeightX"] = config.predictionWeightX;
     j["predictionWeightY"] = config.predictionWeightY;
-    j["stdKp"] = config.stdKp;
-    j["stdKi"] = config.stdKi;
-    j["stdKd"] = config.stdKd;
-    j["stdOutputLimit"] = config.stdOutputLimit;
-    j["stdDeadZone"] = config.stdDeadZone;
-    j["stdIntegralLimit"] = config.stdIntegralLimit;
-    j["stdIntegralDeadzone"] = config.stdIntegralDeadzone;
-    j["stdIntegralThreshold"] = config.stdIntegralThreshold;
-    j["stdIntegralRate"] = config.stdIntegralRate;
-    j["stdDerivativeFilterAlpha"] = config.stdDerivativeFilterAlpha;
-    j["stdSmoothingX"] = config.stdSmoothingX;
-    j["stdSmoothingY"] = config.stdSmoothingY;
     j["continuousAimEnabled"] = config.continuousAimEnabled;
     j["autoRecoilControlEnabled"] = config.autoRecoilControlEnabled;
     j["recoilStrength"] = config.recoilStrength;
@@ -255,17 +231,6 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["enableBezierMovement"] = config.enableBezierMovement;
     j["bezierCurvature"] = config.bezierCurvature;
     j["bezierRandomness"] = config.bezierRandomness;
-    
-    j["chrisKp"] = config.chrisKp;
-    j["chrisKi"] = config.chrisKi;
-    j["chrisKd"] = config.chrisKd;
-    j["chrisPredWeightX"] = config.chrisPredWeightX;
-    j["chrisPredWeightY"] = config.chrisPredWeightY;
-    j["chrisInitScale"] = config.chrisInitScale;
-    j["chrisRampTime"] = config.chrisRampTime;
-    j["chrisOutputMax"] = config.chrisOutputMax;
-    j["chrisIMax"] = config.chrisIMax;
-    j["chrisDFilterAlpha"] = config.chrisDFilterAlpha;
     
     j["dynamicKp"] = config.dynamicKp;
     j["dynamicKi"] = config.dynamicKi;
@@ -279,40 +244,6 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["dynamicMinDataPoints"] = config.dynamicMinDataPoints;
     j["dynamicErrorTolerance"] = config.dynamicErrorTolerance;
     j["dynamicSmoothingFactor"] = config.dynamicSmoothingFactor;
-    
-    // AdaptivePID参数
-    j["adaptiveBaseKp"] = config.adaptiveBaseKp;
-    j["adaptiveBaseKi"] = config.adaptiveBaseKi;
-    j["adaptiveBaseKd"] = config.adaptiveBaseKd;
-    j["adaptiveIntegralThreshold"] = config.adaptiveIntegralThreshold;
-    j["adaptiveKpThreshold"] = config.adaptiveKpThreshold;
-    j["adaptiveIntegralRate"] = config.adaptiveIntegralRate;
-    j["adaptiveKpRate"] = config.adaptiveKpRate;
-    j["adaptiveLargeErrorRate"] = config.adaptiveLargeErrorRate;
-    j["adaptiveMaxOutput"] = config.adaptiveMaxOutput;
-    j["adaptiveMaxIntegral"] = config.adaptiveMaxIntegral;
-    j["adaptiveUsePredictor"] = config.adaptiveUsePredictor;
-    j["adaptivePredWeightX"] = config.adaptivePredWeightX;
-    j["adaptivePredWeightY"] = config.adaptivePredWeightY;
-    j["adaptiveMaxPredTime"] = config.adaptiveMaxPredTime;
-    j["adaptiveOutputSmoothing"] = config.adaptiveOutputSmoothing;
-    j["adaptiveDerivativeFilterAlpha"] = config.adaptiveDerivativeFilterAlpha;
-    
-    // IncrementalPID参数
-    j["incrementalKp"] = config.incrementalKp;
-    j["incrementalKi"] = config.incrementalKi;
-    j["incrementalKd"] = config.incrementalKd;
-    j["incrementalSpeedX"] = config.incrementalSpeedX;
-    j["incrementalSpeedY"] = config.incrementalSpeedY;
-    j["incrementalAimRadius"] = config.incrementalAimRadius;
-    j["incrementalJitterEnabled"] = config.incrementalJitterEnabled;
-    j["incrementalPidEnabled"] = config.incrementalPidEnabled;
-    j["incrementalSideCompEnabled"] = config.incrementalSideCompEnabled;
-    j["incrementalSideCompCap"] = config.incrementalSideCompCap;
-    j["incrementalSideCompDenom"] = config.incrementalSideCompDenom;
-    j["incrementalInputAlpha"] = config.incrementalInputAlpha;
-    j["incrementalDAlpha"] = config.incrementalDAlpha;
-    j["incrementalOutputAlpha"] = config.incrementalOutputAlpha;
     
     return j;
 }
@@ -391,18 +322,6 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("useDerivativePredictor")) config.useDerivativePredictor = j["useDerivativePredictor"].get<bool>();
         if (j.contains("predictionWeightX")) config.predictionWeightX = j["predictionWeightX"].get<float>();
         if (j.contains("predictionWeightY")) config.predictionWeightY = j["predictionWeightY"].get<float>();
-        if (j.contains("stdKp")) config.stdKp = j["stdKp"].get<float>();
-        if (j.contains("stdKi")) config.stdKi = j["stdKi"].get<float>();
-        if (j.contains("stdKd")) config.stdKd = j["stdKd"].get<float>();
-        if (j.contains("stdOutputLimit")) config.stdOutputLimit = j["stdOutputLimit"].get<float>();
-        if (j.contains("stdDeadZone")) config.stdDeadZone = j["stdDeadZone"].get<float>();
-        if (j.contains("stdIntegralLimit")) config.stdIntegralLimit = j["stdIntegralLimit"].get<float>();
-        if (j.contains("stdIntegralDeadzone")) config.stdIntegralDeadzone = j["stdIntegralDeadzone"].get<float>();
-        if (j.contains("stdIntegralThreshold")) config.stdIntegralThreshold = j["stdIntegralThreshold"].get<float>();
-        if (j.contains("stdIntegralRate")) config.stdIntegralRate = j["stdIntegralRate"].get<float>();
-        if (j.contains("stdDerivativeFilterAlpha")) config.stdDerivativeFilterAlpha = j["stdDerivativeFilterAlpha"].get<float>();
-        if (j.contains("stdSmoothingX")) config.stdSmoothingX = j["stdSmoothingX"].get<float>();
-        if (j.contains("stdSmoothingY")) config.stdSmoothingY = j["stdSmoothingY"].get<float>();
         if (j.contains("continuousAimEnabled")) config.continuousAimEnabled = j["continuousAimEnabled"].get<bool>();
         if (j.contains("autoRecoilControlEnabled")) config.autoRecoilControlEnabled = j["autoRecoilControlEnabled"].get<bool>();
         if (j.contains("recoilStrength")) config.recoilStrength = j["recoilStrength"].get<float>();
@@ -411,17 +330,6 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("enableBezierMovement")) config.enableBezierMovement = j["enableBezierMovement"].get<bool>();
         if (j.contains("bezierCurvature")) config.bezierCurvature = j["bezierCurvature"].get<float>();
         if (j.contains("bezierRandomness")) config.bezierRandomness = j["bezierRandomness"].get<float>();
-        
-        if (j.contains("chrisKp")) config.chrisKp = j["chrisKp"].get<float>();
-        if (j.contains("chrisKi")) config.chrisKi = j["chrisKi"].get<float>();
-        if (j.contains("chrisKd")) config.chrisKd = j["chrisKd"].get<float>();
-        if (j.contains("chrisPredWeightX")) config.chrisPredWeightX = j["chrisPredWeightX"].get<float>();
-        if (j.contains("chrisPredWeightY")) config.chrisPredWeightY = j["chrisPredWeightY"].get<float>();
-        if (j.contains("chrisInitScale")) config.chrisInitScale = j["chrisInitScale"].get<float>();
-        if (j.contains("chrisRampTime")) config.chrisRampTime = j["chrisRampTime"].get<float>();
-        if (j.contains("chrisOutputMax")) config.chrisOutputMax = j["chrisOutputMax"].get<float>();
-        if (j.contains("chrisIMax")) config.chrisIMax = j["chrisIMax"].get<float>();
-        if (j.contains("chrisDFilterAlpha")) config.chrisDFilterAlpha = j["chrisDFilterAlpha"].get<float>();
         
         if (j.contains("dynamicKp")) config.dynamicKp = j["dynamicKp"].get<float>();
         if (j.contains("dynamicKi")) config.dynamicKi = j["dynamicKi"].get<float>();
@@ -435,40 +343,6 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("dynamicMinDataPoints")) config.dynamicMinDataPoints = j["dynamicMinDataPoints"].get<int>();
         if (j.contains("dynamicErrorTolerance")) config.dynamicErrorTolerance = j["dynamicErrorTolerance"].get<float>();
         if (j.contains("dynamicSmoothingFactor")) config.dynamicSmoothingFactor = j["dynamicSmoothingFactor"].get<float>();
-        
-        // AdaptivePID参数
-        if (j.contains("adaptiveBaseKp")) config.adaptiveBaseKp = j["adaptiveBaseKp"].get<float>();
-        if (j.contains("adaptiveBaseKi")) config.adaptiveBaseKi = j["adaptiveBaseKi"].get<float>();
-        if (j.contains("adaptiveBaseKd")) config.adaptiveBaseKd = j["adaptiveBaseKd"].get<float>();
-        if (j.contains("adaptiveIntegralThreshold")) config.adaptiveIntegralThreshold = j["adaptiveIntegralThreshold"].get<float>();
-        if (j.contains("adaptiveKpThreshold")) config.adaptiveKpThreshold = j["adaptiveKpThreshold"].get<float>();
-        if (j.contains("adaptiveIntegralRate")) config.adaptiveIntegralRate = j["adaptiveIntegralRate"].get<float>();
-        if (j.contains("adaptiveKpRate")) config.adaptiveKpRate = j["adaptiveKpRate"].get<float>();
-        if (j.contains("adaptiveLargeErrorRate")) config.adaptiveLargeErrorRate = j["adaptiveLargeErrorRate"].get<float>();
-        if (j.contains("adaptiveMaxOutput")) config.adaptiveMaxOutput = j["adaptiveMaxOutput"].get<float>();
-        if (j.contains("adaptiveMaxIntegral")) config.adaptiveMaxIntegral = j["adaptiveMaxIntegral"].get<float>();
-        if (j.contains("adaptiveUsePredictor")) config.adaptiveUsePredictor = j["adaptiveUsePredictor"].get<bool>();
-        if (j.contains("adaptivePredWeightX")) config.adaptivePredWeightX = j["adaptivePredWeightX"].get<float>();
-        if (j.contains("adaptivePredWeightY")) config.adaptivePredWeightY = j["adaptivePredWeightY"].get<float>();
-        if (j.contains("adaptiveMaxPredTime")) config.adaptiveMaxPredTime = j["adaptiveMaxPredTime"].get<float>();
-        if (j.contains("adaptiveOutputSmoothing")) config.adaptiveOutputSmoothing = j["adaptiveOutputSmoothing"].get<float>();
-        if (j.contains("adaptiveDerivativeFilterAlpha")) config.adaptiveDerivativeFilterAlpha = j["adaptiveDerivativeFilterAlpha"].get<float>();
-        
-        // IncrementalPID参数
-        if (j.contains("incrementalKp")) config.incrementalKp = j["incrementalKp"].get<float>();
-        if (j.contains("incrementalKi")) config.incrementalKi = j["incrementalKi"].get<float>();
-        if (j.contains("incrementalKd")) config.incrementalKd = j["incrementalKd"].get<float>();
-        if (j.contains("incrementalSpeedX")) config.incrementalSpeedX = j["incrementalSpeedX"].get<float>();
-        if (j.contains("incrementalSpeedY")) config.incrementalSpeedY = j["incrementalSpeedY"].get<float>();
-        if (j.contains("incrementalAimRadius")) config.incrementalAimRadius = j["incrementalAimRadius"].get<int>();
-        if (j.contains("incrementalJitterEnabled")) config.incrementalJitterEnabled = j["incrementalJitterEnabled"].get<bool>();
-        if (j.contains("incrementalPidEnabled")) config.incrementalPidEnabled = j["incrementalPidEnabled"].get<bool>();
-        if (j.contains("incrementalSideCompEnabled")) config.incrementalSideCompEnabled = j["incrementalSideCompEnabled"].get<bool>();
-        if (j.contains("incrementalSideCompCap")) config.incrementalSideCompCap = j["incrementalSideCompCap"].get<float>();
-        if (j.contains("incrementalSideCompDenom")) config.incrementalSideCompDenom = j["incrementalSideCompDenom"].get<float>();
-        if (j.contains("incrementalInputAlpha")) config.incrementalInputAlpha = j["incrementalInputAlpha"].get<float>();
-        if (j.contains("incrementalDAlpha")) config.incrementalDAlpha = j["incrementalDAlpha"].get<float>();
-        if (j.contains("incrementalOutputAlpha")) config.incrementalOutputAlpha = j["incrementalOutputAlpha"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {
