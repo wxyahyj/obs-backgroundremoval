@@ -5547,7 +5547,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				tf->crosshairDetector.updateConfig(chCfg);
 
 				// 回写OBS settings，确保UI滑块更新且不被_update覆盖
-				obs_data_t *pickSettings = obs_source_get_settings(tf->context);
+				obs_data_t *pickSettings = obs_source_get_settings(tf->source);
 				if (pickSettings) {
 					obs_data_set_int(pickSettings, "crosshair_h_min", chCfg.hMin);
 					obs_data_set_int(pickSettings, "crosshair_h_max", chCfg.hMax);
@@ -5564,7 +5564,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
 					obs_data_set_string(pickSettings, "crosshair_color_info", infoText);
 
-					obs_source_update(tf->context, pickSettings);
+					obs_source_update(tf->source, pickSettings);
 					obs_data_release(pickSettings);
 				}
 
