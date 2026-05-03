@@ -61,8 +61,9 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 	px = std::max(0, std::min(bgrFrame.cols - 1, px));
 	py = std::max(0, std::min(bgrFrame.rows - 1, py));
 
-	// 采样区域：取3x3均值，更稳定
-	int r = 1;
+	// 采样策略：准星通常很细（1-2像素），3x3均值会被背景色严重稀释
+	// 改为：在5x5区域内找饱和度最高的像素（准星颜色通常高饱和度）
+	int r = 2;
 	int x0 = std::max(0, px - r), x1 = std::min(bgrFrame.cols, px + r + 1);
 	int y0 = std::max(0, py - r), y1 = std::min(bgrFrame.rows, py + r + 1);
 
@@ -71,12 +72,38 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 	cv::Mat hsvPatch;
 	cv::cvtColor(patch, hsvPatch, cv::COLOR_BGR2HSV);
 
-	// 计算区域均值
-	cv::Scalar meanHSV = cv::mean(hsvPatch);
+	// 在采样区域内找饱和度最高的像素（准星通常使用鲜艳颜色，S值最高）
+	int bestIdx = -1;
+	int maxS = -1;
+	for (int i = 0; i < hsvPatch.rows * hsvPatch.cols; ++i) {
+		int s = hsvPatch.data[i * 3 + 1]; // S通道
+		int v = hsvPatch.data[i * 3 + 2]; // V通道
+		// 只看有一定亮度的像素（避免采到纯黑噪点）
+		if (v > 30 && s > maxS) {
+			maxS = s;
+			bestIdx = i;
+		}
+	}
 
-	int h = static_cast<int>(meanHSV[0]);
-	int s = static_cast<int>(meanHSV[1]);
-	int v = static_cast<int>(meanHSV[2]);
+	int h, s, v;
+	int bVal, gVal, rVal;
+	if (bestIdx >= 0) {
+		// 取饱和度最高像素的HSV值
+		h = hsvPatch.data[bestIdx * 3];
+		s = hsvPatch.data[bestIdx * 3 + 1];
+		v = hsvPatch.data[bestIdx * 3 + 2];
+		// 同时记录BGR值（patch是BGR格式）
+		bVal = patch.data[bestIdx * 3];
+		gVal = patch.data[bestIdx * 3 + 1];
+		rVal = patch.data[bestIdx * 3 + 2];
+	} else {
+		// 回退：取中心像素
+		h = hsvPatch.at<cv::Vec3b>(hsvPatch.rows / 2, hsvPatch.cols / 2)[0];
+		s = hsvPatch.at<cv::Vec3b>(hsvPatch.rows / 2, hsvPatch.cols / 2)[1];
+		v = hsvPatch.at<cv::Vec3b>(hsvPatch.rows / 2, hsvPatch.cols / 2)[2];
+		auto& bgr = patch.at<cv::Vec3b>(patch.rows / 2, patch.cols / 2);
+		bVal = bgr[0]; gVal = bgr[1]; rVal = bgr[2];
+	}
 
 	// 按容差计算HSV范围
 	config_.hMin = h - config_.hTolerance;
@@ -86,17 +113,24 @@ bool CrosshairDetector::pickColorFromFrame(const cv::Mat& bgrFrame,
 	config_.vMin = v - config_.vTolerance;
 	config_.vMax = v + config_.vTolerance;
 
+	// S和V下限至少为1，避免匹配到灰色/黑色区域
+	config_.sMin = std::max(1, config_.sMin);
+	config_.vMin = std::max(1, config_.vMin);
+
 	clampHSV(config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
 
 	// 记录取色结果
 	config_.pickedH = h;
 	config_.pickedS = s;
 	config_.pickedV = v;
+	config_.pickedB = bVal;
+	config_.pickedG = gVal;
+	config_.pickedR = rVal;
 	config_.colorPicked = true;
 	config_.pickingColor = false;
 
-	obs_log(LOG_INFO, "[CrosshairDetector] Color picked at (%.2f, %.2f): H=%d S=%d V=%d -> range H[%d-%d] S[%d-%d] V[%d-%d]",
-	        normX, normY, h, s, v,
+	obs_log(LOG_INFO, "[CrosshairDetector] Color picked at (%.2f, %.2f): RGB(%d,%d,%d) HSV(%d,%d,%d) -> range H[%d-%d] S[%d-%d] V[%d-%d]",
+	        normX, normY, rVal, gVal, bVal, h, s, v,
 	        config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
 
 	return true;
@@ -108,6 +142,53 @@ bool CrosshairDetector::pickColorFromCenter(const cv::Mat& bgrFrame,
 {
 	// 取帧中心
 	return pickColorFromFrame(bgrFrame, 0.5f, 0.5f, frameWidth, frameHeight, cropX, cropY);
+}
+
+void CrosshairDetector::applyManualRgb(int r, int g, int b)
+{
+	// RGB→HSV转换
+	int h, s, v;
+	rgbToHsv(r, g, b, h, s, v);
+
+	// 按容差计算HSV范围
+	config_.hMin = h - config_.hTolerance;
+	config_.hMax = h + config_.hTolerance;
+	config_.sMin = s - config_.sTolerance;
+	config_.sMax = s + config_.sTolerance;
+	config_.vMin = v - config_.vTolerance;
+	config_.vMax = v + config_.vTolerance;
+
+	config_.sMin = std::max(1, config_.sMin);
+	config_.vMin = std::max(1, config_.vMin);
+
+	clampHSV(config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
+
+	// 记录
+	config_.pickedH = h;
+	config_.pickedS = s;
+	config_.pickedV = v;
+	config_.pickedR = r;
+	config_.pickedG = g;
+	config_.pickedB = b;
+	config_.manualR = r;
+	config_.manualG = g;
+	config_.manualB = b;
+	config_.colorPicked = true;
+
+	obs_log(LOG_INFO, "[CrosshairDetector] Manual RGB(%d,%d,%d) -> HSV(%d,%d,%d) -> range H[%d-%d] S[%d-%d] V[%d-%d]",
+	        r, g, b, h, s, v,
+	        config_.hMin, config_.hMax, config_.sMin, config_.sMax, config_.vMin, config_.vMax);
+}
+
+void CrosshairDetector::rgbToHsv(int r, int g, int b, int& h, int& s, int& v)
+{
+	// 用OpenCV的cvtColor做精确转换
+	cv::Mat bgrPixel(1, 1, CV_8UC3, cv::Scalar(b, g, r));
+	cv::Mat hsvPixel;
+	cv::cvtColor(bgrPixel, hsvPixel, cv::COLOR_BGR2HSV);
+	h = hsvPixel.at<cv::Vec3b>(0, 0)[0];
+	s = hsvPixel.at<cv::Vec3b>(0, 0)[1];
+	v = hsvPixel.at<cv::Vec3b>(0, 0)[2];
 }
 
 std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,

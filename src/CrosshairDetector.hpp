@@ -26,17 +26,21 @@ struct CrosshairDetectorConfig {
 	// 吸管取色状态（运行时临时状态，不序列化）
 	bool pickingColor = false;   // 是否处于取色模式
 	bool colorPicked = false;    // 是否已取色成功
-	int pickedH = 0, pickedS = 0, pickedV = 0; // 取色结果
+	int pickedH = 0, pickedS = 0, pickedV = 0; // 取色结果(HSV)
+	int pickedR = 0, pickedG = 0, pickedB = 0; // 取色结果(BGR，方便用户确认)
+
+	// 手动RGB输入（用户直接输入已知准星颜色，自动转HSV）
+	int manualR = 0, manualG = 0, manualB = 0;
 
 	// 形态学参数
 	int morphKernelSize = 3;     // 核大小 (1-15)
-	int erodeIterations = 1;     // 腐蚀迭代 (0-5)
-	int dilateIterations = 2;    // 膨胀迭代 (0-10)
+	int erodeIterations = 0;     // 腐蚀迭代 (0-5)，准星细小建议0
+	int dilateIterations = 1;    // 膨胀迭代 (0-10)，轻微膨胀连接断裂线条
 
 	// 子矩阵分位数过滤
-	int gridRows = 8;            // 网格行数 (2-20)
-	int gridCols = 8;            // 网格列数 (2-20)
-	float quantileThreshold = 0.05f; // 分位数阈值 (0.0-1.0)
+	int gridRows = 4;            // 网格行数 (2-20)，准星细小时用更粗网格
+	int gridCols = 4;            // 网格列数 (2-20)
+	float quantileThreshold = 0.01f; // 分位数阈值 (0.0-1.0)，准星稀疏时设低
 
 	// 模板匹配
 	float matchThreshold = 0.6f; // 匹配阈值 (0.0-1.0)
@@ -75,6 +79,9 @@ public:
 	bool pickColorFromCenter(const cv::Mat& bgrFrame,
 	                         int frameWidth, int frameHeight,
 	                         int cropX, int cropY);
+
+	// 手动输入RGB颜色：将已知准星颜色(RGB)转为HSV并设置搜索范围
+	void applyManualRgb(int r, int g, int b);
 
 	// 更新配置
 	void updateConfig(const CrosshairDetectorConfig& cfg);
@@ -120,6 +127,9 @@ private:
 
 	// HSV范围clamp到合法区间
 	static void clampHSV(int& hMin, int& hMax, int& sMin, int& sMax, int& vMin, int& vMax);
+
+	// RGB→HSV转换（OpenCV范围：H 0-180, S/V 0-255）
+	static void rgbToHsv(int r, int g, int b, int& h, int& s, int& v);
 };
 
 #endif // _WIN32

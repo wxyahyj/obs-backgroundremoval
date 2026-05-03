@@ -1412,7 +1412,63 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	});
 	obs_property_set_long_description(crosshairPickColorProp, "点击后自动从帧中心采样HSV颜色并设置范围");
 	obs_property_t *crosshairColorInfoProp = obs_properties_add_text(props, "crosshair_color_info", "取色结果", OBS_TEXT_INFO);
-	obs_property_set_long_description(crosshairColorInfoProp, "显示最近一次取色的HSV值和范围");
+	obs_property_set_long_description(crosshairColorInfoProp, "显示最近一次取色的RGB和HSV值");
+
+	// 手动RGB输入（已知准星颜色时直接填入）
+	obs_property_t *chManualRProp = obs_properties_add_int_slider(props, "crosshair_manual_r", "准星颜色 R", 0, 255, 1);
+	obs_property_set_long_description(chManualRProp, "准星颜色的红色分量(0-255)，可从游戏设置中查看");
+	obs_property_t *chManualGProp = obs_properties_add_int_slider(props, "crosshair_manual_g", "准星颜色 G", 0, 255, 1);
+	obs_property_set_long_description(chManualGProp, "准星颜色的绿色分量(0-255)");
+	obs_property_t *chManualBProp = obs_properties_add_int_slider(props, "crosshair_manual_b", "准星颜色 B", 0, 255, 1);
+	obs_property_set_long_description(chManualBProp, "准星颜色的蓝色分量(0-255)");
+	obs_property_t *crosshairApplyRgbProp = obs_properties_add_button(props, "crosshair_apply_rgb", "✅ 应用RGB颜色（转换为HSV范围）", [](obs_properties_t *, obs_property_t *, void *data) -> bool {
+		auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+		if (!ptr) return false;
+		auto tf = *ptr;
+		if (!tf) return false;
+		// 从settings读取RGB值
+		obs_data_t *settings = obs_source_get_settings(tf->source);
+		if (!settings) return false;
+		int r = (int)obs_data_get_int(settings, "crosshair_manual_r");
+		int g = (int)obs_data_get_int(settings, "crosshair_manual_g");
+		int b = (int)obs_data_get_int(settings, "crosshair_manual_b");
+		obs_data_release(settings);
+		// 应用RGB→HSV
+		tf->crosshairDetector.applyManualRgb(r, g, b);
+		CrosshairDetectorConfig& chCfg = tf->crosshairConfig;
+		chCfg.pickedR = r; chCfg.pickedG = g; chCfg.pickedB = b;
+		chCfg.pickedH = tf->crosshairDetector.getConfig().pickedH;
+		chCfg.pickedS = tf->crosshairDetector.getConfig().pickedS;
+		chCfg.pickedV = tf->crosshairDetector.getConfig().pickedV;
+		chCfg.hMin = tf->crosshairDetector.getConfig().hMin;
+		chCfg.hMax = tf->crosshairDetector.getConfig().hMax;
+		chCfg.sMin = tf->crosshairDetector.getConfig().sMin;
+		chCfg.sMax = tf->crosshairDetector.getConfig().sMax;
+		chCfg.vMin = tf->crosshairDetector.getConfig().vMin;
+		chCfg.vMax = tf->crosshairDetector.getConfig().vMax;
+		chCfg.colorPicked = true;
+		tf->crosshairDetector.updateConfig(chCfg);
+		// 回写settings
+		obs_data_t *applySettings = obs_source_get_settings(tf->source);
+		if (applySettings) {
+			obs_data_set_int(applySettings, "crosshair_h_min", chCfg.hMin);
+			obs_data_set_int(applySettings, "crosshair_h_max", chCfg.hMax);
+			obs_data_set_int(applySettings, "crosshair_s_min", chCfg.sMin);
+			obs_data_set_int(applySettings, "crosshair_s_max", chCfg.sMax);
+			obs_data_set_int(applySettings, "crosshair_v_min", chCfg.vMin);
+			obs_data_set_int(applySettings, "crosshair_v_max", chCfg.vMax);
+			char infoText[256];
+			snprintf(infoText, sizeof(infoText),
+				"RGB(%d,%d,%d) HSV(%d,%d,%d) H[%d~%d] S[%d~%d] V[%d~%d]",
+				r, g, b, chCfg.pickedH, chCfg.pickedS, chCfg.pickedV,
+				chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
+			obs_data_set_string(applySettings, "crosshair_color_info", infoText);
+			obs_source_update(tf->source, applySettings);
+			obs_data_release(applySettings);
+		}
+		return true;
+	});
+	obs_property_set_long_description(crosshairApplyRgbProp, "将手动输入的RGB颜色转换为HSV搜索范围并应用");
 
 	// HSV手动微调
 	obs_property_t *chHMinProp = obs_properties_add_int_slider(props, "crosshair_h_min", "H最小", 0, 180, 1);
@@ -1926,6 +1982,10 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "crosshair_enabled"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_pick_color"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_color_info"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_manual_r"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_manual_g"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_manual_b"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_apply_rgb"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_h_min"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_h_max"), page == 7);
 	obs_property_set_visible(obs_properties_get(props, "crosshair_s_min"), page == 7);
@@ -2309,15 +2369,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "crosshair_s_max", 255);
     obs_data_set_default_int(settings, "crosshair_v_min", 100);
     obs_data_set_default_int(settings, "crosshair_v_max", 255);
+    obs_data_set_default_int(settings, "crosshair_manual_r", 0);
+    obs_data_set_default_int(settings, "crosshair_manual_g", 255);
+    obs_data_set_default_int(settings, "crosshair_manual_b", 0);
     obs_data_set_default_int(settings, "crosshair_h_tolerance", 10);
     obs_data_set_default_int(settings, "crosshair_s_tolerance", 40);
     obs_data_set_default_int(settings, "crosshair_v_tolerance", 40);
     obs_data_set_default_int(settings, "crosshair_morph_kernel", 3);
-    obs_data_set_default_int(settings, "crosshair_erode_iter", 1);
-    obs_data_set_default_int(settings, "crosshair_dilate_iter", 2);
-    obs_data_set_default_int(settings, "crosshair_grid_rows", 8);
-    obs_data_set_default_int(settings, "crosshair_grid_cols", 8);
-    obs_data_set_default_double(settings, "crosshair_quantile_threshold", 0.05);
+    obs_data_set_default_int(settings, "crosshair_erode_iter", 0);
+    obs_data_set_default_int(settings, "crosshair_dilate_iter", 1);
+    obs_data_set_default_int(settings, "crosshair_grid_rows", 4);
+    obs_data_set_default_int(settings, "crosshair_grid_cols", 4);
+    obs_data_set_default_double(settings, "crosshair_quantile_threshold", 0.01);
     obs_data_set_default_string(settings, "crosshair_template_path", "");
     obs_data_set_default_double(settings, "crosshair_match_threshold", 0.6);
     obs_data_set_default_int(settings, "crosshair_min_area", 10);
@@ -5556,10 +5619,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 					obs_data_set_int(pickSettings, "crosshair_v_min", chCfg.vMin);
 					obs_data_set_int(pickSettings, "crosshair_v_max", chCfg.vMax);
 
-					// 更新取色结果显示
+					// 更新取色结果显示（RGB + HSV + 搜索范围）
 					char infoText[256];
 					snprintf(infoText, sizeof(infoText),
-						"H=%d S=%d V=%d  →  H[%d~%d] S[%d~%d] V[%d~%d]",
+						"RGB(%d,%d,%d) HSV(%d,%d,%d) H[%d~%d] S[%d~%d] V[%d~%d]",
+						chCfg.pickedR, chCfg.pickedG, chCfg.pickedB,
 						chCfg.pickedH, chCfg.pickedS, chCfg.pickedV,
 						chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
 					obs_data_set_string(pickSettings, "crosshair_color_info", infoText);
@@ -5568,7 +5632,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 					obs_data_release(pickSettings);
 				}
 
-				obs_log(LOG_INFO, "[Crosshair] 吸管取色成功: H=%d S=%d V=%d, 范围 H[%d-%d] S[%d-%d] V[%d-%d]",
+				obs_log(LOG_INFO, "[Crosshair] 吸管取色成功: RGB(%d,%d,%d) HSV(%d,%d,%d), 范围 H[%d-%d] S[%d-%d] V[%d-%d]",
+					chCfg.pickedR, chCfg.pickedG, chCfg.pickedB,
 					chCfg.pickedH, chCfg.pickedS, chCfg.pickedV,
 					chCfg.hMin, chCfg.hMax, chCfg.sMin, chCfg.sMax, chCfg.vMin, chCfg.vMax);
 			}
@@ -6237,6 +6302,42 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	if (tf->useRegion) {
 		renderRegion(tf.get(), width, height);
 	}
+#ifdef _WIN32
+	// 渲染准星搜索半径（橙色圆圈）
+	if (tf->crosshairConfig.enabled) {
+		gs_effect_t *solid = tf->solidEffect;
+		gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+		gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+
+		int searchRadius = tf->crosshairConfig.searchRadius > 0
+			? tf->crosshairConfig.searchRadius
+			: static_cast<int>(width) / 6;
+		float cx = width / 2.0f;
+		float cy = height / 2.0f;
+		float r = static_cast<float>(searchRadius);
+
+		struct vec4 color;
+		vec4_set(&color, 1.0f, 0.5f, 0.0f, 0.8f); // 橙色
+
+		gs_technique_begin(tech);
+		gs_technique_begin_pass(tech, 0);
+		gs_effect_set_vec4(colorParam, &color);
+
+		// 渲染圆圈
+		const int circleSegments = 64;
+		gs_render_start(true);
+		for (int i = 0; i <= circleSegments; ++i) {
+			float angle = 2.0f * 3.1415926f * static_cast<float>(i) / static_cast<float>(circleSegments);
+			float x = cx + r * cosf(angle);
+			float y = cy + r * sinf(angle);
+			gs_vertex2f(x, y);
+		}
+		gs_render_stop(GS_LINESTRIP);
+
+		gs_technique_end_pass(tech);
+		gs_technique_end(tech);
+	}
+#endif
 
 	gs_blend_state_pop();
 
