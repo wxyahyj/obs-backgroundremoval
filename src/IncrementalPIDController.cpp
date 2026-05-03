@@ -17,7 +17,7 @@ void IncrementalPIDAdapter::setConfig(const IncrementalPIDConfig& config)
 {
     config_ = config;
     
-    chain_.configure_pid(config.kp, config.ki, config.kd, config.dAlpha);
+    chain_.configure_pid(config.kp, config.ki, config.kd, config.dAlpha, config.inputAlpha, config.outputAlpha);
     
     chainConfig_.speed_x = config.speedX;
     chainConfig_.speed_y = config.speedY;

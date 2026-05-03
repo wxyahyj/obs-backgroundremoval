@@ -77,11 +77,13 @@ private:
 
 } // namespace
 
-void IncrementalPid::configure(float kp, float ki, float kd, float d_alpha) {
+void IncrementalPid::configure(float kp, float ki, float kd, float d_alpha, float input_alpha, float output_alpha) {
     kp_ = kp;
     ki_ = ki;
     kd_ = kd;
     d_alpha_ = d_alpha;
+    input_alpha_ = input_alpha;
+    output_alpha_ = output_alpha;
 }
 
 void IncrementalPid::reset(float output) {
@@ -94,8 +96,7 @@ void IncrementalPid::reset(float output) {
 
 float IncrementalPid::update(float error) {
     // 输入EMA滤波（减少噪声）
-    const float input_alpha = 0.3f;
-    float filtered_error = input_alpha * error + (1.0f - input_alpha) * previous_error_;
+    float filtered_error = input_alpha_ * error + (1.0f - input_alpha_) * previous_error_;
 
     // 计算增量
     float p_term = kp_ * (filtered_error - previous_error_);
@@ -117,8 +118,7 @@ float IncrementalPid::update(float error) {
     output_ += delta;
 
     // 输出EMA滤波（平滑输出）
-    const float output_alpha = 0.4f;
-    output_ = output_alpha * output_ + (1.0f - output_alpha) * previous_output_;
+    output_ = output_alpha_ * output_ + (1.0f - output_alpha_) * previous_output_;
 
     // 输出衰减：防止累积过冲
     // 当误差减小时，加速衰减
@@ -141,8 +141,8 @@ float IncrementalPid::update(float error) {
     return output_;
 }
 
-void PidControlChain::configure_pid(float kp, float ki, float kd, float d_alpha) {
-    pid_.configure(kp, ki, kd, d_alpha);
+void PidControlChain::configure_pid(float kp, float ki, float kd, float d_alpha, float input_alpha, float output_alpha) {
+    pid_.configure(kp, ki, kd, d_alpha, input_alpha, output_alpha);
 }
 
 void PidControlChain::reset_runtime() {

@@ -96,7 +96,7 @@ struct ProcessResult {
 
 class IncrementalPid {
 public:
-    void configure(float kp, float ki, float kd, float d_alpha = 0.2f);
+    void configure(float kp, float ki, float kd, float d_alpha = 0.2f, float input_alpha = 0.3f, float output_alpha = 0.4f);
     void reset(float output = 0.0f);
     float update(float error);
 
@@ -117,14 +117,16 @@ private:
     float kp_ = 0.0f;
     float ki_ = 0.0f;
     float kd_ = 0.0f;
-    float d_alpha_ = 0.2f;  // D项滤波系数
+    float d_alpha_ = 0.2f;    // D项滤波系数
+    float input_alpha_ = 0.3f; // 输入滤波系数
+    float output_alpha_ = 0.4f; // 输出滤波系数
 };
 
 class PidControlChain {
 public:
     using FilterHook = std::function<float(float)>;
 
-    void configure_pid(float kp, float ki, float kd, float d_alpha = 0.2f);
+    void configure_pid(float kp, float ki, float kd, float d_alpha = 0.2f, float input_alpha = 0.3f, float output_alpha = 0.4f);
     void reset_runtime();
 
     ProcessResult process(ChainConfig& config,
