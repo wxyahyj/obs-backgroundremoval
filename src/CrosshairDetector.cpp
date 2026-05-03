@@ -401,8 +401,56 @@ std::vector<Detection> CrosshairDetector::detect(const cv::Mat& bgrFrame,
 	}
 
 	if (candidates.empty()) {
-		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 没有找到符合条件的连通域 (原始mask有%d个白色像素, 找到%zu个轮廓)", 
-		        originalWhitePixels, contours.size());
+		obs_log(LOG_INFO, "[CrosshairDetector] 轮廓检测无结果，尝试直接计算mask质心 (白色像素=%d)", 
+		        originalWhitePixels);
+		
+		// ========== 备选方案：直接计算mask质心 ==========
+		// 如果有白色像素但轮廓检测失败（像素太分散），直接用moments计算质心
+		if (originalWhitePixels >= config_.minArea) {
+			cv::Moments m = cv::moments(mask, true);
+			if (m.m00 > 0) {
+				float cx = static_cast<float>(m.m10 / m.m00);
+				float cy = static_cast<float>(m.m01 / m.m00);
+				
+				float fullFrameCx = cx + roiX;
+				float fullFrameCy = cy + roiY;
+				
+				float dx = fullFrameCx / imgW - fovCenterX;
+				float dy = fullFrameCy / imgH - fovCenterY;
+				float dist = std::sqrt(dx * dx + dy * dy);
+				
+				if (dist <= fovRadiusNorm * 1.1f) {
+					float normCX = fullFrameCx / imgW;
+					float normCY = fullFrameCy / imgH;
+					
+					Detection det;
+					det.classId = -2;
+					det.className = "crosshair";
+					det.confidence = 0.5f;  // 质心模式的置信度固定为0.5
+					det.centerX = normCX;
+					det.centerY = normCY;
+					det.x = normCX - 0.01f;
+					det.y = normCY - 0.01f;
+					det.width = 0.02f;
+					det.height = 0.02f;
+					det.trackId = -1;
+					det.lostFrames = 0;
+					
+					results.push_back(det);
+					
+					lastDetectedX_ = det.centerX;
+					lastDetectedY_ = det.centerY;
+					hasLastDetection_ = true;
+					
+					obs_log(LOG_INFO, "[CrosshairDetector] 质心模式成功: 位置(%.3f, %.3f), 白色像素=%d", 
+					        normCX, normCY, originalWhitePixels);
+					return results;
+				}
+			}
+		}
+		
+		obs_log(LOG_INFO, "[CrosshairDetector] 检测失败: 没有找到符合条件的连通域 (白色像素=%d)", 
+		        originalWhitePixels);
 		return results;
 	}
 
