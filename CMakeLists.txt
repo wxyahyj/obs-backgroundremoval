@@ -7,6 +7,9 @@ project(${_name} VERSION ${_version})
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
 option(ENABLE_QT "Use Qt functionality" ON)
 option(ENABLE_CUDA "Enable CUDA support for GPU texture preprocessing" ON)
+option(USE_TENSORRT_YOLO "Enable TensorRT-YOLO inference backend" OFF)
+
+set(TRT_PATH "" CACHE PATH "Path to TensorRT installation (required for USE_TENSORRT_YOLO)")
 
 set(VCPKG_TARGET_TRIPLET "" CACHE STRING "Vcpkg target triplet to use")
 option(USE_PKGCONFIG "Use pkg-config to find dependencies" ON)
@@ -290,6 +293,80 @@ target_sources(
     src/yolo-detector-filter.cpp
     src/models/ModelYOLO.cpp
 )
+
+# TensorRT-YOLO 支持
+if(USE_TENSORRT_YOLO)
+  if(NOT TRT_PATH)
+    message(FATAL_ERROR "TRT_PATH must be specified when USE_TENSORRT_YOLO is enabled")
+  endif()
+  
+  if(NOT EXISTS "${TRT_PATH}/include/NvInfer.h")
+    message(FATAL_ERROR "TensorRT not found at ${TRT_PATH}")
+  endif()
+  
+  message(STATUS "TensorRT-YOLO enabled - TensorRT path: ${TRT_PATH}")
+  
+  # TensorRT 库
+  set(TRT_LIB_DIR "${TRT_PATH}/lib")
+  if(MSVC AND EXISTS "${TRT_LIB_DIR}/nvinfer_10.lib")
+    set(TRT_LIBS nvinfer_10 nvinfer_plugin_10 nvonnxparser_10)
+  else()
+    set(TRT_LIBS nvinfer nvinfer_plugin nvonnxparser)
+  endif()
+  
+  # trtyolo 源码
+  set(TRTYOLO_SOURCES
+    src/trtyolo/core/buffer.cpp
+    src/trtyolo/core/core.cpp
+    src/trtyolo/infer/backend.cpp
+    src/trtyolo/infer/trtyolo.cpp
+    src/trtyolo/infer/letterbox.cu
+    src/trtyolo/utils/common.cpp
+  )
+  
+  # 插件源码
+  set(TRTYOLO_PLUGIN_SOURCES
+    src/trtyolo/plugin/common/common.cu
+    src/trtyolo/plugin/common/plugin.cpp
+    src/trtyolo/plugin/common/vfcCommon.cpp
+    src/trtyolo/plugin/efficientIdxNMSPlugin/efficientIdxNMSInference.cu
+    src/trtyolo/plugin/efficientIdxNMSPlugin/efficientIdxNMSPlugin.cpp
+    src/trtyolo/plugin/efficientRotatedNMSPlugin/efficientRotatedNMSInference.cu
+    src/trtyolo/plugin/efficientRotatedNMSPlugin/efficientRotatedNMSPlugin.cpp
+  )
+  
+  # 设置 CUDA 架构
+  set_source_files_properties(${TRTYOLO_SOURCES} ${TRTYOLO_PLUGIN_SOURCES} 
+    PROPERTIES CUDA_ARCHITECTURES "75;86;89;90")
+  
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE 
+    ${TRTYOLO_SOURCES} 
+    ${TRTYOLO_PLUGIN_SOURCES}
+    src/models/ModelTensorRTYOLO.cpp
+  )
+  
+  target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    ${TRT_PATH}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/infer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/plugin
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/plugin/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/plugin/efficientIdxNMSPlugin
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/trtyolo/plugin/efficientRotatedNMSPlugin
+  )
+  
+  target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE ${TRT_LIB_DIR})
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${TRT_LIBS})
+  
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE USE_TENSORRT_YOLO)
+  
+  # CUDA 编译选项
+  target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE 
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-deprecated-declarations>
+  )
+endif()
 
 if(WIN32)
   target_sources(

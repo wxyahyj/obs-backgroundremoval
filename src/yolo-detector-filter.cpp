@@ -37,6 +37,9 @@
 
 #include <plugin-support.h>
 #include "models/ModelYOLO.h"
+#ifdef USE_TENSORRT_YOLO
+#include "models/ModelTensorRTYOLO.h"
+#endif
 #include "models/Detection.h"
 #include "HungarianAlgorithm.hpp"
 #include "FilterData.h"
@@ -58,6 +61,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::unique_ptr<ModelYOLO> yoloModel;
 	std::mutex yoloModelMutex;
 	ModelYOLO::Version modelVersion;
+	
+#ifdef USE_TENSORRT_YOLO
+	std::unique_ptr<ModelTensorRTYOLO> trtYoloModel;
+	std::string trtEnginePath;
+	bool useTrtYolo = false;
+#endif
 
 	std::vector<Detection> detections;
 	std::mutex detectionsMutex;
@@ -649,6 +658,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #ifdef _WIN32
 	obs_property_t *useGpuTextureProp = obs_properties_add_bool(props, "use_gpu_texture_inference", "启用GPU纹理推理(实验性)");
 	obs_property_set_long_description(useGpuTextureProp, "直接在GPU上处理纹理，避免GPU-CPU数据传输（支持CUDA/DML设备）");
+#endif
+
+#ifdef USE_TENSORRT_YOLO
+	obs_properties_add_group(props, "trt_yolo_group", "TensorRT-YOLO (高性能)", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *useTrtYoloProp = obs_properties_add_bool(props, "use_trt_yolo", "启用 TensorRT-YOLO");
+	obs_property_set_long_description(useTrtYoloProp, "使用 TensorRT-YOLO 进行高性能推理（需要 .engine 模型文件）");
+	obs_property_t *trtEnginePathProp = obs_properties_add_path(props, "trt_engine_path", "TensorRT 引擎路径", OBS_PATH_FILE, "TensorRT Engine (*.engine)", nullptr);
+	obs_property_set_long_description(trtEnginePathProp, "选择 TensorRT 引擎文件（.engine）");
 #endif
 	
 	obs_property_t *resolutionList = obs_properties_add_list(props, "input_resolution", obs_module_text("InputResolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -1477,6 +1494,12 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "use_gpu"), page == 0);
 #ifdef _WIN32
 	obs_property_set_visible(obs_properties_get(props, "use_gpu_texture_inference"), page == 0);
+	
+#ifdef USE_TENSORRT_YOLO
+	obs_property_set_visible(obs_properties_get(props, "trt_yolo_group"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "use_trt_yolo"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "trt_engine_path"), page == 0);
+#endif
 #endif
 	obs_property_set_visible(obs_properties_get(props, "input_resolution"), page == 0);
 	obs_property_set_visible(obs_properties_get(props, "num_threads"), page == 0);
@@ -1665,6 +1688,11 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
 #ifdef _WIN32
 	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
+	
+#ifdef USE_TENSORRT_YOLO
+	obs_data_set_default_bool(settings, "use_trt_yolo", false);
+	obs_data_set_default_string(settings, "trt_engine_path", "");
+#endif
 #endif
 	obs_data_set_default_int(settings, "input_resolution", 640);
 	obs_data_set_default_int(settings, "num_threads", 4);
@@ -2099,6 +2127,46 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	}
 	
 	tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
+
+#ifdef USE_TENSORRT_YOLO
+	// TensorRT-YOLO 配置
+	bool newUseTrtYolo = obs_data_get_bool(settings, "use_trt_yolo");
+	std::string newTrtEnginePath = obs_data_get_string(settings, "trt_engine_path");
+	
+	bool needTrtModelUpdate = false;
+	{
+		std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+		needTrtModelUpdate = (newUseTrtYolo != tf->useTrtYolo || newTrtEnginePath != tf->trtEnginePath);
+	}
+	
+	if (needTrtModelUpdate) {
+		tf->useTrtYolo = newUseTrtYolo;
+		tf->trtEnginePath = newTrtEnginePath;
+		
+		if (tf->useTrtYolo && !tf->trtEnginePath.empty()) {
+			try {
+				obs_log(LOG_INFO, "[YOLO Filter] Loading TensorRT-YOLO engine: %s", tf->trtEnginePath.c_str());
+				
+				auto newTrtModel = std::make_unique<ModelTensorRTYOLO>(ModelTensorRTYOLO::Version::YOLOv11);
+				newTrtModel->loadEngine(tf->trtEnginePath, tf->inputResolution);
+				
+				obs_log(LOG_INFO, "[YOLO Filter] TensorRT-YOLO engine loaded successfully");
+				
+				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+				tf->trtYoloModel = std::move(newTrtModel);
+				
+			} catch (const std::exception& e) {
+				obs_log(LOG_ERROR, "[YOLO Filter] Failed to load TensorRT-YOLO engine: %s", e.what());
+				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+				tf->trtYoloModel.reset();
+				tf->useTrtYolo = false;
+			}
+		} else {
+			std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
+			tf->trtYoloModel.reset();
+		}
+	}
+#endif
 	
 #ifdef _WIN32
 	tf->useGpuTextureInference = obs_data_get_bool(settings, "use_gpu_texture_inference");
@@ -2146,6 +2214,20 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 				tf->targetClasses.clear();
 			}
 		}
+		
+#ifdef USE_TENSORRT_YOLO
+		// 同步 TensorRT 模型参数
+		if (tf->trtYoloModel && tf->trtYoloModel->isLoaded()) {
+			tf->trtYoloModel->setConfidenceThreshold(tf->confidenceThreshold);
+			tf->trtYoloModel->setNMSThreshold(tf->nmsThreshold);
+			
+			if (!tf->targetClasses.empty()) {
+				tf->trtYoloModel->setTargetClasses(tf->targetClasses);
+			} else {
+				tf->trtYoloModel->setTargetClass(tf->targetClassId);
+			}
+		}
+#endif
 	}
 	
 	// 推理状态 - 只有当设置中明确存在时才更新，避免参数调整时重置
@@ -4127,6 +4209,13 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		std::vector<Detection> newDetections;
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
+			
+#ifdef USE_TENSORRT_YOLO
+			// 优先使用 TensorRT-YOLO
+			if (filter->useTrtYolo && filter->trtYoloModel) {
+				newDetections = filter->trtYoloModel->inference(inferenceFrame);
+			} else
+#endif
 			if (filter->yoloModel) {
 #ifdef _WIN32
 #if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
