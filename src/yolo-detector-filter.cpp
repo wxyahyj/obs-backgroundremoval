@@ -529,6 +529,18 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	float dynamicErrorTolerance;
 	float dynamicSmoothingFactor;
 	
+	// 外部PID参数
+	float externalKpX;
+	float externalKiX;
+	float externalKdX;
+	float externalKpY;
+	float externalKiY;
+	float externalKdY;
+	float externalPredictX;
+	float externalPredictY;
+	float externalRateX;
+	float externalRateY;
+	
 	// 准星检测器
 	CrosshairDetector crosshairDetector;
 	CrosshairDetectorConfig crosshairConfig;
@@ -1099,7 +1111,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "ChrisPID (克里斯控制器)", 2);
 	obs_property_list_add_int(algorithmTypeList, "动态PID (动态阈值)", 3);
 	obs_property_list_add_int(algorithmTypeList, "AdaptivePID (自适应PID)", 4);
-	obs_property_list_add_int(algorithmTypeList, "IncrementalPID (增量式PID)", 5);
+	obs_property_list_add_int(algorithmTypeList, "外部PID (pid_x64.lib)", 5);
+	obs_property_list_add_int(algorithmTypeList, "IncrementalPID (增量式PID)", 6);
 	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含自适应P增益、预测等功能；标准PID是经典PID控制；ChrisPID是克里斯控制器；动态PID基于动态阈值和状态机；AdaptivePID是P_PID自适应控制器；IncrementalPID是MIST增量式PID控制器");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
@@ -1111,6 +1124,29 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *dynamicKdProp = obs_properties_add_float_slider(props, "dynamic_kd", "动态PID-Kd", 0.0, 0.5, 0.001);
 	obs_property_set_long_description(dynamicKdProp, "动态PID微分系数");
 	obs_property_t *dynamicThresholdProp = obs_properties_add_float_slider(props, "dynamic_target_threshold", "达标误差阈值", 0.0, 20.0, 0.1);
+	
+	// 外部PID参数组
+	obs_properties_add_group(props, "external_pid_group", "外部PID配置 (pid_x64.lib)", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *extKpXProp = obs_properties_add_float_slider(props, "external_kp_x", "X轴-Kp", 0.0, 10.0, 0.1);
+	obs_property_set_long_description(extKpXProp, "外部PID X轴比例系数");
+	obs_property_t *extKiXProp = obs_properties_add_float_slider(props, "external_ki_x", "X轴-Ki", 0.0, 5.0, 0.01);
+	obs_property_set_long_description(extKiXProp, "外部PID X轴积分系数");
+	obs_property_t *extKdXProp = obs_properties_add_float_slider(props, "external_kd_x", "X轴-Kd", 0.0, 10.0, 0.1);
+	obs_property_set_long_description(extKdXProp, "外部PID X轴微分系数");
+	obs_property_t *extKpYProp = obs_properties_add_float_slider(props, "external_kp_y", "Y轴-Kp", 0.0, 10.0, 0.1);
+	obs_property_set_long_description(extKpYProp, "外部PID Y轴比例系数");
+	obs_property_t *extKiYProp = obs_properties_add_float_slider(props, "external_ki_y", "Y轴-Ki", 0.0, 5.0, 0.01);
+	obs_property_set_long_description(extKiYProp, "外部PID Y轴积分系数");
+	obs_property_t *extKdYProp = obs_properties_add_float_slider(props, "external_kd_y", "Y轴-Kd", 0.0, 10.0, 0.1);
+	obs_property_set_long_description(extKdYProp, "外部PID Y轴微分系数");
+	obs_property_t *extPredictXProp = obs_properties_add_float_slider(props, "external_predict_x", "X轴-预测参数", 0.0, 5.0, 0.1);
+	obs_property_set_long_description(extPredictXProp, "外部PID X轴预测参数");
+	obs_property_t *extPredictYProp = obs_properties_add_float_slider(props, "external_predict_y", "Y轴-预测参数", 0.0, 5.0, 0.1);
+	obs_property_set_long_description(extPredictYProp, "外部PID Y轴预测参数");
+	obs_property_t *extRateXProp = obs_properties_add_float_slider(props, "external_rate_x", "X轴-采样率", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(extRateXProp, "外部PID X轴采样率");
+	obs_property_t *extRateYProp = obs_properties_add_float_slider(props, "external_rate_y", "Y轴-采样率", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(extRateYProp, "外部PID Y轴采样率");
 	obs_property_set_long_description(dynamicThresholdProp, "误差小于此值时视为达标，激活完整PID");
 	obs_property_t *dynamicSpeedProp = obs_properties_add_float_slider(props, "dynamic_speed_multiplier", "速度倍率", 0.0, 5.0, 0.1);
 	obs_property_set_long_description(dynamicSpeedProp, "速度计算倍率系数");
@@ -1432,6 +1468,26 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 7);
 	}
 
+	// 动态PID参数只在algorithm == 3时显示
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
+
+	// 外部PID参数只在algorithm == 5时显示
+	obs_property_set_visible(obs_properties_get(props, "external_pid_group"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 5);
+
 	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
 
@@ -1539,6 +1595,26 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
+
+	// 动态PID参数只在algorithm == 3时显示
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
+
+	// 外部PID参数只在algorithm == 5时显示
+	obs_property_set_visible(obs_properties_get(props, "external_pid_group"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_y"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_x"), page == 3 && algorithm == 5);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 5);
 
 	// 测试连接按钮只在基础页面显示
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
@@ -1997,6 +2073,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_bool(settings, "incremental_pid_enabled", true);
     obs_data_set_default_bool(settings, "incremental_side_comp", false);
     obs_data_set_default_double(settings, "incremental_side_comp_cap", 5.0);
+    
+    // 外部PID默认值
+    obs_data_set_default_double(settings, "external_kp_x", 1.5);
+    obs_data_set_default_double(settings, "external_ki_x", 0.0);
+    obs_data_set_default_double(settings, "external_kd_x", 1.5);
+    obs_data_set_default_double(settings, "external_kp_y", 1.5);
+    obs_data_set_default_double(settings, "external_ki_y", 0.0);
+    obs_data_set_default_double(settings, "external_kd_y", 1.5);
+    obs_data_set_default_double(settings, "external_predict_x", 1.0);
+    obs_data_set_default_double(settings, "external_predict_y", 1.0);
+    obs_data_set_default_double(settings, "external_rate_x", 0.3);
+    obs_data_set_default_double(settings, "external_rate_y", 0.3);
     obs_data_set_default_double(settings, "incremental_side_comp_denom", 1.0);
     obs_data_set_default_double(settings, "incremental_input_alpha", 0.3);
     obs_data_set_default_double(settings, "incremental_d_alpha", 0.2);
@@ -2454,6 +2542,18 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->dynamicMinDataPoints = (int)obs_data_get_int(settings, "dynamic_min_data_points");
 	tf->dynamicErrorTolerance = (float)obs_data_get_double(settings, "dynamic_error_tolerance");
 	tf->dynamicSmoothingFactor = (float)obs_data_get_double(settings, "dynamic_smoothing_factor");
+
+	// 外部PID参数
+	tf->externalKpX = (float)obs_data_get_double(settings, "external_kp_x");
+	tf->externalKiX = (float)obs_data_get_double(settings, "external_ki_x");
+	tf->externalKdX = (float)obs_data_get_double(settings, "external_kd_x");
+	tf->externalKpY = (float)obs_data_get_double(settings, "external_kp_y");
+	tf->externalKiY = (float)obs_data_get_double(settings, "external_ki_y");
+	tf->externalKdY = (float)obs_data_get_double(settings, "external_kd_y");
+	tf->externalPredictX = (float)obs_data_get_double(settings, "external_predict_x");
+	tf->externalPredictY = (float)obs_data_get_double(settings, "external_predict_y");
+	tf->externalRateX = (float)obs_data_get_double(settings, "external_rate_x");
+	tf->externalRateY = (float)obs_data_get_double(settings, "external_rate_y");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -5352,10 +5452,17 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.bezierCurvature = cfg.bezierCurvature;
 		mcConfig.bezierRandomness = cfg.bezierRandomness;
 		// 算法选择（使用全局设置）
-		mcConfig.algorithmType = static_cast<AlgorithmType>(tf->algorithmTypeGlobal);
-		// 标准PID参数（使用全局设置）
-		// 算法类型
-		mcConfig.algorithmType = (tf->algorithmTypeGlobal == 0) ? AlgorithmType::AdvancedPID : AlgorithmType::DynamicPID;
+		// 0=AdvancedPID, 1=StandardPID, 2=ChrisPID, 3=DynamicPID, 4=AdaptivePID, 5=ExternalPID, 6=IncrementalPID
+		switch (tf->algorithmTypeGlobal) {
+			case 0: mcConfig.algorithmType = AlgorithmType::AdvancedPID; break;
+			case 1: mcConfig.algorithmType = AlgorithmType::AdvancedPID; break;  // StandardPID暂用AdvancedPID
+			case 2: mcConfig.algorithmType = AlgorithmType::AdvancedPID; break;  // ChrisPID暂用AdvancedPID
+			case 3: mcConfig.algorithmType = AlgorithmType::DynamicPID; break;
+			case 4: mcConfig.algorithmType = AlgorithmType::AdvancedPID; break;  // AdaptivePID暂用AdvancedPID
+			case 5: mcConfig.algorithmType = AlgorithmType::ExternalPID; break;
+			case 6: mcConfig.algorithmType = AlgorithmType::AdvancedPID; break;  // IncrementalPID暂用AdvancedPID
+			default: mcConfig.algorithmType = AlgorithmType::AdvancedPID; break;
+		}
 		// 动态PID参数
 		mcConfig.dynamicKp = tf->dynamicKp;
 		mcConfig.dynamicKi = tf->dynamicKi;
@@ -5369,6 +5476,17 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.dynamicMinDataPoints = tf->dynamicMinDataPoints;
 		mcConfig.dynamicErrorTolerance = tf->dynamicErrorTolerance;
 		mcConfig.dynamicSmoothingFactor = tf->dynamicSmoothingFactor;
+		// 外部PID参数
+		mcConfig.externalKpX = tf->externalKpX;
+		mcConfig.externalKiX = tf->externalKiX;
+		mcConfig.externalKdX = tf->externalKdX;
+		mcConfig.externalKpY = tf->externalKpY;
+		mcConfig.externalKiY = tf->externalKiY;
+		mcConfig.externalKdY = tf->externalKdY;
+		mcConfig.externalPredictX = tf->externalPredictX;
+		mcConfig.externalPredictY = tf->externalPredictY;
+		mcConfig.externalRateX = tf->externalRateX;
+		mcConfig.externalRateY = tf->externalRateY;
 		// 神经网络轨迹生成器参数
 		mcConfig.enableNeuralPath = cfg.enableNeuralPath;
 		mcConfig.neuralPathPoints = cfg.neuralPathPoints;

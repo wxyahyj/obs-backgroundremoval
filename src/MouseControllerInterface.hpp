@@ -13,7 +13,8 @@ enum class ControllerType {
 
 enum class AlgorithmType {
     AdvancedPID,      // 高级PID（当前使用的自适应PID）
-    DynamicPID        // 动态PID（动态阈值状态机）
+    DynamicPID,       // 动态PID（动态阈值状态机）
+    ExternalPID       // 外部PID库（pid_x64.lib）
 };
 
 // PID数据回调函数类型
@@ -165,6 +166,25 @@ struct MouseControllerConfig {
     int   dynamicMinDataPoints = 2;            // 最小数据量
     float dynamicErrorTolerance = 3.0f;        // 误差变化容限
     float dynamicSmoothingFactor = 0.8f;       // 平滑因子
+    
+    // 外部PID参数（pid_x64.lib）
+    float externalKpX = 1.5f;                  // X轴比例系数
+    float externalKiX = 0.0f;                  // X轴积分系数
+    float externalKdX = 1.5f;                  // X轴微分系数
+    float externalKpY = 1.5f;                  // Y轴比例系数
+    float externalKiY = 0.0f;                  // Y轴积分系数
+    float externalKdY = 1.5f;                  // Y轴微分系数
+    float externalPredictX = 1.0f;             // X轴预测参数
+    float externalPredictY = 1.0f;             // Y轴预测参数
+    float externalRateX = 0.3f;                // X轴采样率
+    float externalRateY = 0.3f;                // Y轴采样率
+    float externalKiMode = 1.0f;               // 积分模式
+    float externalKpLimit = 9900.0f;           // P项限幅
+    float externalKiLimit = 9900.0f;           // I项限幅
+    float externalKdLimit = 9900.0f;           // D项限幅
+    float externalOutputLimit = 0.0f;          // 输出限幅（0=不限幅）
+    float externalKiRate = 0.05f;              // 积分速率
+    float externalKiDeadband = 0.5f;           // 积分死区
     
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重

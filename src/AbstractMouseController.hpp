@@ -15,6 +15,7 @@
 #include "DynamicPIDController.hpp"
 #include "OneEuroFilter.hpp"
 #include "curve.hpp"
+#include "../libs/pid/pid.h"
 
 class AbstractMouseController : public MouseControllerInterface {
 protected:
@@ -70,6 +71,10 @@ protected:
 
     DynamicPIDAxis dynamicPidX;  // 动态PID X轴控制器
     DynamicPIDAxis dynamicPidY;  // 动态PID Y轴控制器
+
+    PidController externalPidX;  // 外部PID X轴控制器
+    PidController externalPidY;  // 外部PID Y轴控制器
+    bool externalPidInitialized_; // 外部PID是否已初始化
 
     OneEuroFilter oneEuroX;  // 高级PID一欧元滤波器X轴
     OneEuroFilter oneEuroY;  // 高级PID一欧元滤波器Y轴

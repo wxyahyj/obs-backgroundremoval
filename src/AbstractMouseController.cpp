@@ -59,6 +59,7 @@ AbstractMouseController::AbstractMouseController()
     , neuralPathIndex_(0)
     , lastNeuralTargetX_(0.0f)
     , lastNeuralTargetY_(0.0f)
+    , externalPidInitialized_(false)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -74,7 +75,28 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
                           config.autoTriggerFireDuration != newConfig.autoTriggerFireDuration ||
                           config.autoTriggerInterval != newConfig.autoTriggerInterval);
     
+    // 检测外部PID参数变化
+    bool externalPidParamsChanged = (
+        config.externalKpX != newConfig.externalKpX ||
+        config.externalKiX != newConfig.externalKiX ||
+        config.externalKdX != newConfig.externalKdX ||
+        config.externalKpY != newConfig.externalKpY ||
+        config.externalKiY != newConfig.externalKiY ||
+        config.externalKdY != newConfig.externalKdY ||
+        config.externalPredictX != newConfig.externalPredictX ||
+        config.externalPredictY != newConfig.externalPredictY ||
+        config.externalRateX != newConfig.externalRateX ||
+        config.externalRateY != newConfig.externalRateY
+    );
+    
     config = newConfig;
+    
+    // 外部PID参数变化时重置初始化状态
+    if (externalPidParamsChanged) {
+        externalPidInitialized_ = false;
+        externalPidX.reset();
+        externalPidY.reset();
+    }
     
     config.bezierCurvature = std::clamp(config.bezierCurvature, 0.0f, 1.0f);
     config.bezierRandomness = std::clamp(config.bezierRandomness, 0.0f, 0.5f);
@@ -744,6 +766,61 @@ void AbstractMouseController::tick()
         integralY = 0.0f;
         integralGainX = 0.0f;
         integralGainY = 0.0f;
+    } else if (config.algorithmType == AlgorithmType::ExternalPID) {
+        // 外部PID库（pid_x64.lib）
+        if (!externalPidInitialized_) {
+            externalPidX.setName("ExternalPID_X");
+            externalPidY.setName("ExternalPID_Y");
+            externalPidX.init(config.externalKpX, config.externalKiX, config.externalKdX, config.externalPredictX, config.externalRateX);
+            externalPidY.init(config.externalKpY, config.externalKiY, config.externalKdY, config.externalPredictY, config.externalRateY);
+            externalPidX.setBase(config.externalKiMode, config.externalKpLimit, config.externalKiLimit, config.externalKdLimit, config.externalOutputLimit, config.externalKiRate, config.externalKiDeadband);
+            externalPidY.setBase(config.externalKiMode, config.externalKpLimit, config.externalKiLimit, config.externalKdLimit, config.externalOutputLimit, config.externalKiRate, config.externalKiDeadband);
+            externalPidInitialized_ = true;
+        }
+
+        float externalErrorX = errorX;
+        float externalErrorY = errorY;
+
+        if (config.useDerivativePredictor) {
+            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+            float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
+            externalErrorX += config.predictionWeightX * derivPredictedX;
+            externalErrorY += config.predictionWeightY * derivPredictedY;
+        }
+
+        moveX = static_cast<float>(externalPidX.update(externalErrorX));
+        moveY = static_cast<float>(externalPidY.update(externalErrorY));
+
+        static int externalLogCounter = 0;
+        if (++externalLogCounter >= 30) {
+            externalLogCounter = 0;
+            blog(LOG_INFO, "[%s外部PID] dt=%.4f | errorX=%.1f errorY=%.1f | extErrX=%.1f extErrY=%.1f | moveX=%.1f moveY=%.1f",
+                 getLogPrefix(), deltaTime, errorX, errorY, externalErrorX, externalErrorY, moveX, moveY);
+            blog(LOG_INFO, "[%s外部PID] KpX=%.2f KiX=%.2f KdX=%.2f | KpY=%.2f KiY=%.2f KdY=%.2f",
+                 getLogPrefix(), config.externalKpX, config.externalKiX, config.externalKdX, config.externalKpY, config.externalKiY, config.externalKdY);
+        }
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.externalKpX;
+            data.currentKi = config.externalKiX;
+            data.currentKd = config.externalKdX;
+            data.algorithmType = 3;
+            data.isFiring = isFiring;
+            pidDataCallback_(data);
+        }
+
+        previousErrorX = errorX;
+        previousErrorY = errorY;
     }
     
     bool firing = checkFiring();
