@@ -90,6 +90,7 @@ struct MouseControllerConfig {
     float deadZonePixels = 5.0f;
     float targetYOffset = 0.0f;
     float derivativeFilterAlpha = 0.2f;
+    // 注：自适应增益、卡尔曼滤波、跳变检测(30像素)、软限幅(atan2)始终启用，像专业PID一样自动运行
     
     ControllerType controllerType = ControllerType::WindowsAPI;
     std::string makcuPort;

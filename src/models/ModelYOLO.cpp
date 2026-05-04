@@ -4,6 +4,12 @@
 #include <algorithm>
 #include <fstream>
 #include <numeric>
+
+// SIMD头文件
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 #include <d3d11.h>
 #include <dml_provider_factory.h>
@@ -422,6 +428,7 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
 
 void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
     const int channelSize = inputWidth_ * inputHeight_;
+    const float norm = 1.0f / 255.0f;  // 预计算归一化因子
     
     if (input.channels() == 4) {
         const unsigned char* inputData = input.data;
@@ -429,10 +436,39 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
         float* gChannel = outputBuffer + channelSize;
         float* bChannel = outputBuffer + channelSize * 2;
         
-        for (int i = 0; i < channelSize; ++i) {
-            rChannel[i] = inputData[i * 4 + 2] / 255.0f;
-            gChannel[i] = inputData[i * 4 + 1] / 255.0f;
-            bChannel[i] = inputData[i * 4 + 0] / 255.0f;
+        // SIMD优化：一次处理4个像素
+        int i = 0;
+#ifdef __AVX2__
+        const __m256 normVec = _mm256_set1_ps(norm);
+        for (; i + 3 < channelSize; i += 4) {
+            // 加载16字节（4个BGRA像素）
+            __m128i bgra0 = _mm_loadu_si128((const __m128i*)(inputData + i * 4));
+            
+            // 提取各通道（每通道4个8位值）
+            __m128i b0 = _mm_and_si128(bgra0, _mm_set1_epi32(0xFF));
+            __m128i g0 = _mm_and_si128(_mm_srli_epi32(bgra0, 8), _mm_set1_epi32(0xFF));
+            __m128i r0 = _mm_and_si128(_mm_srli_epi32(bgra0, 16), _mm_set1_epi32(0xFF));
+            
+            // 转换为浮点并归一化
+            __m256 rFloat = _mm256_cvtepi32_ps(r0);
+            __m256 gFloat = _mm256_cvtepi32_ps(g0);
+            __m256 bFloat = _mm256_cvtepi32_ps(b0);
+            
+            rFloat = _mm256_mul_ps(rFloat, normVec);
+            gFloat = _mm256_mul_ps(gFloat, normVec);
+            bFloat = _mm256_mul_ps(bFloat, normVec);
+            
+            // 存储到输出缓冲区
+            _mm256_storeu_ps(rChannel + i, rFloat);
+            _mm256_storeu_ps(gChannel + i, gFloat);
+            _mm256_storeu_ps(bChannel + i, bFloat);
+        }
+#endif
+        // 处理剩余像素
+        for (; i < channelSize; ++i) {
+            rChannel[i] = inputData[i * 4 + 2] * norm;
+            gChannel[i] = inputData[i * 4 + 1] * norm;
+            bChannel[i] = inputData[i * 4 + 0] * norm;
         }
     } else if (input.channels() == 3) {
         const unsigned char* inputData = input.data;
@@ -440,17 +476,19 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
         float* gChannel = outputBuffer + channelSize;
         float* bChannel = outputBuffer + channelSize * 2;
         
-        for (int i = 0; i < channelSize; ++i) {
-            rChannel[i] = inputData[i * 3 + 2] / 255.0f;
-            gChannel[i] = inputData[i * 3 + 1] / 255.0f;
-            bChannel[i] = inputData[i * 3 + 0] / 255.0f;
+        // BGR格式处理
+        int i = 0;
+        for (; i < channelSize; ++i) {
+            rChannel[i] = inputData[i * 3 + 2] * norm;
+            gChannel[i] = inputData[i * 3 + 1] * norm;
+            bChannel[i] = inputData[i * 3 + 0] * norm;
         }
     } else {
         cv::Mat rgb;
         cv::cvtColor(input, rgb, cv::COLOR_GRAY2RGB);
         
         cv::Mat floatMat;
-        rgb.convertTo(floatMat, CV_32F, 1.0f / 255.0f);
+        rgb.convertTo(floatMat, CV_32F, norm);
         
         std::vector<cv::Mat> channels(3);
         cv::split(floatMat, channels);

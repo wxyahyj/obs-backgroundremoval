@@ -30,6 +30,20 @@ AbstractMouseController::AbstractMouseController()
     , integralY(0.0f)
     , integralGainX(0.0f)
     , integralGainY(0.0f)
+    , adaptivePGainX(1.0f)
+    , adaptivePGainY(1.0f)
+    , adaptiveIGainX(1.0f)
+    , adaptiveIGainY(1.0f)
+    , kf2X(0.0f, 1.0f, 0.0f, 1.0f)
+    , kf2Y(0.0f, 1.0f, 0.0f, 1.0f)
+    , kalmanOutputX(0.1f, 1.0f, 0.0f, 1.0f)
+    , kalmanOutputY(0.1f, 1.0f, 0.0f, 1.0f)
+    , kf3X_x(0.0f)
+    , kf3X_P(1.0f)
+    , kf3Y_x(0.0f)
+    , kf3Y_P(1.0f)
+    , lastOutputX(0.0f)
+    , lastOutputY(0.0f)
     , lockedTrackId(-1)
     , lastRecoilTime(std::chrono::steady_clock::now())
     , isFiring(false)
@@ -451,62 +465,289 @@ void AbstractMouseController::tick()
     float moveX, moveY;
 
     if (config.algorithmType == AlgorithmType::AdvancedPID) {
-        // 精简版高级PID：动态P增益 + 导数预测 + D项滤波 + 积分分离
-        float fusionErrorX = errorX;
-        float fusionErrorY = errorY;
-        float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
-
-        // 导数预测器
-        if (config.useDerivativePredictor) {
-            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
-            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            fusionErrorX += config.predictionWeightX * derivPredictedX;
-            fusionErrorY += config.predictionWeightY * derivPredictedY;
+        // 高级PID：完全按照专业PID的精确实现
+        
+        // 辅助函数：两位小数四舍五入（专业PID的round1）
+        auto round1 = [](float value) -> float {
+            return std::round(value * 100.0f) / 100.0f;
+        };
+        
+        // 软限幅函数（专业PID的atan2Clamp）
+        auto atan2Clamp = [&round1](float value, float softParam, float hardLimit) -> float {
+            float angle = std::atan2(value, softParam);
+            float gain = softParam - hardLimit * 0.1f;
+            return round1(angle * gain);
+        };
+        
+        // 专业PID常量
+        constexpr float DEAD_ZONE = 0.3f;           // 死区阈值
+        constexpr float JUMP_THRESHOLD = 30.0f;     // 跳变检测阈值
+        constexpr float KP_GAIN_THRESHOLD = 1920.0f;
+        constexpr float KP_GAIN_RATE = 0.03f;
+        constexpr float INTEGRAL_GAIN_THRESHOLD = 50.0f;
+        constexpr float INTEGRAL_GAIN_RATE = 0.1f;
+        constexpr float LARGE_ERROR_RATE = 0.1f;
+        constexpr float KF2_Q = 0.1f;
+        constexpr float KF2_R = 1.0f;
+        
+        // 动态P增益（根据距离）
+        float baseP = calculateDynamicP(distance) * getCurrentPGain();
+        
+        // ========== X轴处理 ==========
+        float absErrorX = std::abs(errorX);
+        float errorX_work = errorX;
+        
+        // Step 1: 死区处理
+        if (absErrorX <= DEAD_ZONE) {
+            errorX_work = 0.0f;
         }
-
-        // 动态P增益
-        float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
-
-        // D项滤波
-        float deltaErrorX = errorX - pidPreviousErrorX;
-        float deltaErrorY = errorY - pidPreviousErrorY;
-        float alpha = config.derivativeFilterAlpha;
-        filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
-        filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
-
-        float dTermX = config.pidD * filteredDeltaErrorX;
-        float dTermY = config.pidD * filteredDeltaErrorY;
-
-        // 积分（带死区和限幅）
-        if (std::abs(fusionErrorX) >= config.integralDeadZone) {
-            integralX += fusionErrorX;
-            integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
-        } else {
+        
+        // Step 2: 跳变检测
+        float deltaErrorX = errorX_work - pidPreviousErrorX;
+        bool jumpDetectedX = std::abs(deltaErrorX) > JUMP_THRESHOLD;
+        
+        if (jumpDetectedX) {
+            adaptivePGainX = 0.0f;
+            adaptiveIGainX = 0.0f;
             integralX = 0.0f;
+            lastOutputX = 0.0f;
+            kf2X.Q_ = 0.0f;
+            kf2X.R_ = 0.0f;
+            kf3X_x = 0.0f;
+            kf3X_P = 0.0f;
+            pidPreviousErrorX = 0.0f;
+            deltaErrorX = errorX_work;
         }
-        if (std::abs(fusionErrorY) >= config.integralDeadZone) {
-            integralY += fusionErrorY;
-            integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
-        } else {
+        
+        // Step 3: 自适应积分增益
+        {
+            float ratio;
+            if (absErrorX < INTEGRAL_GAIN_THRESHOLD) {
+                ratio = 1.0f - (absErrorX / INTEGRAL_GAIN_THRESHOLD);
+                adaptiveIGainX += (ratio - adaptiveIGainX) * INTEGRAL_GAIN_RATE;
+            } else {
+                ratio = INTEGRAL_GAIN_THRESHOLD / absErrorX;
+                adaptiveIGainX += (ratio * adaptiveIGainX - adaptiveIGainX) * LARGE_ERROR_RATE;
+            }
+            adaptiveIGainX = std::clamp(adaptiveIGainX, 0.0f, 1.0f);
+        }
+        
+        // Step 4: 自适应比例增益
+        {
+            float ratio;
+            if (absErrorX < KP_GAIN_THRESHOLD) {
+                ratio = 1.0f - (absErrorX / KP_GAIN_THRESHOLD);
+                adaptivePGainX += (ratio - adaptivePGainX) * KP_GAIN_RATE;
+            } else {
+                ratio = KP_GAIN_THRESHOLD / absErrorX;
+                adaptivePGainX += (ratio * adaptivePGainX - adaptivePGainX) * LARGE_ERROR_RATE;
+            }
+            adaptivePGainX = std::clamp(adaptivePGainX, 0.0f, 1.0f);
+        }
+        
+        // Step 5: 微分计算 + kf2 卡尔曼
+        float DX = round1(deltaErrorX + lastOutputX);
+        kf2X.Q_ = KF2_Q;
+        kf2X.R_ = KF2_R;
+        float kf2OutX = kf2X.update(DX);
+        DX = round1(kf2OutX);
+        
+        // Step 6: 精细调整
+        if (absErrorX < 1.0f && std::abs(deltaErrorX) > 0.5f) {
+            DX += round1(0.5f * lastOutputX + deltaErrorX);
+        }
+        
+        // Step 7: kf3 卡尔曼滤波
+        {
+            float P_pred = kf3X_P + kf2X.x_;  // 与专业PID一致：直接使用kf2.x_
+            float K = P_pred / (P_pred + KF2_R);
+            float innov = DX - kf3X_x;
+            kf3X_x = kf3X_x + K * innov;
+            kf3X_P = (1.0f - K) * P_pred;
+        }
+        DX = round1(kf3X_x);
+        
+        // Step 8: D项最终处理
+        if (std::abs(DX) <= 0.5f) {
+            DX = 0.0f;
+        }
+        DX *= config.derivativeFilterAlpha * adaptiveIGainX;  // rate_ * integral_gain_
+        
+        if (config.maxPixelMove > 0.0f) {
+            DX = atan2Clamp(DX, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        // Step 9: 积分项（带限幅防止饱和）
+        integralX += errorX_work * config.pidI * adaptiveIGainX;
+        // 应用积分限幅
+        float iLimit = (config.integralLimit > 0.0f) ? config.integralLimit : 1000.0f;
+        integralX = std::clamp(integralX, -iLimit, iLimit);
+        float iOutX = integralX;
+        
+        if (config.maxPixelMove > 0.0f) {
+            iOutX = atan2Clamp(iOutX, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        // Step 10: P项
+        float pOutX = round1(errorX_work * baseP);
+        if (config.maxPixelMove > 0.0f) {
+            pOutX = atan2Clamp(pOutX, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        // Step 11: D2项
+        float d2OutX = round1(deltaErrorX * config.pidD);
+        if (config.maxPixelMove > 0.0f) {
+            d2OutX = atan2Clamp(d2OutX, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        // Step 12: 第二积分累加
+        iOutX += d2OutX;
+        
+        if (std::abs(iOutX) <= DEAD_ZONE) {
+            iOutX = 0.0f;
+        }
+        
+        // Step 13: 总输出
+        float totalX = round1(pOutX + iOutX + d2OutX);
+        
+        if (config.maxPixelMove > 0.0f) {
+            totalX = atan2Clamp(totalX, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        // Step 14: 比例增益权重调节
+        totalX *= adaptivePGainX;
+        totalX = round1(totalX);
+        
+        // Step 15: 保存状态
+        pidPreviousErrorX = errorX_work;
+        lastOutputX = totalX;
+        
+        moveX = totalX;
+        
+        // ========== Y轴处理（相同逻辑） ==========
+        float absErrorY = std::abs(errorY);
+        float errorY_work = errorY;
+        
+        if (absErrorY <= DEAD_ZONE) {
+            errorY_work = 0.0f;
+        }
+        
+        float deltaErrorY = errorY_work - pidPreviousErrorY;
+        bool jumpDetectedY = std::abs(deltaErrorY) > JUMP_THRESHOLD;
+        
+        if (jumpDetectedY) {
+            adaptivePGainY = 0.0f;
+            adaptiveIGainY = 0.0f;
             integralY = 0.0f;
+            lastOutputY = 0.0f;
+            kf2Y.Q_ = 0.0f;
+            kf2Y.R_ = 0.0f;
+            kf3Y_x = 0.0f;
+            kf3Y_P = 0.0f;
+            pidPreviousErrorY = 0.0f;
+            deltaErrorY = errorY_work;
         }
-
-        float integralTermX = config.pidI * integralX;
-        float integralTermY = config.pidI * integralY;
-
-        // PID输出
-        moveX = dynamicP * fusionErrorX + dTermX + integralTermX;
-        moveY = dynamicP * fusionErrorY + dTermY + integralTermY;
-
+        
+        {
+            float ratio;
+            if (absErrorY < INTEGRAL_GAIN_THRESHOLD) {
+                ratio = 1.0f - (absErrorY / INTEGRAL_GAIN_THRESHOLD);
+                adaptiveIGainY += (ratio - adaptiveIGainY) * INTEGRAL_GAIN_RATE;
+            } else {
+                ratio = INTEGRAL_GAIN_THRESHOLD / absErrorY;
+                adaptiveIGainY += (ratio * adaptiveIGainY - adaptiveIGainY) * LARGE_ERROR_RATE;
+            }
+            adaptiveIGainY = std::clamp(adaptiveIGainY, 0.0f, 1.0f);
+        }
+        
+        {
+            float ratio;
+            if (absErrorY < KP_GAIN_THRESHOLD) {
+                ratio = 1.0f - (absErrorY / KP_GAIN_THRESHOLD);
+                adaptivePGainY += (ratio - adaptivePGainY) * KP_GAIN_RATE;
+            } else {
+                ratio = KP_GAIN_THRESHOLD / absErrorY;
+                adaptivePGainY += (ratio * adaptivePGainY - adaptivePGainY) * LARGE_ERROR_RATE;
+            }
+            adaptivePGainY = std::clamp(adaptivePGainY, 0.0f, 1.0f);
+        }
+        
+        float DY = round1(deltaErrorY + lastOutputY);
+        kf2Y.Q_ = KF2_Q;
+        kf2Y.R_ = KF2_R;
+        float kf2OutY = kf2Y.update(DY);
+        DY = round1(kf2OutY);
+        
+        if (absErrorY < 1.0f && std::abs(deltaErrorY) > 0.5f) {
+            DY += round1(0.5f * lastOutputY + deltaErrorY);
+        }
+        
+        {
+            float P_pred = kf3Y_P + kf2Y.x_;  // 与专业PID一致：直接使用kf2.x_
+            float K = P_pred / (P_pred + KF2_R);
+            float innov = DY - kf3Y_x;
+            kf3Y_x = kf3Y_x + K * innov;
+            kf3Y_P = (1.0f - K) * P_pred;
+        }
+        DY = round1(kf3Y_x);
+        
+        if (std::abs(DY) <= 0.5f) {
+            DY = 0.0f;
+        }
+        DY *= config.derivativeFilterAlpha * adaptiveIGainY;
+        
+        if (config.maxPixelMove > 0.0f) {
+            DY = atan2Clamp(DY, config.maxPixelMove, config.maxPixelMove);
+        }
+     // Step 9: 积分项（带限幅防止饱和）
+        integralY += errorY_work * config.pidI * adaptiveIGainY;
+        // 应用积分限幅
+        integralY = std::clamp(integralY, -iLimit, iLimit);
+        float iOutY = integralY;
+        
+        if (config.maxPixelMove > 0.0f) {
+            iOutY = atan2Clamp(iOutY, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        float pOutY = round1(errorY_work * baseP);
+        if (config.maxPixelMove > 0.0f) {
+            pOutY = atan2Clamp(pOutY, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        float d2OutY = round1(deltaErrorY * config.pidD);
+        if (config.maxPixelMove > 0.0f) {
+            d2OutY = atan2Clamp(d2OutY, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        iOutY += d2OutY;
+        
+        if (std::abs(iOutY) <= DEAD_ZONE) {
+            iOutY = 0.0f;
+        }
+        
+        float totalY = round1(pOutY + iOutY + d2OutY);
+        
+        if (config.maxPixelMove > 0.0f) {
+            totalY = atan2Clamp(totalY, config.maxPixelMove, config.maxPixelMove);
+        }
+        
+        totalY *= adaptivePGainY;
+        totalY = round1(totalY);
+        
+        pidPreviousErrorY = errorY_work;
+        lastOutputY = totalY;
+        
+        moveY = totalY;
+        
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
-                 getLogPrefix(), deltaTime, errorX, errorY, fusionErrorX, fusionErrorY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | pidD=%.4f",
-                 getLogPrefix(), dTermX, dTermY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
-                 getLogPrefix(), integralX, integralY, integralTermX, integralTermY, config.pidI, moveX, moveY);
+            blog(LOG_INFO, "[%s高级PID] errorX=%.1f errorY=%.1f | kpGainX=%.2f kpGainY=%.2f | iGainX=%.2f iGainY=%.2f",
+                 getLogPrefix(), errorX, errorY, adaptivePGainX, adaptivePGainY, adaptiveIGainX, adaptiveIGainY);
+            blog(LOG_INFO, "[%s高级PID] pOutX=%.1f pOutY=%.1f | iOutX=%.1f iOutY=%.1f | d2OutX=%.1f d2OutY=%.1f",
+                 getLogPrefix(), pOutX, pOutY, iOutX, iOutY, d2OutX, d2OutY);
+            blog(LOG_INFO, "[%s高级PID] totalX=%.1f totalY=%.1f | kf2x=%.2f kf3x=%.2f",
+                 getLogPrefix(), totalX, totalY, kf2OutX, kf3X_x);
         }
 
         if (pidDataCallback_) {
@@ -519,15 +760,15 @@ void AbstractMouseController::tick()
             data.targetY = targetPixelY;
             data.targetVelocityX = targetVelocityX;
             data.targetVelocityY = targetVelocityY;
-            data.currentKp = dynamicP;
+            data.currentKp = baseP;
             data.currentKi = config.pidI;
             data.currentKd = config.pidD;
-            data.pTermX = dynamicP * fusionErrorX;
-            data.pTermY = dynamicP * fusionErrorY;
-            data.iTermX = integralTermX;
-            data.iTermY = integralTermY;
-            data.dTermX = dTermX;
-            data.dTermY = dTermY;
+            data.pTermX = pOutX;
+            data.pTermY = pOutY;
+            data.iTermX = iOutX;
+            data.iTermY = iOutY;
+            data.dTermX = d2OutX;
+            data.dTermY = d2OutY;
 
             float iLimit = (config.integralLimit > 0.0f) ? config.integralLimit : 1000.0f;
             data.integralAbsX = std::abs(integralX);
@@ -856,6 +1097,20 @@ void AbstractMouseController::resetPidState()
     integralY = 0.0f;
     integralGainX = 0.0f;
     integralGainY = 0.0f;
+    adaptivePGainX = 1.0f;
+    adaptivePGainY = 1.0f;
+    adaptiveIGainX = 1.0f;
+    adaptiveIGainY = 1.0f;
+    kf2X.reset();
+    kf2Y.reset();
+    kalmanOutputX.reset();
+    kalmanOutputY.reset();
+    kf3X_x = 0.0f;
+    kf3X_P = 1.0f;
+    kf3Y_x = 0.0f;
+    kf3Y_P = 1.0f;
+    lastOutputX = 0.0f;
+    lastOutputY = 0.0f;
     predictor.reset();
 }
 

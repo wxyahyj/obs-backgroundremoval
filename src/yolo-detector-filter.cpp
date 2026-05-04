@@ -55,6 +55,14 @@ struct LostTarget {
 };
 
 struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
+	// 禁用拷贝语义，防止资源重复管理
+	yolo_detector_filter(const yolo_detector_filter&) = delete;
+	yolo_detector_filter& operator=(const yolo_detector_filter&) = delete;
+	// 保留默认构造和移动语义（make_shared需要）
+	yolo_detector_filter() = default;
+	yolo_detector_filter(yolo_detector_filter&&) = default;
+	yolo_detector_filter& operator=(yolo_detector_filter&&) = default;
+	
 	std::unique_ptr<ModelYOLO> yoloModel;
 	std::mutex yoloModelMutex;
 	ModelYOLO::Version modelVersion;
@@ -261,30 +269,6 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::mutex floatingWindowMutex;
 	cv::Mat floatingWindowFrame;
 	bool showTrackIdInFloatingWindow;
-
-	// 检测框平滑
-	struct SmoothedDetection {
-		float x, y, width, height;
-		bool initialized;
-
-		SmoothedDetection() : x(0), y(0), width(0), height(0), initialized(false) {}
-
-		void update(float newX, float newY, float newW, float newH, float alpha) {
-			if (!initialized) {
-				x = newX; y = newY; width = newW; height = newH;
-				initialized = true;
-			} else {
-				x = x + alpha * (newX - x);
-				y = y + alpha * (newY - y);
-				width = width + alpha * (newW - width);
-				height = height + alpha * (newH - height);
-			}
-		}
-	};
-	bool detectionSmoothingEnabled;
-	float detectionSmoothingAlpha;
-	std::map<int, SmoothedDetection> smoothedDetections;
-	std::mutex smoothedDetectionsMutex;
 
 		// PID调试数据
 	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
@@ -719,11 +703,6 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
     
     obs_property_t *dynamicFovTransitionTimeProp = obs_properties_add_int_slider(props, "dynamic_fov_transition_time", "动态FOV过渡时间", 0, 1000, 10);
     obs_property_set_long_description(dynamicFovTransitionTimeProp, "动态FOV过渡动画时间（毫秒）， 0表示立即切换，100表示线性过渡， 100-500表示缓动过渡");
-
-	obs_property_t *detectionSmoothingEnabledProp = obs_properties_add_bool(props, "detection_smoothing_enabled", "启用检测框平滑");
-	obs_property_set_long_description(detectionSmoothingEnabledProp, "启用检测框平滑，减少检测框抖动");
-	obs_property_t *detectionSmoothingAlphaProp = obs_properties_add_float_slider(props, "detection_smoothing_alpha", "平滑系数", 0.01, 1.0, 0.01);
-	 obs_property_set_long_description(detectionSmoothingAlphaProp, "平滑系数，值越小越平滑但延迟越高，值越大响应越快但平滑效果减弱");
 
 	// KalmanFilter 追踪设置
 	obs_property_t *useKalmanTrackerProp = obs_properties_add_bool(props, "use_kalman_tracker", "启用卡尔曼追踪");
@@ -1469,10 +1448,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 动态FOV参数只在FOV设置页面显示
 	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_shrink_percent"), page == 1);
 	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_transition_time"), page == 1);
-	
-	// 检测框平滑参数只在视觉与区域页面显示
-	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_enabled"), page == 1);
-	obs_property_set_visible(obs_properties_get(props, "detection_smoothing_alpha"), page == 1);
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和预测与滤波页面(6)显示
@@ -1668,8 +1643,6 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "dynamic_fov_transition_time", 200);
     
     // 检测框平滑参数
-    obs_data_set_default_bool(settings, "detection_smoothing_enabled", true);
-    obs_data_set_default_double(settings, "detection_smoothing_alpha", 0.3);
     
     // KalmanFilter 追踪参数
     obs_data_set_default_bool(settings, "use_kalman_tracker", false);
@@ -2152,10 +2125,6 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	// 动态FOV参数
 	tf->dynamicFovShrinkPercent = (float)obs_data_get_int(settings, "dynamic_fov_shrink_percent") / 100.0f;
 	tf->dynamicFovTransitionTime = (float)obs_data_get_int(settings, "dynamic_fov_transition_time");
-
-	// 检测框平滑参数
-	tf->detectionSmoothingEnabled = obs_data_get_bool(settings, "detection_smoothing_enabled");
-	tf->detectionSmoothingAlpha = (float)obs_data_get_double(settings, "detection_smoothing_alpha");
 
 	// KalmanFilter 追踪参数
 	bool newUseKalmanTracker = obs_data_get_bool(settings, "use_kalman_tracker");
@@ -4353,21 +4322,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				}  // end of else (原有追踪逻辑)
 				
 				filter->trackedTargets = std::move(trackedDetections);
-			}
-
-			// 应用检测框平滑（如果有追踪目标）
-			if (filter->detectionSmoothingEnabled && !filter->trackedTargets.empty()) {
-				std::lock_guard<std::mutex> smoothLock(filter->smoothedDetectionsMutex);
-				for (auto& det : filter->trackedTargets) {
-					auto [it, inserted] = filter->smoothedDetections.try_emplace(det.trackId);
-					it->second.update(
-						det.x, det.y, det.width, det.height, filter->detectionSmoothingAlpha);
-					
-					det.x = it->second.x;
-					det.y = it->second.y;
-					det.width = it->second.width;
-					det.height = it->second.height;
-				}
 			}
 		}
 
