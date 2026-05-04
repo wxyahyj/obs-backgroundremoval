@@ -211,8 +211,6 @@ private:
         QDoubleSpinBox* recoilPidGainScaleSpin;
         
         QDoubleSpinBox* integralLimitSpin;
-        QDoubleSpinBox* integralSeparationThresholdSpin;
-        QDoubleSpinBox* integralDeadZoneSpin;
         QDoubleSpinBox* integralRateSpin;
         QDoubleSpinBox* pGainRampInitialScaleSpin;
         QDoubleSpinBox* pGainRampDurationSpin;

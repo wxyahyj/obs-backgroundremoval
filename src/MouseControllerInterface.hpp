@@ -90,6 +90,9 @@ struct MouseControllerConfig {
     float deadZonePixels = 5.0f;
     float targetYOffset = 0.0f;
     float derivativeFilterAlpha = 0.2f;
+    // 高级PID可调参数（对应专业PID的predict和rate）
+    float adaptivePGainRate = 0.03f;      // 自适应P增益变化率（对应专业PID的predict）
+    float dTermScale = 0.3f;              // D项缩放因子（对应专业PID的rate）
     // 注：自适应增益、卡尔曼滤波、跳变检测(30像素)、软限幅(atan2)始终启用，像专业PID一样自动运行
     
     ControllerType controllerType = ControllerType::WindowsAPI;
@@ -113,8 +116,7 @@ struct MouseControllerConfig {
     int targetSwitchDelayMs = 500;
     float targetSwitchTolerance = 0.15f;
     float integralLimit = 100.0f;
-    float integralSeparationThreshold = 50.0f;
-    float integralDeadZone = 5.0f;
+    float integralRate = 1.0f;             // 积分速率系数
     float pGainRampInitialScale = 0.6f;
     float pGainRampDuration = 0.5f;
     // DerivativePredictor配置
@@ -134,6 +136,13 @@ struct MouseControllerConfig {
     bool enableBezierMovement = false;
     float bezierCurvature = 0.3f;
     float bezierRandomness = 0.2f;
+    
+    // GhostTracker曲线轨迹参数
+    bool enableGhostTracker = false;        // 是否启用曲线轨迹
+    float ghostCurvature = 0.5f;            // 曲线强度 (0.0 - 1.0)
+    float ghostNoiseIntensity = 12.0f;      // 最大噪声像素
+    float ghostVerticalSnapRatio = 3.0f;    // 垂直吸附比例阈值
+    float ghostNoiseFreq = 0.8f;            // Perlin噪声频率
     
     // 外部PID参数（pid_x64.lib）
     float externalKpX = 1.5f;                  // X轴比例系数

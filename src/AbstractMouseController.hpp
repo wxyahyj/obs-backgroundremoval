@@ -15,6 +15,7 @@
 #include "DerivativePredictor.hpp"
 #include "curve.hpp"
 #include "../libs/pid/pid.h"
+#include "utils/GhostTracker.hpp"
 
 // 简单1D卡尔曼滤波器（专业PID风格，成员变量公开）
 class SimpleKalmanFilter {
@@ -107,6 +108,9 @@ protected:
     bool isFiring;
     
     DerivativePredictor predictor;
+    
+    // GhostTracker曲线轨迹生成器
+    GhostTracker ghostTracker;
 
     PidController externalPidX;  // 外部PID X轴控制器
     PidController externalPidY;  // 外部PID Y轴控制器

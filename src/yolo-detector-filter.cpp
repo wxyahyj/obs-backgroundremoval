@@ -348,6 +348,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int screenWidth;
 		int screenHeight;
 		float derivativeFilterAlpha;
+		float adaptivePGainRate;       // 自适应P增益变化率
+		float dTermScale;              // D项缩放因子
 		float targetYOffset;
 		int controllerType;
 		std::string makcuPort;
@@ -367,10 +369,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int triggerDurationRandomMin;
 		int triggerDurationRandomMax;
 		int triggerMoveCompensation;
-		// 新功能参数
+		// 积分参数
 		float integralLimit;
-		float integralSeparationThreshold;
-		float integralDeadZone;
+		float integralRate;
 		float pGainRampInitialScale;
 		float pGainRampDuration;
 		// DerivativePredictor参数
@@ -392,6 +393,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		bool enableBezierMovement;
 		float bezierCurvature;
 		float bezierRandomness;
+		// GhostTracker曲线轨迹参数
+		bool enableGhostTracker;
+		float ghostCurvature;
+		float ghostNoiseIntensity;
+		float ghostVerticalSnapRatio;
+		float ghostNoiseFreq;
 		// 神经网络轨迹生成器参数
 		bool enableNeuralPath;
 		int neuralPathPoints;
@@ -415,6 +422,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			screenWidth = 0;
 			screenHeight = 0;
 			derivativeFilterAlpha = 0.2f;
+			adaptivePGainRate = 0.03f;
+			dTermScale = 0.3f;
 			targetYOffset = 0.0f;
 			controllerType = 0;
 			makcuPort = "COM5";
@@ -434,10 +443,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			triggerDurationRandomMin = 0;
 			triggerDurationRandomMax = 0;
 			triggerMoveCompensation = 0;
-			// 新功能参数默认值
+			// 积分参数默认值
 			integralLimit = 100.0f;
-			integralSeparationThreshold = 50.0f;
-			integralDeadZone = 5.0f;
+			integralRate = 1.0f;
 			pGainRampInitialScale = 0.6f;
 			pGainRampDuration = 0.5f;
 			predictionWeightX = 0.3f;
@@ -458,6 +466,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			enableBezierMovement = false;
 			bezierCurvature = 0.3f;
 			bezierRandomness = 0.2f;
+			// GhostTracker曲线轨迹默认值
+			enableGhostTracker = false;
+			ghostCurvature = 0.5f;
+			ghostNoiseIntensity = 12.0f;
+			ghostVerticalSnapRatio = 3.0f;
+			ghostNoiseFreq = 0.8f;
 			// 神经网络轨迹生成器默认值
 			enableNeuralPath = false;
 			neuralPathPoints = 35;
@@ -809,6 +823,14 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_property_t *derivFilterProp = obs_properties_add_float_slider(props, propName, "微分滤波系数", 0.01, 1.00, 0.01);
 		obs_property_set_long_description(derivFilterProp, "微分滤波系数，用于平滑D项，减少抖动");
+		
+		snprintf(propName, sizeof(propName), "adaptive_p_gain_rate_%d", i);
+		obs_property_t *adaptPRateProp = obs_properties_add_float_slider(props, propName, "自适应P变化率", 0.001, 0.5, 0.001);
+		obs_property_set_long_description(adaptPRateProp, "自适应P增益变化率（对应专业PID的预测参数），值越大P增益调整越快");
+		
+		snprintf(propName, sizeof(propName), "d_term_scale_%d", i);
+		obs_property_t *dScaleProp = obs_properties_add_float_slider(props, propName, "D项缩放因子", 0.0, 1.0, 0.01);
+		obs_property_set_long_description(dScaleProp, "D项缩放因子（对应专业PID的采样率），值越大D项影响越大");
 
 		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
 		obs_property_t *targetYOffsetProp = obs_properties_add_float_slider(props, propName, "Y轴目标偏移(%)", -50.0, 50.0, 1.0);
@@ -882,16 +904,13 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
 		obs_properties_add_group(props, propName, "自动扳机", OBS_GROUP_CHECKABLE, autoTriggerProps);
 
-		// 新功能参数设置
+		// 积分参数设置
 		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
 		obs_property_t *integralLimitProp = obs_properties_add_float_slider(props, propName, "积分限幅", 0.0, 500.0, 1.0);
 		obs_property_set_long_description(integralLimitProp, "积分项上限，防止积分饱和");
-		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", i);
-		obs_property_t *integralSepThresholdProp = obs_properties_add_float_slider(props, propName, "积分分离阈值", 0.0, 200.0, 1.0);
-		obs_property_set_long_description(integralSepThresholdProp, "积分分离阈值，误差超过此值时暂停积分");
-		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
-		obs_property_t *integralDeadZoneProp = obs_properties_add_float_slider(props, propName, "积分死区", 0.0, 50.0, 0.1);
-		obs_property_set_long_description(integralDeadZoneProp, "积分死区，误差小于此值时不进行积分");
+		snprintf(propName, sizeof(propName), "integral_rate_%d", i);
+		obs_property_t *integralRateProp = obs_properties_add_float_slider(props, propName, "积分速率", 0.0, 2.0, 0.1);
+		obs_property_set_long_description(integralRateProp, "积分增长速率系数，值越大积分越快");
 		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
 		obs_property_t *pGainRampInitialProp = obs_properties_add_float_slider(props, propName, "P-Gain Ramp初始比例", 0.0, 1.0, 0.1);
 		obs_property_set_long_description(pGainRampInitialProp, "P-Gain Ramp初始比例，热键按下初期使用较低的P值");
@@ -957,6 +976,28 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		obs_properties_add_group(props, propName, "贝塞尔曲线移动", OBS_GROUP_CHECKABLE, bezierProps);
+		
+		// GhostTracker曲线轨迹参数
+		obs_properties_t *ghostProps = obs_properties_create();
+		
+		snprintf(propName, sizeof(propName), "ghost_curvature_%d", i);
+		obs_property_t *ghostCurvProp = obs_properties_add_float_slider(ghostProps, propName, "曲线强度", 0.0f, 1.0f, 0.05f);
+		obs_property_set_long_description(ghostCurvProp, "曲线轨迹的弯曲强度，值越大曲线越弯曲");
+		
+		snprintf(propName, sizeof(propName), "ghost_noise_intensity_%d", i);
+		obs_property_t *ghostNoiseProp = obs_properties_add_float_slider(ghostProps, propName, "噪声强度", 0.0f, 30.0f, 1.0f);
+		obs_property_set_long_description(ghostNoiseProp, "Perlin噪声的最大像素偏移，模拟手部抖动");
+		
+		snprintf(propName, sizeof(propName), "ghost_vertical_snap_%d", i);
+		obs_property_t *ghostSnapProp = obs_properties_add_float_slider(ghostProps, propName, "垂直吸附比例", 1.0f, 10.0f, 0.5f);
+		obs_property_set_long_description(ghostSnapProp, "垂直方向吸附阈值，值越大越容易锁定垂直轨道");
+		
+		snprintf(propName, sizeof(propName), "ghost_noise_freq_%d", i);
+		obs_property_t *ghostFreqProp = obs_properties_add_float_slider(ghostProps, propName, "噪声频率", 0.1f, 2.0f, 0.1f);
+		obs_property_set_long_description(ghostFreqProp, "Perlin噪声的变化频率，值越大抖动越快");
+		
+		snprintf(propName, sizeof(propName), "ghost_tracker_group_%d", i);
+		obs_properties_add_group(props, propName, "曲线轨迹(GhostTracker)", OBS_GROUP_CHECKABLE, ghostProps);
 		
 	}
 
@@ -1270,10 +1311,6 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "integral_limit_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
-	snprintf(propName, sizeof(propName), "integral_dead_zone_%d", configIndex);
-	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "integral_rate_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "d_%d", configIndex);
@@ -1281,6 +1318,10 @@ static void setMousePIDPropertiesVisible(obs_properties_t *props, int configInde
 	snprintf(propName, sizeof(propName), "i_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "adaptive_p_gain_rate_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "d_term_scale_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// 以下参数已迁移到其他页面：
 	// target_y_offset, enable_y_axis_unlock, y_axis_unlock_delay -> 页面2（基础）
@@ -1294,6 +1335,17 @@ static void setBezierMovementPropertiesVisible(obs_properties_t *props, int conf
 	char propName[64];
 	// 贝塞尔曲线移动分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "bezier_movement_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// GhostTracker曲线轨迹参数可见性
+	snprintf(propName, sizeof(propName), "ghost_curvature_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "ghost_noise_intensity_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "ghost_vertical_snap_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "ghost_noise_freq_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "ghost_tracker_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -1332,7 +1384,7 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
-		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 7);
+		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
 
 	// 动态PID参数只在algorithm == 3时显示
@@ -1451,7 +1503,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 
 #ifdef _WIN32
 	// 配置选择器在鼠标控制页面(2,3,4)和预测与滤波页面(6)显示
-	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6);
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
 
 	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
@@ -1731,6 +1783,10 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.01);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
+		snprintf(propName, sizeof(propName), "adaptive_p_gain_rate_%d", i);
+		obs_data_set_default_double(settings, propName, 0.03);
+		snprintf(propName, sizeof(propName), "d_term_scale_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
 
 		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
 		obs_data_set_default_double(settings, propName, 0.0);
@@ -1780,15 +1836,11 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		obs_data_set_default_int(settings, propName, 0);
 
-		// 新功能参数默认值
+		// 积分参数默认值
 		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
 		obs_data_set_default_double(settings, propName, 100.0);
-		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", i);
-		obs_data_set_default_double(settings, propName, 50.0);
-		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
-		obs_data_set_default_double(settings, propName, 5.0);
 		snprintf(propName, sizeof(propName), "integral_rate_%d", i);
-		obs_data_set_default_double(settings, propName, 0.015);
+		obs_data_set_default_double(settings, propName, 1.0);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.6);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
@@ -1825,6 +1877,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.3);
 		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
 		obs_data_set_default_double(settings, propName, 0.2);
+		
+		// GhostTracker曲线轨迹默认值
+		snprintf(propName, sizeof(propName), "ghost_tracker_group_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "ghost_curvature_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "ghost_noise_intensity_%d", i);
+		obs_data_set_default_double(settings, propName, 12.0);
+		snprintf(propName, sizeof(propName), "ghost_vertical_snap_%d", i);
+		obs_data_set_default_double(settings, propName, 3.0);
+		snprintf(propName, sizeof(propName), "ghost_noise_freq_%d", i);
+		obs_data_set_default_double(settings, propName, 0.8);
 	}
 
     obs_data_set_default_string(settings, "config_name", "");
@@ -2243,6 +2307,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].i = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "derivative_filter_alpha_%d", i);
 		tf->mouseConfigs[i].derivativeFilterAlpha = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_p_gain_rate_%d", i);
+		tf->mouseConfigs[i].adaptivePGainRate = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "d_term_scale_%d", i);
+		tf->mouseConfigs[i].dTermScale = (float)obs_data_get_double(settings, propName);
 
 		snprintf(propName, sizeof(propName), "target_y_offset_%d", i);
 		tf->mouseConfigs[i].targetYOffset = (float)obs_data_get_double(settings, propName);
@@ -2292,13 +2360,11 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "trigger_move_compensation_%d", i);
 		tf->mouseConfigs[i].triggerMoveCompensation = (int)obs_data_get_int(settings, propName);
 
-		// 新功能参数更新
+		// 积分参数更新
 		snprintf(propName, sizeof(propName), "integral_limit_%d", i);
 		tf->mouseConfigs[i].integralLimit = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "integral_separation_threshold_%d", i);
-		tf->mouseConfigs[i].integralSeparationThreshold = (float)obs_data_get_double(settings, propName);
-		snprintf(propName, sizeof(propName), "integral_dead_zone_%d", i);
-		tf->mouseConfigs[i].integralDeadZone = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "integral_rate_%d", i);
+		tf->mouseConfigs[i].integralRate = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_initial_scale_%d", i);
 		tf->mouseConfigs[i].pGainRampInitialScale = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "p_gain_ramp_duration_%d", i);
@@ -2335,6 +2401,18 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].bezierCurvature = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "bezier_randomness_%d", i);
 		tf->mouseConfigs[i].bezierRandomness = (float)obs_data_get_double(settings, propName);
+		
+		// GhostTracker曲线轨迹参数
+		snprintf(propName, sizeof(propName), "ghost_tracker_group_%d", i);
+		tf->mouseConfigs[i].enableGhostTracker = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "ghost_curvature_%d", i);
+		tf->mouseConfigs[i].ghostCurvature = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "ghost_noise_intensity_%d", i);
+		tf->mouseConfigs[i].ghostNoiseIntensity = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "ghost_vertical_snap_%d", i);
+		tf->mouseConfigs[i].ghostVerticalSnapRatio = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "ghost_noise_freq_%d", i);
+		tf->mouseConfigs[i].ghostNoiseFreq = (float)obs_data_get_double(settings, propName);
 	}
 
 	tf->targetSwitchDelayMs = (int)obs_data_get_int(settings, "target_switch_delay");
@@ -5188,6 +5266,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.screenHeight = cfg.screenHeight;
 		mcConfig.targetYOffset = cfg.targetYOffset;
 		mcConfig.derivativeFilterAlpha = cfg.derivativeFilterAlpha;
+		mcConfig.adaptivePGainRate = cfg.adaptivePGainRate;
+		mcConfig.dTermScale = cfg.dTermScale;
 		mcConfig.controllerType = static_cast<ControllerType>(cfg.controllerType);
 		mcConfig.makcuPort = cfg.makcuPort;
 		mcConfig.makcuBaudRate = cfg.makcuBaudRate;
@@ -5208,10 +5288,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.autoTriggerMoveCompensation = cfg.triggerMoveCompensation;
 		mcConfig.targetSwitchDelayMs = tf->targetSwitchDelayMs;
 		mcConfig.targetSwitchTolerance = tf->targetSwitchTolerance;
-		// 新功能参数
+		// 积分参数
 		mcConfig.integralLimit = cfg.integralLimit;
-		mcConfig.integralSeparationThreshold = cfg.integralSeparationThreshold;
-		mcConfig.integralDeadZone = cfg.integralDeadZone;
+		mcConfig.integralRate = cfg.integralRate;
 		mcConfig.pGainRampInitialScale = cfg.pGainRampInitialScale;
 		mcConfig.pGainRampDuration = cfg.pGainRampDuration;
 		mcConfig.predictionWeightX = cfg.predictionWeightX;
@@ -5230,6 +5309,12 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.enableBezierMovement = cfg.enableBezierMovement;
 		mcConfig.bezierCurvature = cfg.bezierCurvature;
 		mcConfig.bezierRandomness = cfg.bezierRandomness;
+		// GhostTracker曲线轨迹参数
+		mcConfig.enableGhostTracker = cfg.enableGhostTracker;
+		mcConfig.ghostCurvature = cfg.ghostCurvature;
+		mcConfig.ghostNoiseIntensity = cfg.ghostNoiseIntensity;
+		mcConfig.ghostVerticalSnapRatio = cfg.ghostVerticalSnapRatio;
+		mcConfig.ghostNoiseFreq = cfg.ghostNoiseFreq;
 		// 算法选择（使用全局设置）
 		// 0=AdvancedPID, 1=ExternalPID
 		switch (tf->algorithmTypeGlobal) {

@@ -1277,24 +1277,11 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     m_configWidgets[configIndex].integralLimitSpin->setDecimals(1);
     integralLayout->addWidget(m_configWidgets[configIndex].integralLimitSpin, row, 1);
 
-    integralLayout->addWidget(new QLabel(QStringLiteral("积分分离阈值:"), group), row, 2);
-    m_configWidgets[configIndex].integralSeparationThresholdSpin = new QDoubleSpinBox(group);
-    m_configWidgets[configIndex].integralSeparationThresholdSpin->setRange(0.0, 200.0);
-    m_configWidgets[configIndex].integralSeparationThresholdSpin->setDecimals(1);
-    integralLayout->addWidget(m_configWidgets[configIndex].integralSeparationThresholdSpin, row, 3);
-    row++;
-
-    integralLayout->addWidget(new QLabel(QStringLiteral("积分死区:"), group), row, 0);
-    m_configWidgets[configIndex].integralDeadZoneSpin = new QDoubleSpinBox(group);
-    m_configWidgets[configIndex].integralDeadZoneSpin->setRange(0.0, 50.0);
-    m_configWidgets[configIndex].integralDeadZoneSpin->setDecimals(1);
-    integralLayout->addWidget(m_configWidgets[configIndex].integralDeadZoneSpin, row, 1);
-
     integralLayout->addWidget(new QLabel(QStringLiteral("积分速率:"), group), row, 2);
     m_configWidgets[configIndex].integralRateSpin = new QDoubleSpinBox(group);
-    m_configWidgets[configIndex].integralRateSpin->setRange(0.0, 1.0);
-    m_configWidgets[configIndex].integralRateSpin->setDecimals(4);
-    m_configWidgets[configIndex].integralRateSpin->setSingleStep(0.001);
+    m_configWidgets[configIndex].integralRateSpin->setRange(0.0, 2.0);
+    m_configWidgets[configIndex].integralRateSpin->setDecimals(2);
+    m_configWidgets[configIndex].integralRateSpin->setSingleStep(0.1);
     integralLayout->addWidget(m_configWidgets[configIndex].integralRateSpin, row, 3);
 
     mainLayout->addWidget(integralGroup);
@@ -1373,8 +1360,6 @@ void YoloAimSettingsDialog::initConfigWidgetStruct(int configIndex)
     w.recoilSpeedSpin = nullptr;
     w.recoilPidGainScaleSpin = nullptr;
     w.integralLimitSpin = nullptr;
-    w.integralSeparationThresholdSpin = nullptr;
-    w.integralDeadZoneSpin = nullptr;
     w.integralRateSpin = nullptr;
     w.pGainRampInitialScaleSpin = nullptr;
     w.pGainRampDurationSpin = nullptr;
@@ -1530,8 +1515,6 @@ void YoloAimSettingsDialog::loadSettings()
     
     // 积分控制
     if (w.integralLimitSpin) w.integralLimitSpin->setValue(obs_data_get_double(settings, QString("integral_limit_%1").arg(idx).toUtf8().constData()));
-    if (w.integralSeparationThresholdSpin) w.integralSeparationThresholdSpin->setValue(obs_data_get_double(settings, QString("integral_separation_threshold_%1").arg(idx).toUtf8().constData()));
-    if (w.integralDeadZoneSpin) w.integralDeadZoneSpin->setValue(obs_data_get_double(settings, QString("integral_dead_zone_%1").arg(idx).toUtf8().constData()));
     if (w.integralRateSpin) w.integralRateSpin->setValue(obs_data_get_double(settings, QString("integral_rate_%1").arg(idx).toUtf8().constData()));
     
     // P增益爬坡
@@ -1718,8 +1701,6 @@ void YoloAimSettingsDialog::saveSettings()
     
     // 积分控制
     if (w.integralLimitSpin) obs_data_set_double(settings, QString("integral_limit_%1").arg(idx).toUtf8().constData(), w.integralLimitSpin->value());
-    if (w.integralSeparationThresholdSpin) obs_data_set_double(settings, QString("integral_separation_threshold_%1").arg(idx).toUtf8().constData(), w.integralSeparationThresholdSpin->value());
-    if (w.integralDeadZoneSpin) obs_data_set_double(settings, QString("integral_dead_zone_%1").arg(idx).toUtf8().constData(), w.integralDeadZoneSpin->value());
     if (w.integralRateSpin) obs_data_set_double(settings, QString("integral_rate_%1").arg(idx).toUtf8().constData(), w.integralRateSpin->value());
     
     // P增益爬坡

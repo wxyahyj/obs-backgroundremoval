@@ -66,8 +66,7 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.targetSwitchDelayMs = 500;
     config.targetSwitchTolerance = 0.15f;
     config.integralLimit = 100.0f;
-    config.integralSeparationThreshold = 50.0f;
-    config.integralDeadZone = 5.0f;
+    config.integralRate = 1.0f;
     config.pGainRampInitialScale = 0.6f;
     config.pGainRampDuration = 0.5f;
     config.useDerivativePredictor = true;
@@ -188,8 +187,7 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["targetSwitchDelayMs"] = config.targetSwitchDelayMs;
     j["targetSwitchTolerance"] = config.targetSwitchTolerance;
     j["integralLimit"] = config.integralLimit;
-    j["integralSeparationThreshold"] = config.integralSeparationThreshold;
-    j["integralDeadZone"] = config.integralDeadZone;
+    j["integralRate"] = config.integralRate;
     j["pGainRampInitialScale"] = config.pGainRampInitialScale;
     j["pGainRampDuration"] = config.pGainRampDuration;
     j["useDerivativePredictor"] = config.useDerivativePredictor;
@@ -260,8 +258,7 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("targetSwitchDelayMs")) config.targetSwitchDelayMs = j["targetSwitchDelayMs"].get<int>();
         if (j.contains("targetSwitchTolerance")) config.targetSwitchTolerance = j["targetSwitchTolerance"].get<float>();
         if (j.contains("integralLimit")) config.integralLimit = j["integralLimit"].get<float>();
-        if (j.contains("integralSeparationThreshold")) config.integralSeparationThreshold = j["integralSeparationThreshold"].get<float>();
-        if (j.contains("integralDeadZone")) config.integralDeadZone = j["integralDeadZone"].get<float>();
+        if (j.contains("integralRate")) config.integralRate = j["integralRate"].get<float>();
         if (j.contains("pGainRampInitialScale")) config.pGainRampInitialScale = j["pGainRampInitialScale"].get<float>();
         if (j.contains("pGainRampDuration")) config.pGainRampDuration = j["pGainRampDuration"].get<float>();
         if (j.contains("useDerivativePredictor")) config.useDerivativePredictor = j["useDerivativePredictor"].get<bool>();

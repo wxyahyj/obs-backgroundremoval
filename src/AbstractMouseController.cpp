@@ -438,19 +438,25 @@ void AbstractMouseController::tick()
                 releaseAutoTrigger();
                 lastAutoTriggerTime = now;
             }
+            // 目标丢失时释放按键（目标离开触发半径的2倍范围）
+            if (distance > config.autoTriggerRadius * 2.0f) {
+                releaseAutoTrigger();
+                lastAutoTriggerTime = now;
+            }
         } else {
             if (distance < config.autoTriggerRadius) {
-                if (!autoTriggerWaitingForDelay) {
-                    autoTriggerWaitingForDelay = true;
-                    autoTriggerDelayStartTime = now;
-                }
-                
-                auto delayElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerDelayStartTime).count();
-                int totalDelay = config.autoTriggerFireDelay + getRandomDelay();
-                
-                if (delayElapsed >= totalDelay) {
-                    auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
-                    if (cooldownElapsed >= config.autoTriggerInterval) {
+                // 先检查冷却时间，避免无效等待
+                auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
+                if (cooldownElapsed >= config.autoTriggerInterval) {
+                    if (!autoTriggerWaitingForDelay) {
+                        autoTriggerWaitingForDelay = true;
+                        autoTriggerDelayStartTime = now;
+                    }
+                    
+                    auto delayElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerDelayStartTime).count();
+                    int totalDelay = config.autoTriggerFireDelay + getRandomDelay();
+                    
+                    if (delayElapsed >= totalDelay) {
                         performAutoClick();
                     }
                 }
@@ -483,7 +489,7 @@ void AbstractMouseController::tick()
         constexpr float DEAD_ZONE = 0.3f;           // 死区阈值
         constexpr float JUMP_THRESHOLD = 30.0f;     // 跳变检测阈值
         constexpr float KP_GAIN_THRESHOLD = 1920.0f;
-        constexpr float KP_GAIN_RATE = 0.03f;
+        // KP_GAIN_RATE 现在使用可调参数 config.adaptivePGainRate
         constexpr float INTEGRAL_GAIN_THRESHOLD = 50.0f;
         constexpr float INTEGRAL_GAIN_RATE = 0.1f;
         constexpr float LARGE_ERROR_RATE = 0.1f;
@@ -493,9 +499,20 @@ void AbstractMouseController::tick()
         // 动态P增益（根据距离）
         float baseP = calculateDynamicP(distance) * getCurrentPGain();
         
+        // 导数预测器：在PID计算前预测目标位置
+        float predictedErrorX = errorX;
+        float predictedErrorY = errorY;
+        if (config.useDerivativePredictor) {
+            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+            float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
+            predictedErrorX = errorX + config.predictionWeightX * derivPredictedX;
+            predictedErrorY = errorY + config.predictionWeightY * derivPredictedY;
+        }
+        
         // ========== X轴处理 ==========
-        float absErrorX = std::abs(errorX);
-        float errorX_work = errorX;
+        float absErrorX = std::abs(predictedErrorX);
+        float errorX_work = predictedErrorX;
         
         // Step 1: 死区处理
         if (absErrorX <= DEAD_ZONE) {
@@ -537,7 +554,7 @@ void AbstractMouseController::tick()
             float ratio;
             if (absErrorX < KP_GAIN_THRESHOLD) {
                 ratio = 1.0f - (absErrorX / KP_GAIN_THRESHOLD);
-                adaptivePGainX += (ratio - adaptivePGainX) * KP_GAIN_RATE;
+                adaptivePGainX += (ratio - adaptivePGainX) * config.adaptivePGainRate;
             } else {
                 ratio = KP_GAIN_THRESHOLD / absErrorX;
                 adaptivePGainX += (ratio * adaptivePGainX - adaptivePGainX) * LARGE_ERROR_RATE;
@@ -571,14 +588,14 @@ void AbstractMouseController::tick()
         if (std::abs(DX) <= 0.5f) {
             DX = 0.0f;
         }
-        DX *= config.derivativeFilterAlpha * adaptiveIGainX;  // rate_ * integral_gain_
+        DX *= config.dTermScale * adaptiveIGainX;  // rate_ * integral_gain_
         
         if (config.maxPixelMove > 0.0f) {
             DX = atan2Clamp(DX, config.maxPixelMove, config.maxPixelMove);
         }
         
         // Step 9: 积分项（带限幅防止饱和）
-        integralX += errorX_work * config.pidI * adaptiveIGainX;
+        integralX += errorX_work * config.pidI * adaptiveIGainX * config.integralRate;
         // 应用积分限幅
         float iLimit = (config.integralLimit > 0.0f) ? config.integralLimit : 1000.0f;
         integralX = std::clamp(integralX, -iLimit, iLimit);
@@ -625,8 +642,8 @@ void AbstractMouseController::tick()
         moveX = totalX;
         
         // ========== Y轴处理（相同逻辑） ==========
-        float absErrorY = std::abs(errorY);
-        float errorY_work = errorY;
+        float absErrorY = std::abs(predictedErrorY);
+        float errorY_work = predictedErrorY;
         
         if (absErrorY <= DEAD_ZONE) {
             errorY_work = 0.0f;
@@ -664,7 +681,7 @@ void AbstractMouseController::tick()
             float ratio;
             if (absErrorY < KP_GAIN_THRESHOLD) {
                 ratio = 1.0f - (absErrorY / KP_GAIN_THRESHOLD);
-                adaptivePGainY += (ratio - adaptivePGainY) * KP_GAIN_RATE;
+                adaptivePGainY += (ratio - adaptivePGainY) * config.adaptivePGainRate;
             } else {
                 ratio = KP_GAIN_THRESHOLD / absErrorY;
                 adaptivePGainY += (ratio * adaptivePGainY - adaptivePGainY) * LARGE_ERROR_RATE;
@@ -694,13 +711,13 @@ void AbstractMouseController::tick()
         if (std::abs(DY) <= 0.5f) {
             DY = 0.0f;
         }
-        DY *= config.derivativeFilterAlpha * adaptiveIGainY;
+        DY *= config.dTermScale * adaptiveIGainY;
         
         if (config.maxPixelMove > 0.0f) {
             DY = atan2Clamp(DY, config.maxPixelMove, config.maxPixelMove);
         }
      // Step 9: 积分项（带限幅防止饱和）
-        integralY += errorY_work * config.pidI * adaptiveIGainY;
+        integralY += errorY_work * config.pidI * adaptiveIGainY * config.integralRate;
         // 应用积分限幅
         integralY = std::clamp(integralY, -iLimit, iLimit);
         float iOutY = integralY;
@@ -892,6 +909,55 @@ void AbstractMouseController::tick()
             
             moveX += perpX * curvatureOffset;
             moveY += perpY * curvatureOffset;
+        }
+    }
+    
+    // GhostTracker曲线轨迹
+    // 注意：GhostTracker的偏移是修改目标位置，不是叠加到移动量
+    // 这里我们用它来生成垂直于移动方向的曲线偏移
+    if (config.enableGhostTracker) {
+        float moveDist = std::sqrt(moveX * moveX + moveY * moveY);
+        if (moveDist > 1.0f) {
+            // 计算移动方向的垂直向量
+            float dirX = moveX / moveDist;
+            float dirY = moveY / moveDist;
+            float perpX = -dirY;  // 垂直于移动方向
+            float perpY = dirX;
+            
+            // 使用误差作为输入（目标相对于准心的偏移）
+            float ghostOffsetX = 0.0f, ghostOffsetY = 0.0f;
+            Detection* target = selectTarget();
+            if (target) {
+                int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth :
+                         ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
+                int fh = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight :
+                         ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
+                float targetW = target->width * fw;
+                float targetH = target->height * fh;
+                
+                GhostTracker::Config ghostConfig;
+                ghostConfig.enabled = true;
+                ghostConfig.curvature = config.ghostCurvature;
+                ghostConfig.noiseIntensity = config.ghostNoiseIntensity;
+                ghostConfig.verticalSnapRatio = config.ghostVerticalSnapRatio;
+                ghostConfig.noiseFreq = config.ghostNoiseFreq;
+                ghostTracker.setConfig(ghostConfig);
+                
+                // 传入误差（相对于准心的偏移）
+                if (ghostTracker.apply(errorX, errorY,
+                                       targetW, targetH,
+                                       static_cast<float>(fw), static_cast<float>(fh),
+                                       ghostOffsetX, ghostOffsetY)) {
+                    // 将GhostTracker的偏移投影到移动方向的垂直方向
+                    // ghostOffset是目标位置的偏移，我们需要转换为移动量的偏移
+                    float curveOffset = (ghostOffsetX * perpX + ghostOffsetY * perpY);
+                    // 限制曲线偏移量，不超过移动量的50%
+                    curveOffset = std::clamp(curveOffset, -moveDist * 0.5f, moveDist * 0.5f);
+                    
+                    moveX += perpX * curveOffset;
+                    moveY += perpY * curveOffset;
+                }
+            }
         }
     }
 
