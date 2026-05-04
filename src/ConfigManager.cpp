@@ -41,23 +41,10 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.pidPSlope = 1.0f;
     config.pidD = 0.007f;
     config.pidI = 0.01f;
-    config.aimSmoothingX = 0.7f;
-    config.aimSmoothingY = 0.5f;
     config.maxPixelMove = 128.0f;
     config.deadZonePixels = 5.0f;
     config.targetYOffset = 0.0f;
     config.derivativeFilterAlpha = 0.2f;
-    config.advTargetThreshold = 10.0f;
-    config.advMinCoefficient = 1.5f;
-    config.advMaxCoefficient = 2.5f;
-    config.advTransitionSharpness = 5.0f;
-    config.advTransitionMidpoint = 0.3f;
-    config.advOutputSmoothing = 0.7f;
-    config.advSpeedFactor = 0.5f;
-    config.useOneEuroFilter = false;
-    config.oneEuroMinCutoff = 1.0f;
-    config.oneEuroBeta = 0.0f;
-    config.oneEuroDCutoff = 1.0f;
     config.controllerType = ControllerType::WindowsAPI;
     config.makcuPort = "";
     config.makcuBaudRate = 115200;
@@ -81,7 +68,6 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.integralLimit = 100.0f;
     config.integralSeparationThreshold = 50.0f;
     config.integralDeadZone = 5.0f;
-    config.integralRate = 0.015f;
     config.pGainRampInitialScale = 0.6f;
     config.pGainRampDuration = 0.5f;
     config.useDerivativePredictor = true;
@@ -177,23 +163,10 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["pidPSlope"] = config.pidPSlope;
     j["pidD"] = config.pidD;
     j["pidI"] = config.pidI;
-    j["aimSmoothingX"] = config.aimSmoothingX;
-    j["aimSmoothingY"] = config.aimSmoothingY;
     j["maxPixelMove"] = config.maxPixelMove;
     j["deadZonePixels"] = config.deadZonePixels;
     j["targetYOffset"] = config.targetYOffset;
     j["derivativeFilterAlpha"] = config.derivativeFilterAlpha;
-    j["advTargetThreshold"] = config.advTargetThreshold;
-    j["advMinCoefficient"] = config.advMinCoefficient;
-    j["advMaxCoefficient"] = config.advMaxCoefficient;
-    j["advTransitionSharpness"] = config.advTransitionSharpness;
-    j["advTransitionMidpoint"] = config.advTransitionMidpoint;
-    j["advOutputSmoothing"] = config.advOutputSmoothing;
-    j["advSpeedFactor"] = config.advSpeedFactor;
-    j["useOneEuroFilter"] = config.useOneEuroFilter;
-    j["oneEuroMinCutoff"] = config.oneEuroMinCutoff;
-    j["oneEuroBeta"] = config.oneEuroBeta;
-    j["oneEuroDCutoff"] = config.oneEuroDCutoff;
     j["controllerType"] = static_cast<int>(config.controllerType);
     j["makcuPort"] = config.makcuPort;
     j["makcuBaudRate"] = config.makcuBaudRate;
@@ -217,7 +190,6 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["integralLimit"] = config.integralLimit;
     j["integralSeparationThreshold"] = config.integralSeparationThreshold;
     j["integralDeadZone"] = config.integralDeadZone;
-    j["integralRate"] = config.integralRate;
     j["pGainRampInitialScale"] = config.pGainRampInitialScale;
     j["pGainRampDuration"] = config.pGainRampDuration;
     j["useDerivativePredictor"] = config.useDerivativePredictor;
@@ -231,19 +203,6 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["enableBezierMovement"] = config.enableBezierMovement;
     j["bezierCurvature"] = config.bezierCurvature;
     j["bezierRandomness"] = config.bezierRandomness;
-    
-    j["dynamicKp"] = config.dynamicKp;
-    j["dynamicKi"] = config.dynamicKi;
-    j["dynamicKd"] = config.dynamicKd;
-    j["dynamicTargetThreshold"] = config.dynamicTargetThreshold;
-    j["dynamicSpeedMultiplier"] = config.dynamicSpeedMultiplier;
-    j["dynamicMinCoefficient"] = config.dynamicMinCoefficient;
-    j["dynamicMaxCoefficient"] = config.dynamicMaxCoefficient;
-    j["dynamicTransitionSharpness"] = config.dynamicTransitionSharpness;
-    j["dynamicTransitionMidpoint"] = config.dynamicTransitionMidpoint;
-    j["dynamicMinDataPoints"] = config.dynamicMinDataPoints;
-    j["dynamicErrorTolerance"] = config.dynamicErrorTolerance;
-    j["dynamicSmoothingFactor"] = config.dynamicSmoothingFactor;
     
     return j;
 }
@@ -276,23 +235,10 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("pidPSlope")) config.pidPSlope = j["pidPSlope"].get<float>();
         if (j.contains("pidD")) config.pidD = j["pidD"].get<float>();
         if (j.contains("pidI")) config.pidI = j["pidI"].get<float>();
-        if (j.contains("aimSmoothingX")) config.aimSmoothingX = j["aimSmoothingX"].get<float>();
-        if (j.contains("aimSmoothingY")) config.aimSmoothingY = j["aimSmoothingY"].get<float>();
         if (j.contains("maxPixelMove")) config.maxPixelMove = j["maxPixelMove"].get<float>();
         if (j.contains("deadZonePixels")) config.deadZonePixels = j["deadZonePixels"].get<float>();
         if (j.contains("targetYOffset")) config.targetYOffset = j["targetYOffset"].get<float>();
         if (j.contains("derivativeFilterAlpha")) config.derivativeFilterAlpha = j["derivativeFilterAlpha"].get<float>();
-        if (j.contains("advTargetThreshold")) config.advTargetThreshold = j["advTargetThreshold"].get<float>();
-        if (j.contains("advMinCoefficient")) config.advMinCoefficient = j["advMinCoefficient"].get<float>();
-        if (j.contains("advMaxCoefficient")) config.advMaxCoefficient = j["advMaxCoefficient"].get<float>();
-        if (j.contains("advTransitionSharpness")) config.advTransitionSharpness = j["advTransitionSharpness"].get<float>();
-        if (j.contains("advTransitionMidpoint")) config.advTransitionMidpoint = j["advTransitionMidpoint"].get<float>();
-        if (j.contains("advOutputSmoothing")) config.advOutputSmoothing = j["advOutputSmoothing"].get<float>();
-        if (j.contains("advSpeedFactor")) config.advSpeedFactor = j["advSpeedFactor"].get<float>();
-        if (j.contains("useOneEuroFilter")) config.useOneEuroFilter = j["useOneEuroFilter"].get<bool>();
-        if (j.contains("oneEuroMinCutoff")) config.oneEuroMinCutoff = j["oneEuroMinCutoff"].get<float>();
-        if (j.contains("oneEuroBeta")) config.oneEuroBeta = j["oneEuroBeta"].get<float>();
-        if (j.contains("oneEuroDCutoff")) config.oneEuroDCutoff = j["oneEuroDCutoff"].get<float>();
         if (j.contains("controllerType")) config.controllerType = static_cast<ControllerType>(j["controllerType"].get<int>());
         if (j.contains("makcuPort")) config.makcuPort = j["makcuPort"].get<std::string>();
         if (j.contains("makcuBaudRate")) config.makcuBaudRate = j["makcuBaudRate"].get<int>();
@@ -316,7 +262,6 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("integralLimit")) config.integralLimit = j["integralLimit"].get<float>();
         if (j.contains("integralSeparationThreshold")) config.integralSeparationThreshold = j["integralSeparationThreshold"].get<float>();
         if (j.contains("integralDeadZone")) config.integralDeadZone = j["integralDeadZone"].get<float>();
-        if (j.contains("integralRate")) config.integralRate = j["integralRate"].get<float>();
         if (j.contains("pGainRampInitialScale")) config.pGainRampInitialScale = j["pGainRampInitialScale"].get<float>();
         if (j.contains("pGainRampDuration")) config.pGainRampDuration = j["pGainRampDuration"].get<float>();
         if (j.contains("useDerivativePredictor")) config.useDerivativePredictor = j["useDerivativePredictor"].get<bool>();
@@ -330,19 +275,6 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("enableBezierMovement")) config.enableBezierMovement = j["enableBezierMovement"].get<bool>();
         if (j.contains("bezierCurvature")) config.bezierCurvature = j["bezierCurvature"].get<float>();
         if (j.contains("bezierRandomness")) config.bezierRandomness = j["bezierRandomness"].get<float>();
-        
-        if (j.contains("dynamicKp")) config.dynamicKp = j["dynamicKp"].get<float>();
-        if (j.contains("dynamicKi")) config.dynamicKi = j["dynamicKi"].get<float>();
-        if (j.contains("dynamicKd")) config.dynamicKd = j["dynamicKd"].get<float>();
-        if (j.contains("dynamicTargetThreshold")) config.dynamicTargetThreshold = j["dynamicTargetThreshold"].get<float>();
-        if (j.contains("dynamicSpeedMultiplier")) config.dynamicSpeedMultiplier = j["dynamicSpeedMultiplier"].get<float>();
-        if (j.contains("dynamicMinCoefficient")) config.dynamicMinCoefficient = j["dynamicMinCoefficient"].get<float>();
-        if (j.contains("dynamicMaxCoefficient")) config.dynamicMaxCoefficient = j["dynamicMaxCoefficient"].get<float>();
-        if (j.contains("dynamicTransitionSharpness")) config.dynamicTransitionSharpness = j["dynamicTransitionSharpness"].get<float>();
-        if (j.contains("dynamicTransitionMidpoint")) config.dynamicTransitionMidpoint = j["dynamicTransitionMidpoint"].get<float>();
-        if (j.contains("dynamicMinDataPoints")) config.dynamicMinDataPoints = j["dynamicMinDataPoints"].get<int>();
-        if (j.contains("dynamicErrorTolerance")) config.dynamicErrorTolerance = j["dynamicErrorTolerance"].get<float>();
-        if (j.contains("dynamicSmoothingFactor")) config.dynamicSmoothingFactor = j["dynamicSmoothingFactor"].get<float>();
         
         return true;
     } catch (const nlohmann::json::exception& e) {

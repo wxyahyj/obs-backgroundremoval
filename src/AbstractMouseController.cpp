@@ -451,11 +451,12 @@ void AbstractMouseController::tick()
     float moveX, moveY;
 
     if (config.algorithmType == AlgorithmType::AdvancedPID) {
-        // 融合误差模式：P、I项基于融合误差，D项基于原始误差
+        // 精简版高级PID：动态P增益 + 导数预测 + D项滤波 + 积分分离
         float fusionErrorX = errorX;
         float fusionErrorY = errorY;
         float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
 
+        // 导数预测器
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
@@ -463,61 +464,12 @@ void AbstractMouseController::tick()
             fusionErrorY += config.predictionWeightY * derivPredictedY;
         }
 
+        // 动态P增益
         float dynamicP = calculateDynamicP(distance) * getCurrentPGain();
 
-        // 动态阈值计算（基于目标宽度）
-        float widthRatio = target->width;
-        float dynamicCoeff = config.advMinCoefficient + (config.advMaxCoefficient - config.advMinCoefficient) /
-            (1.0f + std::exp(-config.advTransitionSharpness * (widthRatio - config.advTransitionMidpoint)));
-        float dynamicJudgmentThresholdX = dynamicCoeff * std::abs(fusionErrorX) + config.integralDeadZone;
-        float dynamicJudgmentThresholdY = dynamicCoeff * std::abs(fusionErrorY) + config.integralDeadZone;
-
-        // 状态机：达标判断（X轴）
-        if (!advHasReachedX && std::abs(fusionErrorX) < config.advTargetThreshold) {
-            advHasReachedX = true;
-        } else if (std::abs(fusionErrorX) >= dynamicJudgmentThresholdX) {
-            advHasReachedX = false;
-            advStableCountX = 0;
-        } else if (!advHasReachedX && std::abs(fusionErrorX) >= config.advTargetThreshold && std::abs(fusionErrorX) <= dynamicJudgmentThresholdX) {
-            float diff = std::abs(fusionErrorX - pidPreviousErrorX);
-            if (diff < config.advTargetThreshold) {
-                advStableCountX++;
-            } else {
-                advStableCountX = 0;
-            }
-            if (advStableCountX >= 2) {
-                advHasReachedX = true;
-                advStableCountX = 0;
-            }
-        }
-
-        // 状态机：达标判断（Y轴）
-        if (!advHasReachedY && std::abs(fusionErrorY) < config.advTargetThreshold) {
-            advHasReachedY = true;
-        } else if (std::abs(fusionErrorY) >= dynamicJudgmentThresholdY) {
-            advHasReachedY = false;
-            advStableCountY = 0;
-        } else if (!advHasReachedY && std::abs(fusionErrorY) >= config.advTargetThreshold && std::abs(fusionErrorY) <= dynamicJudgmentThresholdY) {
-            float diff = std::abs(fusionErrorY - pidPreviousErrorY);
-            if (diff < config.advTargetThreshold) {
-                advStableCountY++;
-            } else {
-                advStableCountY = 0;
-            }
-            if (advStableCountY >= 2) {
-                advHasReachedY = true;
-                advStableCountY = 0;
-            }
-        }
-
-        // 速度因子：达标时全速，未达标时半速
-        float speedFactorX = advHasReachedX ? 1.0f : config.advSpeedFactor;
-        float speedFactorY = advHasReachedY ? 1.0f : config.advSpeedFactor;
-
-        // D项基于原始误差计算（避免双重滤波问题）
+        // D项滤波
         float deltaErrorX = errorX - pidPreviousErrorX;
         float deltaErrorY = errorY - pidPreviousErrorY;
-
         float alpha = config.derivativeFilterAlpha;
         filteredDeltaErrorX = alpha * deltaErrorX + (1.0f - alpha) * filteredDeltaErrorX;
         filteredDeltaErrorY = alpha * deltaErrorY + (1.0f - alpha) * filteredDeltaErrorY;
@@ -525,17 +477,14 @@ void AbstractMouseController::tick()
         float dTermX = config.pidD * filteredDeltaErrorX;
         float dTermY = config.pidD * filteredDeltaErrorY;
 
-        // 自适应积分基于融合误差
-        bool shouldIntegrateX = adjustIntegralGain(fusionErrorX, pidPreviousErrorX, integralGainX);
-        bool shouldIntegrateY = adjustIntegralGain(fusionErrorY, pidPreviousErrorY, integralGainY);
-
-        if (std::abs(fusionErrorX) >= config.integralDeadZone && shouldIntegrateX) {
+        // 积分（带死区和限幅）
+        if (std::abs(fusionErrorX) >= config.integralDeadZone) {
             integralX += fusionErrorX;
             integralX = std::clamp(integralX, -config.integralLimit, config.integralLimit);
         } else {
             integralX = 0.0f;
         }
-        if (std::abs(fusionErrorY) >= config.integralDeadZone && shouldIntegrateY) {
+        if (std::abs(fusionErrorY) >= config.integralDeadZone) {
             integralY += fusionErrorY;
             integralY = std::clamp(integralY, -config.integralLimit, config.integralLimit);
         } else {
@@ -545,46 +494,19 @@ void AbstractMouseController::tick()
         float integralTermX = config.pidI * integralX;
         float integralTermY = config.pidI * integralY;
 
-        // PID输出：P、I项基于融合误差，D项基于原始误差，应用速度因子
-        float pidOutputX = dynamicP * fusionErrorX * speedFactorX + dTermX + integralTermX;
-        float pidOutputY = dynamicP * fusionErrorY * speedFactorY + dTermY + integralTermY;
-
-        // 输出整体平滑
-        if (config.useOneEuroFilter) {
-            // 一欧元滤波器：自适应平滑
-            oneEuroX.setMinCutoff(config.oneEuroMinCutoff);
-            oneEuroX.setBeta(config.oneEuroBeta);
-            oneEuroX.setDCutoff(config.oneEuroDCutoff);
-            oneEuroY.setMinCutoff(config.oneEuroMinCutoff);
-            oneEuroY.setBeta(config.oneEuroBeta);
-            oneEuroY.setDCutoff(config.oneEuroDCutoff);
-
-            moveX = oneEuroX.filter(pidOutputX, deltaTime);
-            moveY = oneEuroY.filter(pidOutputY, deltaTime);
-        } else {
-            // EMA平滑
-            moveX = advPreviousOutputX * (1.0f - config.advOutputSmoothing) + pidOutputX * config.advOutputSmoothing;
-            moveY = advPreviousOutputY * (1.0f - config.advOutputSmoothing) + pidOutputY * config.advOutputSmoothing;
-            advPreviousOutputX = moveX;
-            advPreviousOutputY = moveY;
-        }
+        // PID输出
+        moveX = dynamicP * fusionErrorX + dTermX + integralTermX;
+        moveY = dynamicP * fusionErrorY + dTermY + integralTermY;
 
         static int logCounter = 0;
         if (++logCounter >= 30) {
             logCounter = 0;
-            blog(LOG_INFO, "[%s高级PID-融合] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
+            blog(LOG_INFO, "[%s高级PID] dt=%.4f | errorX=%.1f errorY=%.1f | fusionX=%.1f fusionY=%.1f | dynamicP=%.3f",
                  getLogPrefix(), deltaTime, errorX, errorY, fusionErrorX, fusionErrorY, dynamicP);
-            blog(LOG_INFO, "[%s高级PID-融合] reachedX=%d reachedY=%d | speedX=%.1f speedY=%.1f | threshold=%.1f",
-                 getLogPrefix(), advHasReachedX ? 1 : 0, advHasReachedY ? 1 : 0, speedFactorX, speedFactorY, dynamicJudgmentThresholdX);
-            blog(LOG_INFO, "[%s高级PID-融合] dTermX=%.2f dTermY=%.2f (基于原始误差) | filteredDX=%.2f filteredDY=%.2f | pidD=%.4f",
-                 getLogPrefix(), dTermX, dTermY, filteredDeltaErrorX, filteredDeltaErrorY, config.pidD);
-            blog(LOG_INFO, "[%s高级PID-融合] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | iGainX=%.2f iGainY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
-                 getLogPrefix(), integralX, integralY, integralTermX, integralTermY, integralGainX, integralGainY, config.pidI, pidOutputX, pidOutputY);
-            if (config.useDerivativePredictor) {
-                blog(LOG_INFO, "[%s高级PID-融合] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
-                     getLogPrefix(), derivPredictedX, derivPredictedY, config.predictionWeightX, config.predictionWeightY,
-                     config.predictionWeightX * derivPredictedX, config.predictionWeightY * derivPredictedY);
-            }
+            blog(LOG_INFO, "[%s高级PID] dTermX=%.2f dTermY=%.2f | pidD=%.4f",
+                 getLogPrefix(), dTermX, dTermY, config.pidD);
+            blog(LOG_INFO, "[%s高级PID] integralX=%.2f integralY=%.2f | iTermX=%.2f iTermY=%.2f | pidI=%.4f | outX=%.1f outY=%.1f",
+                 getLogPrefix(), integralX, integralY, integralTermX, integralTermY, config.pidI, moveX, moveY);
         }
 
         if (pidDataCallback_) {
@@ -600,8 +522,6 @@ void AbstractMouseController::tick()
             data.currentKp = dynamicP;
             data.currentKi = config.pidI;
             data.currentKd = config.pidD;
-
-            // 新增：P/I/D 分项值
             data.pTermX = dynamicP * fusionErrorX;
             data.pTermY = dynamicP * fusionErrorY;
             data.iTermX = integralTermX;
@@ -609,7 +529,6 @@ void AbstractMouseController::tick()
             data.dTermX = dTermX;
             data.dTermY = dTermY;
 
-            // 积分状态
             float iLimit = (config.integralLimit > 0.0f) ? config.integralLimit : 1000.0f;
             data.integralAbsX = std::abs(integralX);
             data.integralAbsY = std::abs(integralY);
@@ -618,154 +537,29 @@ void AbstractMouseController::tick()
             data.integralRatioX = std::min(1.0f, std::abs(integralX) / iLimit);
             data.integralRatioY = std::min(1.0f, std::abs(integralY) / iLimit);
 
-            // 控制模式自动诊断
             float errDist = std::sqrt(errorX * errorX + errorY * errorY);
             float maxIRatio = std::max(data.integralRatioX, data.integralRatioY);
             bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
 
             if (!hasTarget) {
-                data.controlMode = 0; // IDLE
-            } else if (maxIRatio > 0.8f) {
-                data.controlMode = 3; // I_SATURATION
-            } else if (errDist < 10.0f && maxIRatio < 0.4f) {
-                data.controlMode = 2; // LOCKED
-            } else {
-                data.controlMode = 1; // TRACKING
-            }
-
-            data.algorithmType = 0; // AdvancedPID
-            data.isFiring = isFiring;
-            data.smoothingFactorX = config.aimSmoothingX;
-            data.smoothingFactorY = config.aimSmoothingY;
-
-            pidDataCallback_(data);
-        }
-
-        // 保存原始误差用于D项计算
-        pidPreviousErrorX = errorX;
-        pidPreviousErrorY = errorY;
-        previousErrorX = errorX;
-        previousErrorY = errorY;
-    } else if (config.algorithmType == AlgorithmType::DynamicPID) {
-        // 动态PID：基于动态阈值和状态机的PID控制器
-        dynamicPidX.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
-        dynamicPidY.updateParams(config.dynamicKp, config.dynamicKi, config.dynamicKd);
-
-        dynamicPidX.setBottomParams(
-            config.dynamicTargetThreshold, config.dynamicSpeedMultiplier,
-            config.dynamicMinCoefficient, config.dynamicMaxCoefficient,
-            config.dynamicTransitionSharpness, config.dynamicTransitionMidpoint,
-            config.dynamicMinDataPoints, config.dynamicErrorTolerance
-        );
-        dynamicPidY.setBottomParams(
-            config.dynamicTargetThreshold, config.dynamicSpeedMultiplier,
-            config.dynamicMinCoefficient, config.dynamicMaxCoefficient,
-            config.dynamicTransitionSharpness, config.dynamicTransitionMidpoint,
-            config.dynamicMinDataPoints, config.dynamicErrorTolerance
-        );
-
-        dynamicPidX.setSmoothingFactor(config.dynamicSmoothingFactor);
-        dynamicPidY.setSmoothingFactor(config.dynamicSmoothingFactor);
-
-        // 预测器融合误差（与其他算法一致）
-        float dynamicErrorX = errorX;
-        float dynamicErrorY = errorY;
-        float dynamicDerivPredictedX = 0.0f, dynamicDerivPredictedY = 0.0f;
-
-        if (config.useDerivativePredictor) {
-            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
-            predictor.predict(deltaTime, dynamicDerivPredictedX, dynamicDerivPredictedY);
-            dynamicErrorX += config.predictionWeightX * dynamicDerivPredictedX;
-            dynamicErrorY += config.predictionWeightY * dynamicDerivPredictedY;
-        }
-
-        // 目标宽度（像素）用于动态阈值计算
-        float targetWidthPixels = target->width * config.inferenceFrameWidth;
-        float imageSize = static_cast<float>(config.inferenceFrameWidth);
-
-        moveX = dynamicPidX.controlLoop(dynamicErrorX, deltaTime, targetWidthPixels, imageSize);
-        moveY = dynamicPidY.controlLoop(dynamicErrorY, deltaTime, targetWidthPixels, imageSize);
-
-        static int dynamicLogCounter = 0;
-        if (++dynamicLogCounter >= 30) {
-            dynamicLogCounter = 0;
-            blog(LOG_INFO, "[%s动态PID] dt=%.4f | errorX=%.1f errorY=%.1f | dynErrX=%.1f dynErrY=%.1f | moveX=%.1f moveY=%.1f",
-                 getLogPrefix(), deltaTime, errorX, errorY, dynamicErrorX, dynamicErrorY, moveX, moveY);
-            blog(LOG_INFO, "[%s动态PID] pTermX=%.2f pTermY=%.2f | iTermX=%.2f iTermY=%.2f | dTermX=%.2f dTermY=%.2f",
-                 getLogPrefix(),
-                 dynamicPidX.getLastProportional(), dynamicPidY.getLastProportional(),
-                 dynamicPidX.getLastIntegral(), dynamicPidY.getLastIntegral(),
-                 dynamicPidX.getLastDerivative(), dynamicPidY.getLastDerivative());
-            blog(LOG_INFO, "[%s动态PID] reachedX=%d reachedY=%d | velX=%.1f velY=%.1f | kp=%.3f ki=%.3f kd=%.3f",
-                 getLogPrefix(),
-                 dynamicPidX.getIsReached() ? 1 : 0, dynamicPidY.getIsReached() ? 1 : 0,
-                 dynamicPidX.getVelocity(), dynamicPidY.getVelocity(),
-                 config.dynamicKp, config.dynamicKi, config.dynamicKd);
-            if (config.useDerivativePredictor) {
-                blog(LOG_INFO, "[%s动态PID] 预测值: derivPredX=%.2f derivPredY=%.2f | weightX=%.2f weightY=%.2f | 融合贡献X=%.2f 融合贡献Y=%.2f",
-                     getLogPrefix(), dynamicDerivPredictedX, dynamicDerivPredictedY, config.predictionWeightX, config.predictionWeightY,
-                     config.predictionWeightX * dynamicDerivPredictedX, config.predictionWeightY * dynamicDerivPredictedY);
-            }
-        }
-
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.dynamicKp;
-            data.currentKi = config.dynamicKi;
-            data.currentKd = config.dynamicKd;
-
-            data.pTermX = dynamicPidX.getLastProportional();
-            data.pTermY = dynamicPidY.getLastProportional();
-            data.iTermX = dynamicPidX.getLastIntegral();
-            data.iTermY = dynamicPidY.getLastIntegral();
-            data.dTermX = dynamicPidX.getLastDerivative();
-            data.dTermY = dynamicPidY.getLastDerivative();
-
-            float iLimitDyn = 100.0f;
-            data.integralAbsX = std::abs(data.iTermX);
-            data.integralAbsY = std::abs(data.iTermY);
-            data.integralLimitX = iLimitDyn;
-            data.integralLimitY = iLimitDyn;
-            data.integralRatioX = std::min(1.0f, data.integralAbsX / iLimitDyn);
-            data.integralRatioY = std::min(1.0f, data.integralAbsY / iLimitDyn);
-
-            float errDist = std::sqrt(errorX * errorX + errorY * errorY);
-            bool hasTarget = (errDist > 0.5f || std::abs(targetVelocityX) > 0.1f || std::abs(targetVelocityY) > 0.1f);
-            if (!hasTarget) {
                 data.controlMode = 0;
-            } else if (errDist < 10.0f) {
+            } else if (maxIRatio > 0.8f) {
+                data.controlMode = 3;
+            } else if (errDist < 10.0f && maxIRatio < 0.4f) {
                 data.controlMode = 2;
             } else {
                 data.controlMode = 1;
             }
 
-            data.algorithmType = 3;
+            data.algorithmType = 0;
             data.isFiring = isFiring;
-            data.smoothingFactorX = config.dynamicSmoothingFactor;
-            data.smoothingFactorY = config.dynamicSmoothingFactor;
-
             pidDataCallback_(data);
         }
 
-        // 重置其他算法状态
-        pidPreviousErrorX = 0.0f;
-        pidPreviousErrorY = 0.0f;
-        previousErrorX = 0.0f;
-        previousErrorY = 0.0f;
-        filteredDeltaErrorX = 0.0f;
-        filteredDeltaErrorY = 0.0f;
-        integralX = 0.0f;
-        integralY = 0.0f;
-        integralGainX = 0.0f;
-        integralGainY = 0.0f;
+        pidPreviousErrorX = errorX;
+        pidPreviousErrorY = errorY;
+        previousErrorX = errorX;
+        previousErrorY = errorY;
     } else if (config.algorithmType == AlgorithmType::ExternalPID) {
         // 外部PID库（pid_x64.lib）
         if (!externalPidInitialized_) {
@@ -860,9 +654,9 @@ void AbstractMouseController::tick()
         }
     }
 
-    // [FIX] 压枪补偿移到平滑之后，避免被 aimSmoothingY 稀释
-    float finalMoveX = previousMoveX * (1.0f - config.aimSmoothingX) + moveX * config.aimSmoothingX;
-    float finalMoveY = previousMoveY * (1.0f - config.aimSmoothingY) + moveY * config.aimSmoothingY;
+    // 压枪补偿
+    float finalMoveX = moveX;
+    float finalMoveY = moveY;
 
     if (config.autoRecoilControlEnabled && firing) {
         float recoilPerMs = config.recoilStrength / static_cast<float>(config.recoilSpeed);
@@ -1041,46 +835,6 @@ float AbstractMouseController::calculateDynamicP(float distance)
     return std::max(config.pidPMin, std::min(config.pidPMax, p));
 }
 
-bool AbstractMouseController::adjustIntegralGain(float error, float lastError, float& integralGain)
-{
-    float errorDerivative = std::abs(error - lastError);
-
-    if (std::abs(error) < config.integralSeparationThreshold) {
-        float adaptRate = config.integralRate * (1.0f - errorDerivative / (config.integralSeparationThreshold * 2.0f));
-        adaptRate = (adaptRate < 0.0f) ? 0.0f : ((adaptRate > config.integralRate) ? config.integralRate : adaptRate);
-        integralGain = (integralGain + adaptRate > 1.0f) ? 1.0f : integralGain + adaptRate;
-    }
-    else {
-        float decay = 0.1f + 0.9f * std::tanh(std::abs(error) / (config.integralSeparationThreshold * 2.0f));
-        integralGain *= (1.0f - 0.05f * decay);
-    }
-    integralGain = (integralGain < 0.0f) ? 0.0f : ((integralGain > 1.0f) ? 1.0f : integralGain);
-    return integralGain > 0.01f;
-}
-
-float AbstractMouseController::calculateIntegral(float error, float& integral, float& integralGain, float lastError, float deltaTime)
-{
-    UNUSED_PARAMETER(deltaTime);
-    
-    if (std::abs(error) < config.integralDeadZone) {
-        return 0.0f;
-    }
-
-    if (adjustIntegralGain(error, lastError, integralGain))
-    {
-        integral += error;
-        integral = std::max(-config.integralLimit, std::min(integral, config.integralLimit));
-    }
-    else
-    {
-        integral = 0;
-    }
-
-    float ki = config.pidI * integral;
-    
-    return ki;
-}
-
 float AbstractMouseController::getCurrentPGain()
 {
     auto now = std::chrono::steady_clock::now();
@@ -1103,16 +857,6 @@ void AbstractMouseController::resetPidState()
     integralGainX = 0.0f;
     integralGainY = 0.0f;
     predictor.reset();
-    dynamicPidX.reset();
-    dynamicPidY.reset();
-    advHasReachedX = false;
-    advHasReachedY = false;
-    advStableCountX = 0;
-    advStableCountY = 0;
-    advPreviousOutputX = 0.0f;
-    advPreviousOutputY = 0.0f;
-    oneEuroX.reset();
-    oneEuroY.reset();
 }
 
 void AbstractMouseController::resetMotionState()

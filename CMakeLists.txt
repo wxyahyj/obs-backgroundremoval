@@ -213,11 +213,9 @@ endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc OpenCV::opencv_imgcodecs nlohmann_json::nlohmann_json Eigen3::Eigen)
 
-# 外部PID库（pid_x64.lib）
+# ExternalPID实现源文件
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/libs/pid")
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/libs/pid/pid_x64.lib")
-# 忽略 pid_x64.lib 缺少 PDB 的警告
-target_link_options(${CMAKE_PROJECT_NAME} PRIVATE /IGNORE:4099)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/libs/pid/pid_impl.cpp")
 
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)
@@ -299,6 +297,8 @@ target_sources(
     src/yolo-detector-filter-info.c
     src/yolo-detector-filter.cpp
     src/models/ModelYOLO.cpp
+    src/ThreadPool.cpp
+    src/FOVRenderer.cpp
 )
 
 if(WIN32)
@@ -318,6 +318,7 @@ if(WIN32)
       src/OneEuroFilter.cpp
       src/curve.cpp
       src/CrosshairDetector.cpp
+      src/TargetTracker.cpp
   )
 endif()
 

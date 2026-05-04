@@ -253,7 +253,9 @@ private:
     size_t inputBufferSize_;
     std::vector<float> inputBuffer_;
     std::vector<float> outputBuffer_;
+    std::vector<Ort::Float16_t> inputBufferFp16_;  // FP16输入缓冲区
     bool useIOBinding_;
+    bool isFp16Model_;  // 是否为FP16模型
     
     // 预分配letterbox缓冲区
     cv::Mat letterboxBuffer_;

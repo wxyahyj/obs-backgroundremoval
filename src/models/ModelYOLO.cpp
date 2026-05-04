@@ -93,7 +93,8 @@ ModelYOLO::ModelYOLO(Version version)
       dmlInteropInitialized_(false),
       dmlPreprocessor_(nullptr),
       lastLatencyLogTime_(std::chrono::steady_clock::now()),
-      inferenceThreadRunning_(false)
+      inferenceThreadRunning_(false),
+      isFp16Model_(false)
 {
     obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
     
@@ -289,6 +290,23 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         
         populateInputOutputNames(session_, inputNames_, outputNames_);
         populateInputOutputShapes(session_, inputDims_, outputDims_);
+        
+        // 检测模型是否为FP16
+        isFp16Model_ = false;
+        try {
+            Ort::TypeInfo inputTypeInfo = session_->GetInputTypeInfo(0);
+            auto tensorTypeInfo = inputTypeInfo.GetTensorTypeAndShapeInfo();
+            ONNXTensorElementDataType inputType = tensorTypeInfo.GetElementType();
+            
+            if (inputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                isFp16Model_ = true;
+                obs_log(LOG_INFO, "[ModelYOLO] Detected FP16 model - will use FP16 inference");
+            } else {
+                obs_log(LOG_INFO, "[ModelYOLO] Detected FP32 model - will use FP32 inference");
+            }
+        } catch (const std::exception& e) {
+            obs_log(LOG_WARNING, "[ModelYOLO] Could not detect input type: %s, assuming FP32", e.what());
+        }
         
         // 始终使用从模型读取的实际输入尺寸，而不是用户设置的 inputResolution
         if (!inputDims_.empty()) {
@@ -501,13 +519,29 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
                 OrtMemType::OrtMemTypeDefault
             );
             
-            inputTensor = Ort::Value::CreateTensor<float>(
-                memoryInfo,
-                inputBuffer_.data(),
-                inputBufferSize_,
-                inputShape.data(),
-                inputShape.size()
-            );
+            if (isFp16Model_) {
+                // FP16模型：使用Ort::Float16_t转换FP32到FP16
+                inputBufferFp16_.resize(inputBufferSize_);
+                for (size_t i = 0; i < inputBufferSize_; ++i) {
+                    inputBufferFp16_[i] = Ort::Float16_t(inputBuffer_[i]);
+                }
+                
+                inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
+                    memoryInfo,
+                    inputBufferFp16_.data(),
+                    inputBufferSize_,
+                    inputShape.data(),
+                    inputShape.size()
+                );
+            } else {
+                inputTensor = Ort::Value::CreateTensor<float>(
+                    memoryInfo,
+                    inputBuffer_.data(),
+                    inputBufferSize_,
+                    inputShape.data(),
+                    inputShape.size()
+                );
+            }
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to create input tensor: %s", e.what());
             return {};
@@ -564,9 +598,34 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
             return {};
         }
         
+        // 获取输出数据
         float* outputData = nullptr;
+        std::vector<float> fp32OutputBuffer;  // 用于存储FP16转换后的FP32数据
+        
         try {
-            outputData = outputTensors[0].GetTensorMutableData<float>();
+            // 检查输出类型
+            auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+            ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
+            
+            if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                // FP16输出：使用Ort::Float16_t转换到FP32
+                const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
+                size_t outputSize = 1;
+                auto shape = outputTypeInfo.GetShape();
+                for (auto dim : shape) {
+                    outputSize *= static_cast<size_t>(dim);
+                }
+                
+                fp32OutputBuffer.resize(outputSize);
+                for (size_t i = 0; i < outputSize; ++i) {
+                    // Ort::Float16_t自动转换为float
+                    fp32OutputBuffer[i] = static_cast<float>(fp16Data[i]);
+                }
+                outputData = fp32OutputBuffer.data();
+            } else {
+                // FP32输出：直接使用
+                outputData = outputTensors[0].GetTensorMutableData<float>();
+            }
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output tensor data: %s", e.what());
             return {};
@@ -579,6 +638,8 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         
         std::vector<int64_t> outputShape;
         try {
+            // 如果已经在FP16转换中获取了shape，直接使用
+            // 否则重新获取
             outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output shape: %s", e.what());
@@ -1274,13 +1335,22 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int w
             OrtArenaAllocator, OrtMemTypeDefault
         );
         
-        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-            memoryInfo,
-            inputBuffer_.data(),
-            inputBufferSize_,
-            inputShape.data(),
-            inputShape.size()
-        );
+        Ort::Value inputTensor;
+        if (isFp16Model_) {
+            inputBufferFp16_.resize(inputBufferSize_);
+            for (size_t i = 0; i < inputBufferSize_; ++i) {
+                inputBufferFp16_[i] = Ort::Float16_t(inputBuffer_[i]);
+            }
+            inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
+                memoryInfo, inputBufferFp16_.data(), inputBufferSize_,
+                inputShape.data(), inputShape.size()
+            );
+        } else {
+            inputTensor = Ort::Value::CreateTensor<float>(
+                memoryInfo, inputBuffer_.data(), inputBufferSize_,
+                inputShape.data(), inputShape.size()
+            );
+        }
         
         std::vector<Ort::Value> inputTensors;
         inputTensors.push_back(std::move(inputTensor));
@@ -1312,10 +1382,31 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int w
             return {};
         }
         
-        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        float* outputData = nullptr;
+        std::vector<float> fp32OutputBuffer;
+        
+        auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+        ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
+        
+        if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+            const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
+            size_t outputSize = 1;
+            auto shape = outputTypeInfo.GetShape();
+            for (auto dim : shape) {
+                outputSize *= static_cast<size_t>(dim);
+            }
+            fp32OutputBuffer.resize(outputSize);
+            for (size_t i = 0; i < outputSize; ++i) {
+                fp32OutputBuffer[i] = static_cast<float>(fp16Data[i]);
+            }
+            outputData = fp32OutputBuffer.data();
+        } else {
+            outputData = outputTensors[0].GetTensorMutableData<float>();
+        }
+        
         if (!outputData) return {};
         
-        std::vector<int64_t> outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        std::vector<int64_t> outputShape = outputTypeInfo.GetShape();
         if (outputShape.size() < 3) return {};
         
         int numBoxes = 0;
@@ -1442,13 +1533,29 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
             OrtArenaAllocator, OrtMemTypeDefault
         );
         
-        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-            memoryInfo,
-            inputBuffer_.data(),
-            inputBufferSize_,
-            inputShape.data(),
-            inputShape.size()
-        );
+        Ort::Value inputTensor;
+        if (isFp16Model_) {
+            // FP16模型：使用Ort::Float16_t转换FP32到FP16
+            inputBufferFp16_.resize(inputBufferSize_);
+            for (size_t i = 0; i < inputBufferSize_; ++i) {
+                inputBufferFp16_[i] = Ort::Float16_t(inputBuffer_[i]);
+            }
+            inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
+                memoryInfo,
+                inputBufferFp16_.data(),
+                inputBufferSize_,
+                inputShape.data(),
+                inputShape.size()
+            );
+        } else {
+            inputTensor = Ort::Value::CreateTensor<float>(
+                memoryInfo,
+                inputBuffer_.data(),
+                inputBufferSize_,
+                inputShape.data(),
+                inputShape.size()
+            );
+        }
         
         std::vector<Ort::Value> inputTensors;
         inputTensors.push_back(std::move(inputTensor));
@@ -1481,13 +1588,35 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
             return {};
         }
         
-        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        // 获取输出数据
+        float* outputData = nullptr;
+        std::vector<float> fp32OutputBuffer;
+        
+        auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+        ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
+        
+        if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+            const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
+            size_t outputSize = 1;
+            auto shape = outputTypeInfo.GetShape();
+            for (auto dim : shape) {
+                outputSize *= static_cast<size_t>(dim);
+            }
+            fp32OutputBuffer.resize(outputSize);
+            for (size_t i = 0; i < outputSize; ++i) {
+                fp32OutputBuffer[i] = static_cast<float>(fp16Data[i]);
+            }
+            outputData = fp32OutputBuffer.data();
+        } else {
+            outputData = outputTensors[0].GetTensorMutableData<float>();
+        }
+        
         if (!outputData) {
             obs_log(LOG_ERROR, "[ModelYOLO] DML inference: null output data");
             return {};
         }
         
-        std::vector<int64_t> outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        std::vector<int64_t> outputShape = outputTypeInfo.GetShape();
         if (outputShape.size() < 3) {
             obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid output shape");
             return {};

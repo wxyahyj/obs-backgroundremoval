@@ -12,8 +12,7 @@ enum class ControllerType {
 };
 
 enum class AlgorithmType {
-    AdvancedPID,      // 高级PID（当前使用的自适应PID）
-    DynamicPID,       // 动态PID（动态阈值状态机）
+    AdvancedPID,      // 高级PID（精简版）
     ExternalPID       // 外部PID库（pid_x64.lib）
 };
 
@@ -81,33 +80,16 @@ struct MouseControllerConfig {
     // 算法选择
     AlgorithmType algorithmType = AlgorithmType::AdvancedPID;
     
-    // 高级PID参数（当前使用的算法）
+    // 高级PID参数（精简版）
     float pidPMin = 0.15f;
     float pidPMax = 0.6f;
     float pidPSlope = 1.0f;
     float pidD = 0.007f;
-    float pidI = 0.01f;  // 积分系数（和标准PID的stdKi一致）
-    float aimSmoothingX = 0.7f;
-    float aimSmoothingY = 0.5f;
+    float pidI = 0.01f;
     float maxPixelMove = 128.0f;
     float deadZonePixels = 5.0f;
     float targetYOffset = 0.0f;
     float derivativeFilterAlpha = 0.2f;
-    
-    // 高级PID增强参数（状态机+动态阈值）
-    float advTargetThreshold = 10.0f;         // 达标误差阈值
-    float advMinCoefficient = 1.5f;           // 动态阈值最小系数
-    float advMaxCoefficient = 2.5f;           // 动态阈值最大系数
-    float advTransitionSharpness = 5.0f;      // Sigmoid过渡锐度
-    float advTransitionMidpoint = 0.3f;       // Sigmoid过渡中点
-    float advOutputSmoothing = 0.7f;          // 输出平滑系数（EMA）
-    float advSpeedFactor = 0.5f;              // 未达标时速度因子（半速）
-    
-    // 一欧元滤波器参数（高级PID可选输出平滑）
-    bool useOneEuroFilter = false;            // 是否使用一欧元滤波器替代EMA
-    float oneEuroMinCutoff = 1.0f;            // 最小截止频率
-    float oneEuroBeta = 0.0f;                 // 速度因子（β*|速度|动态调整）
-    float oneEuroDCutoff = 1.0f;              // 微分截止频率（速度平滑）
     
     ControllerType controllerType = ControllerType::WindowsAPI;
     std::string makcuPort;
@@ -132,7 +114,6 @@ struct MouseControllerConfig {
     float integralLimit = 100.0f;
     float integralSeparationThreshold = 50.0f;
     float integralDeadZone = 5.0f;
-    float integralRate = 0.015f;  // 积分增益变化率（和标准PID一致）
     float pGainRampInitialScale = 0.6f;
     float pGainRampDuration = 0.5f;
     // DerivativePredictor配置
@@ -152,20 +133,6 @@ struct MouseControllerConfig {
     bool enableBezierMovement = false;
     float bezierCurvature = 0.3f;
     float bezierRandomness = 0.2f;
-    
-    // 动态PID参数（动态阈值状态机控制器）
-    float dynamicKp = 0.5f;
-    float dynamicKi = 0.1f;
-    float dynamicKd = 0.05f;
-    float dynamicTargetThreshold = 4.0f;       // 达标误差阈值
-    float dynamicSpeedMultiplier = 1.0f;       // 速度倍率
-    float dynamicMinCoefficient = 1.6f;        // 最小系数
-    float dynamicMaxCoefficient = 2.7f;        // 最大系数
-    float dynamicTransitionSharpness = 5.0f;   // 过渡锐度
-    float dynamicTransitionMidpoint = 0.0f;    // 动态过渡中点
-    int   dynamicMinDataPoints = 2;            // 最小数据量
-    float dynamicErrorTolerance = 3.0f;        // 误差变化容限
-    float dynamicSmoothingFactor = 0.8f;       // 平滑因子
     
     // 外部PID参数（pid_x64.lib）
     float externalKpX = 1.5f;                  // X轴比例系数
