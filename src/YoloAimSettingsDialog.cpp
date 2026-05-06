@@ -43,7 +43,7 @@ void YoloAimSettingsDialog::showSettingsDialog()
 }
 
 YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
-    : QDialog(parent)
+    : Fluent::FluentDialog(parent)
     , m_currentConfig(0)
     , m_showDetectionResultsCheck(nullptr)
     , m_showFOVCheck(nullptr)
@@ -90,197 +90,11 @@ YoloAimSettingsDialog::YoloAimSettingsDialog(QWidget *parent)
 {
     initAllConfigWidgetStructs();
     
-    setWindowTitle(QStringLiteral("🐟 小鱼"));
+    Fluent::ThemeManager::instance().setDarkMode();
+    
+    setWindowTitle(QStringLiteral("小鱼设置"));
     setMinimumSize(1000, 600);
     resize(1200, 700);
-    
-    setStyleSheet(R"(
-        QDialog {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #0a0a12, stop:1 #1a1025);
-            border: 2px solid #8b5cf6;
-            border-radius: 10px;
-        }
-        
-        QLabel {
-            color: #e0e0e0;
-            font-size: 13px;
-        }
-        
-        QGroupBox {
-            background-color: rgba(139, 92, 246, 0.1);
-            border: 1px solid #8b5cf6;
-            border-radius: 8px;
-            margin-top: 12px;
-            padding-top: 12px;
-            font-weight: bold;
-            color: #a78bfa;
-        }
-        
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 15px;
-            padding: 0 8px;
-            color: #a78bfa;
-        }
-        
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #1a1025, stop:1 #0a0a12);
-            border: 2px solid #8b5cf6;
-            border-radius: 8px;
-            padding: 10px 25px;
-            color: #c4b5fd;
-            font-weight: bold;
-            font-size: 13px;
-            min-width: 80px;
-        }
-        
-        QPushButton:hover {
-            background: #8b5cf6;
-            color: #0a0a12;
-        }
-        
-        QPushButton:pressed {
-            background: #7c3aed;
-        }
-        
-        QSpinBox, QDoubleSpinBox {
-            background-color: #1a1025;
-            border: 1px solid #8b5cf6;
-            border-radius: 5px;
-            padding: 6px 10px;
-            color: #c4b5fd;
-            font-size: 13px;
-            min-width: 80px;
-        }
-        
-        QSpinBox:focus, QDoubleSpinBox:focus {
-            border: 2px solid #a78bfa;
-        }
-        
-        QSpinBox::up-button, QDoubleSpinBox::up-button,
-        QSpinBox::down-button, QDoubleSpinBox::down-button {
-            background-color: #1a1025;
-            border: none;
-            width: 20px;
-        }
-        
-        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-            width: 10px;
-            height: 10px;
-        }
-        
-        QComboBox {
-            background-color: #1a1025;
-            border: 1px solid #8b5cf6;
-            border-radius: 5px;
-            padding: 8px 12px;
-            color: #c4b5fd;
-            font-size: 13px;
-            min-width: 120px;
-        }
-        
-        QComboBox:hover {
-            border: 2px solid #a78bfa;
-        }
-        
-        QComboBox::drop-down {
-            border: none;
-            width: 30px;
-        }
-        
-        QComboBox::down-arrow {
-            width: 12px;
-            height: 12px;
-        }
-        
-        QComboBox QAbstractItemView {
-            background-color: #1a1025;
-            border: 1px solid #8b5cf6;
-            color: #c4b5fd;
-            selection-background-color: #8b5cf6;
-            selection-color: #0a0a12;
-        }
-        
-        QCheckBox {
-            color: #e0e0e0;
-            spacing: 8px;
-            font-size: 13px;
-        }
-        
-        QCheckBox::indicator {
-            width: 18px;
-            height: 18px;
-            border-radius: 4px;
-            border: 2px solid #8b5cf6;
-            background-color: #1a1025;
-        }
-        
-        QCheckBox::indicator:checked {
-            background-color: #8b5cf6;
-            border-color: #8b5cf6;
-        }
-        
-        QCheckBox::indicator:hover {
-            border: 2px solid #a78bfa;
-        }
-        
-        QTabWidget::pane {
-            border: 1px solid #8b5cf6;
-            border-radius: 8px;
-            background-color: rgba(139, 92, 246, 0.05);
-        }
-        
-        QTabBar::tab {
-            background: #1a1025;
-            border: 1px solid #333;
-            border-bottom: none;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            padding: 10px 20px;
-            color: #888888;
-            font-size: 13px;
-            margin-right: 2px;
-        }
-        
-        QTabBar::tab:hover {
-            color: #a78bfa;
-            border-color: #8b5cf6;
-        }
-        
-        QTabBar::tab:selected {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #8b5cf6, stop:1 #7c3aed);
-            color: #0a0a12;
-            font-weight: bold;
-        }
-        
-        QScrollArea {
-            background-color: transparent;
-            border: none;
-        }
-        
-        QScrollBar:vertical {
-            background: #0a0a12;
-            width: 10px;
-            border-radius: 5px;
-        }
-        
-        QScrollBar::handle:vertical {
-            background: #8b5cf6;
-            border-radius: 5px;
-            min-height: 30px;
-        }
-        
-        QScrollBar::handle:vertical:hover {
-            background: #a78bfa;
-        }
-        
-        QDialogButtonBox QPushButton {
-            min-width: 90px;
-        }
-    )");
     
     setupUI();
     refreshSourceList();
@@ -294,42 +108,24 @@ YoloAimSettingsDialog::~YoloAimSettingsDialog()
 void YoloAimSettingsDialog::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(16, 16, 16, 16);
+    mainLayout->setSpacing(12);
     
     QHBoxLayout* topLayout = new QHBoxLayout();
+    topLayout->setSpacing(12);
     
-    QLabel* sourceLabel = new QLabel(QStringLiteral("视频源:"), this);
-    m_sourceCombo = new QComboBox(this);
+    QLabel* sourceLabel = new Fluent::FluentLabel(QStringLiteral("视频源:"), this);
+    m_sourceCombo = new Fluent::FluentComboBox(this);
     m_sourceCombo->setMinimumWidth(200);
     connect(m_sourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
             this, &YoloAimSettingsDialog::onSourceChanged);
     
     topLayout->addWidget(sourceLabel);
     topLayout->addWidget(m_sourceCombo);
-    topLayout->addSpacing(20);
+    topLayout->addSpacing(24);
     
-    m_toggleInferenceBtn = new QPushButton(QStringLiteral("▶ 开始推理"), this);
+    m_toggleInferenceBtn = new Fluent::FluentButton(QStringLiteral("▶ 开始推理"), this);
     m_toggleInferenceBtn->setCheckable(true);
-    m_toggleInferenceBtn->setStyleSheet(R"(
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #1a1025, stop:1 #0a0a12);
-            border: 2px solid #22c55e;
-            border-radius: 8px;
-            padding: 8px 20px;
-            color: #22c55e;
-            font-weight: bold;
-            font-size: 13px;
-        }
-        QPushButton:hover {
-            background: #22c55e;
-            color: #0a0a12;
-        }
-        QPushButton:checked {
-            background: #ef4444;
-            border-color: #ef4444;
-            color: white;
-        }
-    )");
     connect(m_toggleInferenceBtn, &QPushButton::clicked, this, [this]() {
         bool isInferencing = m_toggleInferenceBtn->isChecked();
         
@@ -367,15 +163,14 @@ void YoloAimSettingsDialog::setupUI()
     });
     topLayout->addWidget(m_toggleInferenceBtn);
     
-    m_inferenceStatusLabel = new QLabel(QStringLiteral("状态: 已停止"), this);
-    m_inferenceStatusLabel->setStyleSheet("color: #a78bfa; font-size: 13px; padding: 5px 10px;");
+    m_inferenceStatusLabel = new Fluent::FluentLabel(QStringLiteral("状态: 已停止"), this);
     topLayout->addWidget(m_inferenceStatusLabel);
     
-    topLayout->addSpacing(30);
+    topLayout->addSpacing(36);
     
-    QLabel* configLabel = new QLabel(QStringLiteral("配置:"), this);
+    QLabel* configLabel = new Fluent::FluentLabel(QStringLiteral("配置:"), this);
     topLayout->addWidget(configLabel);
-    m_configSelect = new QComboBox(this);
+    m_configSelect = new Fluent::FluentComboBox(this);
     for (int i = 0; i < 5; i++) {
         m_configSelect->addItem(QStringLiteral("配置 %1").arg(i + 1));
     }
@@ -388,7 +183,7 @@ void YoloAimSettingsDialog::setupUI()
     
     mainLayout->addLayout(topLayout);
     
-    m_tabWidget = new QTabWidget(this);
+    m_tabWidget = new Fluent::FluentTabWidget(this);
     
     setupModelDetectionPage();
     setupVisualPage();
@@ -414,31 +209,45 @@ void YoloAimSettingsDialog::setupUI()
 void YoloAimSettingsDialog::setupModelDetectionPage()
 {
     QWidget* page = new QWidget(this);
-    QVBoxLayout* layout = new QVBoxLayout(page);
+    QVBoxLayout* pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(12, 12, 12, 12);
+    pageLayout->setSpacing(16);
     
-    QGroupBox* modelGroup = new QGroupBox(QStringLiteral("📦 模型设置"), page);
+    QScrollArea* scrollArea = new Fluent::FluentScrollArea(page);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    
+    QWidget* scrollContent = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(scrollContent);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(16);
+    
+    QGroupBox* modelGroup = new Fluent::FluentGroupBox(QStringLiteral("📦 模型设置"), scrollContent);
     QGridLayout* modelLayout = new QGridLayout(modelGroup);
+    modelLayout->setContentsMargins(16, 24, 16, 16);
+    modelLayout->setHorizontalSpacing(16);
+    modelLayout->setVerticalSpacing(12);
     int row = 0;
     
-    modelLayout->addWidget(new QLabel(QStringLiteral("模型路径:"), page), row, 0);
-    m_modelPathEdit = new QLineEdit(page);
-    m_modelPathBtn = new QPushButton(QStringLiteral("浏览..."), page);
+    modelLayout->addWidget(new QLabel(QStringLiteral("模型路径:"), scrollContent), row, 0);
+    m_modelPathEdit = new Fluent::FluentLineEdit(scrollContent);
+    m_modelPathBtn = new Fluent::FluentButton(QStringLiteral("浏览..."), scrollContent);
     QHBoxLayout* modelPathLayout = new QHBoxLayout();
     modelPathLayout->addWidget(m_modelPathEdit);
     modelPathLayout->addWidget(m_modelPathBtn);
     modelLayout->addLayout(modelPathLayout, row, 1);
     row++;
     
-    modelLayout->addWidget(new QLabel(QStringLiteral("模型版本:"), page), row, 0);
-    m_modelVersionCombo = new QComboBox(page);
+    modelLayout->addWidget(new QLabel(QStringLiteral("模型版本:"), scrollContent), row, 0);
+    m_modelVersionCombo = new Fluent::FluentComboBox(scrollContent);
     m_modelVersionCombo->addItem(QStringLiteral("YOLOv5"), 0);
     m_modelVersionCombo->addItem(QStringLiteral("YOLOv8"), 1);
     m_modelVersionCombo->addItem(QStringLiteral("YOLOv11"), 2);
     modelLayout->addWidget(m_modelVersionCombo, row, 1);
     row++;
     
-    modelLayout->addWidget(new QLabel(QStringLiteral("计算设备:"), page), row, 0);
-    m_useGPUCombo = new QComboBox(page);
+    modelLayout->addWidget(new QLabel(QStringLiteral("计算设备:"), scrollContent), row, 0);
+    m_useGPUCombo = new Fluent::FluentComboBox(scrollContent);
     m_useGPUCombo->addItem(QStringLiteral("CPU"), QStringLiteral("cpu"));
     m_useGPUCombo->addItem(QStringLiteral("CUDA"), QStringLiteral("cuda"));
     m_useGPUCombo->addItem(QStringLiteral("DirectML"), QStringLiteral("dml"));
@@ -446,103 +255,112 @@ void YoloAimSettingsDialog::setupModelDetectionPage()
     modelLayout->addWidget(m_useGPUCombo, row, 1);
     row++;
     
-    m_useGPUTextureCheck = new QCheckBox(QStringLiteral("启用GPU纹理推理(实验性)"), page);
+    m_useGPUTextureCheck = new Fluent::FluentCheckBox(QStringLiteral("启用GPU纹理推理(实验性)"), scrollContent);
     modelLayout->addWidget(m_useGPUTextureCheck, row, 0, 1, 2);
     row++;
     
-    modelLayout->addWidget(new QLabel(QStringLiteral("输入分辨率:"), page), row, 0);
-    m_inputResolutionCombo = new QComboBox(page);
+    modelLayout->addWidget(new QLabel(QStringLiteral("输入分辨率:"), scrollContent), row, 0);
+    m_inputResolutionCombo = new Fluent::FluentComboBox(scrollContent);
     m_inputResolutionCombo->addItem(QStringLiteral("640x640"), 640);
     m_inputResolutionCombo->addItem(QStringLiteral("320x320"), 320);
     m_inputResolutionCombo->addItem(QStringLiteral("1280x1280"), 1280);
     modelLayout->addWidget(m_inputResolutionCombo, row, 1);
     row++;
     
-    modelLayout->addWidget(new QLabel(QStringLiteral("推理线程数:"), page), row, 0);
-    m_numThreadsSpin = new QSpinBox(page);
+    modelLayout->addWidget(new QLabel(QStringLiteral("推理线程数:"), scrollContent), row, 0);
+    m_numThreadsSpin = new Fluent::FluentSpinBox(scrollContent);
     m_numThreadsSpin->setRange(1, 16);
     m_numThreadsSpin->setValue(4);
     modelLayout->addWidget(m_numThreadsSpin, row, 1);
     
     layout->addWidget(modelGroup);
     
-    QGroupBox* detectGroup = new QGroupBox(QStringLiteral("🎯 检测设置"), page);
+    QGroupBox* detectGroup = new Fluent::FluentGroupBox(QStringLiteral("🎯 检测设置"), scrollContent);
     QGridLayout* detectLayout = new QGridLayout(detectGroup);
+    detectLayout->setContentsMargins(16, 24, 16, 16);
+    detectLayout->setHorizontalSpacing(16);
+    detectLayout->setVerticalSpacing(12);
     row = 0;
     
-    detectLayout->addWidget(new QLabel(QStringLiteral("置信度阈值:"), page), row, 0);
-    m_confidenceThresholdSpin = new QDoubleSpinBox(page);
+    detectLayout->addWidget(new QLabel(QStringLiteral("置信度阈值:"), scrollContent), row, 0);
+    m_confidenceThresholdSpin = new Fluent::FluentDoubleSpinBox(scrollContent);
     m_confidenceThresholdSpin->setRange(0.01, 1.0);
     m_confidenceThresholdSpin->setSingleStep(0.01);
     m_confidenceThresholdSpin->setValue(0.5);
     detectLayout->addWidget(m_confidenceThresholdSpin, row, 1);
     row++;
     
-    detectLayout->addWidget(new QLabel(QStringLiteral("NMS阈值:"), page), row, 0);
-    m_nmsThresholdSpin = new QDoubleSpinBox(page);
+    detectLayout->addWidget(new QLabel(QStringLiteral("NMS阈值:"), scrollContent), row, 0);
+    m_nmsThresholdSpin = new Fluent::FluentDoubleSpinBox(scrollContent);
     m_nmsThresholdSpin->setRange(0.01, 1.0);
     m_nmsThresholdSpin->setSingleStep(0.01);
     m_nmsThresholdSpin->setValue(0.45);
     detectLayout->addWidget(m_nmsThresholdSpin, row, 1);
     row++;
     
-    detectLayout->addWidget(new QLabel(QStringLiteral("目标类别:"), page), row, 0);
-    m_targetClassCombo = new QComboBox(page);
+    detectLayout->addWidget(new QLabel(QStringLiteral("目标类别:"), scrollContent), row, 0);
+    m_targetClassCombo = new Fluent::FluentComboBox(scrollContent);
     m_targetClassCombo->addItem(QStringLiteral("全部"), -1);
     m_targetClassCombo->addItem(QStringLiteral("人物"), 0);
     m_targetClassCombo->addItem(QStringLiteral("车辆"), -1);
     detectLayout->addWidget(m_targetClassCombo, row, 1);
     row++;
     
-    detectLayout->addWidget(new QLabel(QStringLiteral("自定义类别:"), page), row, 0);
-    m_targetClassesTextEdit = new QLineEdit(page);
+    detectLayout->addWidget(new QLabel(QStringLiteral("自定义类别:"), scrollContent), row, 0);
+    m_targetClassesTextEdit = new Fluent::FluentLineEdit(scrollContent);
     m_targetClassesTextEdit->setPlaceholderText(QStringLiteral("多个类别用逗号分隔，如: 0,1,2"));
     detectLayout->addWidget(m_targetClassesTextEdit, row, 1);
     row++;
     
-    detectLayout->addWidget(new QLabel(QStringLiteral("推理间隔(帧):"), page), row, 0);
-    m_inferenceIntervalSpin = new QSpinBox(page);
+    detectLayout->addWidget(new QLabel(QStringLiteral("推理间隔(帧):"), scrollContent), row, 0);
+    m_inferenceIntervalSpin = new Fluent::FluentSpinBox(scrollContent);
     m_inferenceIntervalSpin->setRange(0, 10);
     m_inferenceIntervalSpin->setValue(0);
     detectLayout->addWidget(m_inferenceIntervalSpin, row, 1);
     
     layout->addWidget(detectGroup);
     
-    QGroupBox* regionGroup = new QGroupBox(QStringLiteral("📐 区域检测"), page);
+    QGroupBox* regionGroup = new Fluent::FluentGroupBox(QStringLiteral("📐 区域检测"), scrollContent);
     QGridLayout* regionLayout = new QGridLayout(regionGroup);
+    regionLayout->setContentsMargins(16, 24, 16, 16);
+    regionLayout->setHorizontalSpacing(16);
+    regionLayout->setVerticalSpacing(12);
     row = 0;
     
-    m_useRegionCheck = new QCheckBox(QStringLiteral("启用区域检测"), page);
+    m_useRegionCheck = new Fluent::FluentCheckBox(QStringLiteral("启用区域检测"), scrollContent);
     regionLayout->addWidget(m_useRegionCheck, row, 0, 1, 2);
     row++;
     
-    regionLayout->addWidget(new QLabel(QStringLiteral("区域X:"), page), row, 0);
-    m_regionXSpin = new QSpinBox(page);
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域X:"), scrollContent), row, 0);
+    m_regionXSpin = new Fluent::FluentSpinBox(scrollContent);
     m_regionXSpin->setRange(0, 3840);
     regionLayout->addWidget(m_regionXSpin, row, 1);
     row++;
     
-    regionLayout->addWidget(new QLabel(QStringLiteral("区域Y:"), page), row, 0);
-    m_regionYSpin = new QSpinBox(page);
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域Y:"), scrollContent), row, 0);
+    m_regionYSpin = new Fluent::FluentSpinBox(scrollContent);
     m_regionYSpin->setRange(0, 2160);
     regionLayout->addWidget(m_regionYSpin, row, 1);
     row++;
     
-    regionLayout->addWidget(new QLabel(QStringLiteral("区域宽度:"), page), row, 0);
-    m_regionWidthSpin = new QSpinBox(page);
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域宽度:"), scrollContent), row, 0);
+    m_regionWidthSpin = new Fluent::FluentSpinBox(scrollContent);
     m_regionWidthSpin->setRange(1, 3840);
     m_regionWidthSpin->setValue(640);
     regionLayout->addWidget(m_regionWidthSpin, row, 1);
     row++;
     
-    regionLayout->addWidget(new QLabel(QStringLiteral("区域高度:"), page), row, 0);
-    m_regionHeightSpin = new QSpinBox(page);
+    regionLayout->addWidget(new QLabel(QStringLiteral("区域高度:"), scrollContent), row, 0);
+    m_regionHeightSpin = new Fluent::FluentSpinBox(scrollContent);
     m_regionHeightSpin->setRange(1, 2160);
     m_regionHeightSpin->setValue(480);
     regionLayout->addWidget(m_regionHeightSpin, row, 1);
     
     layout->addWidget(regionGroup);
     layout->addStretch();
+    
+    scrollArea->setWidget(scrollContent);
+    pageLayout->addWidget(scrollArea);
     
     m_tabWidget->addTab(page, QStringLiteral("📦 模型检测"));
 }
@@ -551,43 +369,50 @@ void YoloAimSettingsDialog::setupVisualPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(16);
     
-    QScrollArea* scrollArea = new QScrollArea(page);
+    QScrollArea* scrollArea = new Fluent::FluentScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     
     QWidget* scrollContent = new QWidget();
     QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(8, 8, 8, 8);
+    scrollLayout->setSpacing(16);
     
-    QGroupBox* displayGroup = new QGroupBox(QStringLiteral("👁 显示设置"), scrollContent);
+    QGroupBox* displayGroup = new Fluent::FluentGroupBox(QStringLiteral("👁 显示设置"), scrollContent);
     QGridLayout* displayLayout = new QGridLayout(displayGroup);
+    displayLayout->setContentsMargins(16, 24, 16, 16);
+    displayLayout->setHorizontalSpacing(16);
+    displayLayout->setVerticalSpacing(12);
     int row = 0;
     
-    m_showDetectionResultsCheck = new QCheckBox(QStringLiteral("显示检测结果"), scrollContent);
+    m_showDetectionResultsCheck = new Fluent::FluentCheckBox(QStringLiteral("显示检测结果"), scrollContent);
     displayLayout->addWidget(m_showDetectionResultsCheck, row, 0, 1, 2);
     row++;
     
     displayLayout->addWidget(new QLabel(QStringLiteral("边框线宽:"), scrollContent), row, 0);
-    m_bboxLineWidthSpin = new QSpinBox(scrollContent);
+    m_bboxLineWidthSpin = new Fluent::FluentSpinBox(scrollContent);
     m_bboxLineWidthSpin->setRange(1, 5);
     m_bboxLineWidthSpin->setValue(2);
     displayLayout->addWidget(m_bboxLineWidthSpin, row, 1);
     row++;
     
     displayLayout->addWidget(new QLabel(QStringLiteral("标签字体大小:"), scrollContent), row, 0);
-    m_labelFontScaleSpin = new QDoubleSpinBox(scrollContent);
+    m_labelFontScaleSpin = new Fluent::FluentDoubleSpinBox(scrollContent);
     m_labelFontScaleSpin->setRange(0.2, 1.0);
     m_labelFontScaleSpin->setSingleStep(0.05);
     m_labelFontScaleSpin->setValue(0.5);
     displayLayout->addWidget(m_labelFontScaleSpin, row, 1);
     row++;
     
-    m_detectionSmoothingCheck = new QCheckBox(QStringLiteral("启用检测框平滑"), scrollContent);
+    m_detectionSmoothingCheck = new Fluent::FluentCheckBox(QStringLiteral("启用检测框平滑"), scrollContent);
     displayLayout->addWidget(m_detectionSmoothingCheck, row, 0, 1, 2);
     row++;
     
     displayLayout->addWidget(new QLabel(QStringLiteral("平滑系数:"), scrollContent), row, 0);
-    m_detectionSmoothingAlphaSpin = new QDoubleSpinBox(scrollContent);
+    m_detectionSmoothingAlphaSpin = new Fluent::FluentDoubleSpinBox(scrollContent);
     m_detectionSmoothingAlphaSpin->setRange(0.01, 1.0);
     m_detectionSmoothingAlphaSpin->setSingleStep(0.01);
     m_detectionSmoothingAlphaSpin->setValue(0.3);
@@ -595,90 +420,99 @@ void YoloAimSettingsDialog::setupVisualPage()
     
     scrollLayout->addWidget(displayGroup);
     
-    QGroupBox* fovGroup = new QGroupBox(QStringLiteral("🎯 FOV设置"), scrollContent);
+    QGroupBox* fovGroup = new Fluent::FluentGroupBox(QStringLiteral("🎯 FOV设置"), scrollContent);
     QGridLayout* fovLayout = new QGridLayout(fovGroup);
+    fovLayout->setContentsMargins(16, 24, 16, 16);
+    fovLayout->setHorizontalSpacing(16);
+    fovLayout->setVerticalSpacing(12);
     row = 0;
     
-    m_showFOVCheck = new QCheckBox(QStringLiteral("显示FOV"), scrollContent);
+    m_showFOVCheck = new Fluent::FluentCheckBox(QStringLiteral("显示FOV"), scrollContent);
     fovLayout->addWidget(m_showFOVCheck, row, 0, 1, 2);
     row++;
     
-    m_showFOVCircleCheck = new QCheckBox(QStringLiteral("显示FOV圆圈"), scrollContent);
+    m_showFOVCircleCheck = new Fluent::FluentCheckBox(QStringLiteral("显示FOV圆圈"), scrollContent);
     fovLayout->addWidget(m_showFOVCircleCheck, row, 0);
     
-    m_showFOVCrossCheck = new QCheckBox(QStringLiteral("显示FOV十字"), scrollContent);
+    m_showFOVCrossCheck = new Fluent::FluentCheckBox(QStringLiteral("显示FOV十字"), scrollContent);
     fovLayout->addWidget(m_showFOVCrossCheck, row, 1);
     row++;
     
     fovLayout->addWidget(new QLabel(QStringLiteral("FOV半径:"), scrollContent), row, 0);
-    m_fovRadiusSpin = new QSpinBox(scrollContent);
+    m_fovRadiusSpin = new Fluent::FluentSpinBox(scrollContent);
     m_fovRadiusSpin->setRange(10, 500);
     fovLayout->addWidget(m_fovRadiusSpin, row, 1);
     row++;
     
     fovLayout->addWidget(new QLabel(QStringLiteral("十字线长度:"), scrollContent), row, 0);
-    m_fovCrossLineScaleSpin = new QSpinBox(scrollContent);
+    m_fovCrossLineScaleSpin = new Fluent::FluentSpinBox(scrollContent);
     m_fovCrossLineScaleSpin->setRange(5, 300);
     fovLayout->addWidget(m_fovCrossLineScaleSpin, row, 1);
     row++;
     
     fovLayout->addWidget(new QLabel(QStringLiteral("十字线粗细:"), scrollContent), row, 0);
-    m_fovCrossLineThicknessSpin = new QSpinBox(scrollContent);
+    m_fovCrossLineThicknessSpin = new Fluent::FluentSpinBox(scrollContent);
     m_fovCrossLineThicknessSpin->setRange(1, 10);
     fovLayout->addWidget(m_fovCrossLineThicknessSpin, row, 1);
     row++;
     
     fovLayout->addWidget(new QLabel(QStringLiteral("圆圈粗细:"), scrollContent), row, 0);
-    m_fovCircleThicknessSpin = new QSpinBox(scrollContent);
+    m_fovCircleThicknessSpin = new Fluent::FluentSpinBox(scrollContent);
     m_fovCircleThicknessSpin->setRange(1, 10);
     fovLayout->addWidget(m_fovCircleThicknessSpin, row, 1);
     
     scrollLayout->addWidget(fovGroup);
     
-    QGroupBox* dynamicFovGroup = new QGroupBox(QStringLiteral("⚡ 动态FOV"), scrollContent);
+    QGroupBox* dynamicFovGroup = new Fluent::FluentGroupBox(QStringLiteral("⚡ 动态FOV"), scrollContent);
     QGridLayout* dynamicFovLayout = new QGridLayout(dynamicFovGroup);
+    dynamicFovLayout->setContentsMargins(16, 24, 16, 16);
+    dynamicFovLayout->setHorizontalSpacing(16);
+    dynamicFovLayout->setVerticalSpacing(12);
     row = 0;
     
-    m_useDynamicFOVCheck = new QCheckBox(QStringLiteral("启用动态FOV"), scrollContent);
+    m_useDynamicFOVCheck = new Fluent::FluentCheckBox(QStringLiteral("启用动态FOV"), scrollContent);
     dynamicFovLayout->addWidget(m_useDynamicFOVCheck, row, 0, 1, 2);
     row++;
     
-    m_showFOV2Check = new QCheckBox(QStringLiteral("显示第二个FOV"), scrollContent);
+    m_showFOV2Check = new Fluent::FluentCheckBox(QStringLiteral("显示第二个FOV"), scrollContent);
     dynamicFovLayout->addWidget(m_showFOV2Check, row, 0, 1, 2);
     row++;
     
     dynamicFovLayout->addWidget(new QLabel(QStringLiteral("第二FOV半径:"), scrollContent), row, 0);
-    m_fovRadius2Spin = new QSpinBox(scrollContent);
+    m_fovRadius2Spin = new Fluent::FluentSpinBox(scrollContent);
     m_fovRadius2Spin->setRange(1, 200);
     dynamicFovLayout->addWidget(m_fovRadius2Spin, row, 1);
     row++;
     
     dynamicFovLayout->addWidget(new QLabel(QStringLiteral("缩放百分比:"), scrollContent), row, 0);
-    m_dynamicFovShrinkSpin = new QSpinBox(scrollContent);
+    m_dynamicFovShrinkSpin = new Fluent::FluentSpinBox(scrollContent);
     m_dynamicFovShrinkSpin->setRange(10, 100);
     m_dynamicFovShrinkSpin->setValue(50);
     dynamicFovLayout->addWidget(m_dynamicFovShrinkSpin, row, 1);
     row++;
     
     dynamicFovLayout->addWidget(new QLabel(QStringLiteral("过渡时间(ms):"), scrollContent), row, 0);
-    m_dynamicFovTransitionSpin = new QSpinBox(scrollContent);
+    m_dynamicFovTransitionSpin = new Fluent::FluentSpinBox(scrollContent);
     m_dynamicFovTransitionSpin->setRange(0, 1000);
     m_dynamicFovTransitionSpin->setSingleStep(10);
     dynamicFovLayout->addWidget(m_dynamicFovTransitionSpin, row, 1);
     
     scrollLayout->addWidget(dynamicFovGroup);
     
-    QGroupBox* advancedGroup = new QGroupBox(QStringLiteral("🔧 高级设置"), scrollContent);
+    QGroupBox* advancedGroup = new Fluent::FluentGroupBox(QStringLiteral("🔧 高级设置"), scrollContent);
     QGridLayout* advancedLayout = new QGridLayout(advancedGroup);
+    advancedLayout->setContentsMargins(16, 24, 16, 16);
+    advancedLayout->setHorizontalSpacing(16);
+    advancedLayout->setVerticalSpacing(12);
     row = 0;
     
-    m_exportCoordinatesCheck = new QCheckBox(QStringLiteral("导出坐标"), scrollContent);
+    m_exportCoordinatesCheck = new Fluent::FluentCheckBox(QStringLiteral("导出坐标"), scrollContent);
     advancedLayout->addWidget(m_exportCoordinatesCheck, row, 0, 1, 2);
     row++;
     
     advancedLayout->addWidget(new QLabel(QStringLiteral("输出路径:"), scrollContent), row, 0);
-    m_coordinateOutputPathEdit = new QLineEdit(scrollContent);
-    m_coordinateOutputPathBtn = new QPushButton(QStringLiteral("浏览..."), scrollContent);
+    m_coordinateOutputPathEdit = new Fluent::FluentLineEdit(scrollContent);
+    m_coordinateOutputPathBtn = new Fluent::FluentButton(QStringLiteral("浏览..."), scrollContent);
     QHBoxLayout* coordPathLayout = new QHBoxLayout();
     coordPathLayout->addWidget(m_coordinateOutputPathEdit);
     coordPathLayout->addWidget(m_coordinateOutputPathBtn);
@@ -697,19 +531,24 @@ void YoloAimSettingsDialog::setupMouseControlPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(16);
     
-    QScrollArea* scrollArea = new QScrollArea(page);
+    QScrollArea* scrollArea = new Fluent::FluentScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     
     QWidget* scrollContent = new QWidget();
     QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(8, 8, 8, 8);
+    scrollLayout->setSpacing(16);
     
     // 创建5套配置，每套包含：基础+高级PID+扳机+后坐力
     for (int i = 0; i < 5; i++) {
         QWidget* container = new QWidget(scrollContent);
         QVBoxLayout* containerLayout = new QVBoxLayout(container);
         containerLayout->setContentsMargins(0, 0, 0, 0);
+        containerLayout->setSpacing(12);
         
         // 基础参数
         QWidget* basicWidget = createConfigWidget(i);
@@ -745,29 +584,36 @@ void YoloAimSettingsDialog::setupTrackingPredictorPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(16);
     
-    QScrollArea* scrollArea = new QScrollArea(page);
+    QScrollArea* scrollArea = new Fluent::FluentScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     
     QWidget* scrollContent = new QWidget();
     QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(8, 8, 8, 8);
+    scrollLayout->setSpacing(16);
     
     // Kalman追踪（全局）
-    QGroupBox* kalmanGroup = new QGroupBox(QStringLiteral("📍 卡尔曼追踪"), scrollContent);
+    QGroupBox* kalmanGroup = new Fluent::FluentGroupBox(QStringLiteral("📍 卡尔曼追踪"), scrollContent);
     QFormLayout* kalmanLayout = new QFormLayout(kalmanGroup);
+    kalmanLayout->setContentsMargins(16, 24, 16, 16);
+    kalmanLayout->setSpacing(12);
+    kalmanLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     
-    m_useKalmanTrackerCheck = new QCheckBox(QStringLiteral("启用卡尔曼追踪"), scrollContent);
+    m_useKalmanTrackerCheck = new Fluent::FluentCheckBox(QStringLiteral("启用卡尔曼追踪"), scrollContent);
     m_useKalmanTrackerCheck->setToolTip(QStringLiteral("启用卡尔曼滤波器进行目标追踪，提供更稳定的目标ID和预测能力"));
     kalmanLayout->addRow(m_useKalmanTrackerCheck);
     
-    m_kalmanGenerateThresholdSpin = new QSpinBox(scrollContent);
+    m_kalmanGenerateThresholdSpin = new Fluent::FluentSpinBox(scrollContent);
     m_kalmanGenerateThresholdSpin->setRange(1, 10);
     m_kalmanGenerateThresholdSpin->setValue(2);
     m_kalmanGenerateThresholdSpin->setToolTip(QStringLiteral("目标需要连续检测到的帧数才能被确认追踪"));
     kalmanLayout->addRow(QStringLiteral("追踪确认阈值:"), m_kalmanGenerateThresholdSpin);
     
-    m_kalmanTerminateCountSpin = new QSpinBox(scrollContent);
+    m_kalmanTerminateCountSpin = new Fluent::FluentSpinBox(scrollContent);
     m_kalmanTerminateCountSpin->setRange(1, 10);
     m_kalmanTerminateCountSpin->setValue(5);
     m_kalmanTerminateCountSpin->setToolTip(QStringLiteral("目标丢失多少帧后停止追踪"));
@@ -805,56 +651,61 @@ void YoloAimSettingsDialog::setupMotionSimPage()
 {
     QWidget* page = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(16);
     
-    QScrollArea* scrollArea = new QScrollArea(page);
+    QScrollArea* scrollArea = new Fluent::FluentScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     
     QWidget* scrollContent = new QWidget();
     QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(8, 8, 8, 8);
+    scrollLayout->setSpacing(16);
     
     // NeuralPath
-    m_enableNeuralPathCheck = new QCheckBox(QStringLiteral("🧠 启用神经网络轨迹"), scrollContent);
+    m_enableNeuralPathCheck = new Fluent::FluentCheckBox(QStringLiteral("🧠 启用神经网络轨迹"), scrollContent);
     m_enableNeuralPathCheck->setToolTip(QStringLiteral("启用神经网络轨迹生成器，生成更自然的鼠标移动轨迹"));
     scrollLayout->addWidget(m_enableNeuralPathCheck);
     
-    QLabel* descLabel = new QLabel(QStringLiteral(
+    Fluent::FluentLabel* descLabel = new Fluent::FluentLabel(QStringLiteral(
         "神经网络轨迹生成器使用预训练模型生成类人鼠标移动轨迹。\n"
         "相比贝塞尔曲线，神经网络生成的轨迹更自然、更难被检测。"
     ), scrollContent);
     descLabel->setWordWrap(true);
-    descLabel->setStyleSheet(QStringLiteral("color: #a78bfa; padding: 10px; background: rgba(139, 92, 246, 0.1); border-radius: 5px;"));
     scrollLayout->addWidget(descLabel);
     
-    QGroupBox* neuralParamsGroup = new QGroupBox(QStringLiteral("📊 神经轨迹参数"), scrollContent);
+    QGroupBox* neuralParamsGroup = new Fluent::FluentGroupBox(QStringLiteral("📊 神经轨迹参数"), scrollContent);
     QFormLayout* neuralParamsLayout = new QFormLayout(neuralParamsGroup);
-    m_neuralPathPointsSpin = new QSpinBox(scrollContent);
+    neuralParamsLayout->setContentsMargins(16, 24, 16, 16);
+    neuralParamsLayout->setSpacing(12);
+    neuralParamsLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_neuralPathPointsSpin = new Fluent::FluentSpinBox(scrollContent);
     m_neuralPathPointsSpin->setRange(10, 100);
     m_neuralPathPointsSpin->setValue(25);
     m_neuralPathPointsSpin->setSuffix(QStringLiteral(" 点"));
     neuralParamsLayout->addRow(QStringLiteral("轨迹点数量:"), m_neuralPathPointsSpin);
-    m_neuralMouseStepSizeSpin = new QDoubleSpinBox(scrollContent);
+    m_neuralMouseStepSizeSpin = new Fluent::FluentDoubleSpinBox(scrollContent);
     m_neuralMouseStepSizeSpin->setRange(1.0, 20.0);
     m_neuralMouseStepSizeSpin->setDecimals(1);
     m_neuralMouseStepSizeSpin->setSingleStep(0.5);
     m_neuralMouseStepSizeSpin->setValue(4.0);
     neuralParamsLayout->addRow(QStringLiteral("鼠标步长:"), m_neuralMouseStepSizeSpin);
-    m_neuralTargetRadiusSpin = new QSpinBox(scrollContent);
+    m_neuralTargetRadiusSpin = new Fluent::FluentSpinBox(scrollContent);
     m_neuralTargetRadiusSpin->setRange(1, 50);
     m_neuralTargetRadiusSpin->setValue(8);
     m_neuralTargetRadiusSpin->setSuffix(QStringLiteral(" px"));
     neuralParamsLayout->addRow(QStringLiteral("目标半径:"), m_neuralTargetRadiusSpin);
-    m_neuralConsumePerFrameSpin = new QSpinBox(scrollContent);
+    m_neuralConsumePerFrameSpin = new Fluent::FluentSpinBox(scrollContent);
     m_neuralConsumePerFrameSpin->setRange(1, 5);
     m_neuralConsumePerFrameSpin->setValue(2);
     neuralParamsLayout->addRow(QStringLiteral("每帧消费点数:"), m_neuralConsumePerFrameSpin);
     scrollLayout->addWidget(neuralParamsGroup);
     
-    QLabel* noteLabel = new QLabel(QStringLiteral(
+    Fluent::FluentLabel* noteLabel = new Fluent::FluentLabel(QStringLiteral(
         "⚠️ 注意：神经网络轨迹与运动仿真模式互斥，启用其中一个会自动禁用另一个。"
     ), scrollContent);
     noteLabel->setWordWrap(true);
-    noteLabel->setStyleSheet(QStringLiteral("color: #f59e0b; padding: 10px; background: rgba(245, 158, 11, 0.1); border-radius: 5px;"));
     scrollLayout->addWidget(noteLabel);
     
     scrollLayout->addStretch();
@@ -868,25 +719,30 @@ QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
 {
     QWidget* widget = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(widget);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(12);
     
-    QGroupBox* basicGroup = new QGroupBox(QStringLiteral("⚙️ 基础参数"), widget);
+    QGroupBox* basicGroup = new Fluent::FluentGroupBox(QStringLiteral("⚙️ 基础参数"), widget);
     QGridLayout* basicLayout = new QGridLayout(basicGroup);
+    basicLayout->setContentsMargins(16, 24, 16, 16);
+    basicLayout->setHorizontalSpacing(16);
+    basicLayout->setVerticalSpacing(12);
     
     int row = 0;
     
-    m_configWidgets[configIndex].enabledCheck = new QCheckBox(QStringLiteral("启用"), widget);
+    m_configWidgets[configIndex].enabledCheck = new Fluent::FluentCheckBox(QStringLiteral("启用"), widget);
     basicLayout->addWidget(m_configWidgets[configIndex].enabledCheck, row, 0, 1, 2);
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("热键:"), widget), row, 0);
-    m_configWidgets[configIndex].hotkeyCombo = new QComboBox(widget);
+    m_configWidgets[configIndex].hotkeyCombo = new Fluent::FluentComboBox(widget);
     m_configWidgets[configIndex].hotkeyCombo->addItem(QStringLiteral("鼠标侧键1"), 0x05);
     m_configWidgets[configIndex].hotkeyCombo->addItem(QStringLiteral("鼠标侧键2"), 0x06);
     m_configWidgets[configIndex].hotkeyCombo->addItem(QStringLiteral("中键"), 0x04);
     basicLayout->addWidget(m_configWidgets[configIndex].hotkeyCombo, row, 1);
     
     basicLayout->addWidget(new QLabel(QStringLiteral("控制器:"), widget), row, 2);
-    m_configWidgets[configIndex].controllerTypeCombo = new QComboBox(widget);
+    m_configWidgets[configIndex].controllerTypeCombo = new Fluent::FluentComboBox(widget);
     m_configWidgets[configIndex].controllerTypeCombo->addItem(QStringLiteral("高级PID"), 0);
     m_configWidgets[configIndex].controllerTypeCombo->addItem(QStringLiteral("标准PID"), 1);
     m_configWidgets[configIndex].controllerTypeCombo->addItem(QStringLiteral("ChrisPID"), 2);
@@ -895,66 +751,66 @@ QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("X平滑:"), widget), row, 0);
-    m_configWidgets[configIndex].aimSmoothingXSpin = new QDoubleSpinBox(widget);
+    m_configWidgets[configIndex].aimSmoothingXSpin = new Fluent::FluentDoubleSpinBox(widget);
     m_configWidgets[configIndex].aimSmoothingXSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].aimSmoothingXSpin->setDecimals(2);
     basicLayout->addWidget(m_configWidgets[configIndex].aimSmoothingXSpin, row, 1);
     
     basicLayout->addWidget(new QLabel(QStringLiteral("Y平滑:"), widget), row, 2);
-    m_configWidgets[configIndex].aimSmoothingYSpin = new QDoubleSpinBox(widget);
+    m_configWidgets[configIndex].aimSmoothingYSpin = new Fluent::FluentDoubleSpinBox(widget);
     m_configWidgets[configIndex].aimSmoothingYSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].aimSmoothingYSpin->setDecimals(2);
     basicLayout->addWidget(m_configWidgets[configIndex].aimSmoothingYSpin, row, 3);
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("Y偏移(%):"), widget), row, 0);
-    m_configWidgets[configIndex].targetYOffsetSpin = new QDoubleSpinBox(widget);
+    m_configWidgets[configIndex].targetYOffsetSpin = new Fluent::FluentDoubleSpinBox(widget);
     m_configWidgets[configIndex].targetYOffsetSpin->setRange(-50.0, 50.0);
     basicLayout->addWidget(m_configWidgets[configIndex].targetYOffsetSpin, row, 1);
     
     basicLayout->addWidget(new QLabel(QStringLiteral("最大移动:"), widget), row, 2);
-    m_configWidgets[configIndex].maxPixelMoveSpin = new QDoubleSpinBox(widget);
+    m_configWidgets[configIndex].maxPixelMoveSpin = new Fluent::FluentDoubleSpinBox(widget);
     m_configWidgets[configIndex].maxPixelMoveSpin->setRange(0.0, 500.0);
     basicLayout->addWidget(m_configWidgets[configIndex].maxPixelMoveSpin, row, 3);
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("死区:"), widget), row, 0);
-    m_configWidgets[configIndex].deadZonePixelsSpin = new QDoubleSpinBox(widget);
+    m_configWidgets[configIndex].deadZonePixelsSpin = new Fluent::FluentDoubleSpinBox(widget);
     m_configWidgets[configIndex].deadZonePixelsSpin->setRange(0.0, 50.0);
     m_configWidgets[configIndex].deadZonePixelsSpin->setDecimals(1);
     basicLayout->addWidget(m_configWidgets[configIndex].deadZonePixelsSpin, row, 1);
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("屏幕偏移X:"), widget), row, 0);
-    m_configWidgets[configIndex].screenOffsetXSpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].screenOffsetXSpin = new Fluent::FluentSpinBox(widget);
     m_configWidgets[configIndex].screenOffsetXSpin->setRange(0, 3840);
     basicLayout->addWidget(m_configWidgets[configIndex].screenOffsetXSpin, row, 1);
     
     basicLayout->addWidget(new QLabel(QStringLiteral("屏幕偏移Y:"), widget), row, 2);
-    m_configWidgets[configIndex].screenOffsetYSpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].screenOffsetYSpin = new Fluent::FluentSpinBox(widget);
     m_configWidgets[configIndex].screenOffsetYSpin->setRange(0, 2160);
     basicLayout->addWidget(m_configWidgets[configIndex].screenOffsetYSpin, row, 3);
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("屏幕宽度:"), widget), row, 0);
-    m_configWidgets[configIndex].screenWidthSpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].screenWidthSpin = new Fluent::FluentSpinBox(widget);
     m_configWidgets[configIndex].screenWidthSpin->setRange(640, 3840);
     m_configWidgets[configIndex].screenWidthSpin->setValue(1920);
     basicLayout->addWidget(m_configWidgets[configIndex].screenWidthSpin, row, 1);
     
     basicLayout->addWidget(new QLabel(QStringLiteral("屏幕高度:"), widget), row, 2);
-    m_configWidgets[configIndex].screenHeightSpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].screenHeightSpin = new Fluent::FluentSpinBox(widget);
     m_configWidgets[configIndex].screenHeightSpin->setRange(480, 2160);
     m_configWidgets[configIndex].screenHeightSpin->setValue(1080);
     basicLayout->addWidget(m_configWidgets[configIndex].screenHeightSpin, row, 3);
     row++;
     
     basicLayout->addWidget(new QLabel(QStringLiteral("Y轴解锁:"), widget), row, 0);
-    m_configWidgets[configIndex].enableYAxisUnlockCheck = new QCheckBox(widget);
+    m_configWidgets[configIndex].enableYAxisUnlockCheck = new Fluent::FluentCheckBox(widget);
     basicLayout->addWidget(m_configWidgets[configIndex].enableYAxisUnlockCheck, row, 1);
     
     basicLayout->addWidget(new QLabel(QStringLiteral("解锁延迟(ms):"), widget), row, 2);
-    m_configWidgets[configIndex].yAxisUnlockDelaySpin = new QSpinBox(widget);
+    m_configWidgets[configIndex].yAxisUnlockDelaySpin = new Fluent::FluentSpinBox(widget);
     m_configWidgets[configIndex].yAxisUnlockDelaySpin->setRange(100, 2000);
     basicLayout->addWidget(m_configWidgets[configIndex].yAxisUnlockDelaySpin, row, 3);
     
@@ -966,75 +822,78 @@ QWidget* YoloAimSettingsDialog::createConfigWidget(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createAutoTriggerGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("🎯 自动扳机"), this);
+    QGroupBox* group = new Fluent::FluentGroupBox(QStringLiteral("🎯 自动扳机"), this);
     group->setCheckable(true);
     group->setChecked(false);
     
     QGridLayout* layout = new QGridLayout(group);
+    layout->setContentsMargins(16, 24, 16, 16);
+    layout->setHorizontalSpacing(16);
+    layout->setVerticalSpacing(12);
     
     int row = 0;
     
     layout->addWidget(new QLabel(QStringLiteral("触发半径:"), this), row, 0);
-    m_configWidgets[configIndex].triggerRadiusSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerRadiusSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerRadiusSpin->setRange(1, 50);
     layout->addWidget(m_configWidgets[configIndex].triggerRadiusSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("冷却时间(ms):"), this), row, 2);
-    m_configWidgets[configIndex].triggerCooldownSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerCooldownSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerCooldownSpin->setRange(50, 1000);
     layout->addWidget(m_configWidgets[configIndex].triggerCooldownSpin, row, 3);
     row++;
     
     layout->addWidget(new QLabel(QStringLiteral("开火延迟(ms):"), this), row, 0);
-    m_configWidgets[configIndex].triggerFireDelaySpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerFireDelaySpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerFireDelaySpin->setRange(0, 500);
     layout->addWidget(m_configWidgets[configIndex].triggerFireDelaySpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("开火时长(ms):"), this), row, 2);
-    m_configWidgets[configIndex].triggerFireDurationSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerFireDurationSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerFireDurationSpin->setRange(10, 500);
     layout->addWidget(m_configWidgets[configIndex].triggerFireDurationSpin, row, 3);
     row++;
     
     layout->addWidget(new QLabel(QStringLiteral("间隔(ms):"), this), row, 0);
-    m_configWidgets[configIndex].triggerIntervalSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerIntervalSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerIntervalSpin->setRange(10, 500);
     layout->addWidget(m_configWidgets[configIndex].triggerIntervalSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("移动补偿:"), this), row, 2);
-    m_configWidgets[configIndex].triggerMoveCompensationSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerMoveCompensationSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerMoveCompensationSpin->setRange(0, 100);
     layout->addWidget(m_configWidgets[configIndex].triggerMoveCompensationSpin, row, 3);
     row++;
     
     // 随机延迟
-    m_configWidgets[configIndex].enableTriggerDelayRandomCheck = new QCheckBox(QStringLiteral("启用随机延迟"), this);
+    m_configWidgets[configIndex].enableTriggerDelayRandomCheck = new Fluent::FluentCheckBox(QStringLiteral("启用随机延迟"), this);
     layout->addWidget(m_configWidgets[configIndex].enableTriggerDelayRandomCheck, row, 0, 1, 4);
     row++;
     
     layout->addWidget(new QLabel(QStringLiteral("延迟最小(ms):"), this), row, 0);
-    m_configWidgets[configIndex].triggerDelayRandomMinSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDelayRandomMinSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerDelayRandomMinSpin->setRange(0, 1000);
     layout->addWidget(m_configWidgets[configIndex].triggerDelayRandomMinSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("延迟最大(ms):"), this), row, 2);
-    m_configWidgets[configIndex].triggerDelayRandomMaxSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDelayRandomMaxSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerDelayRandomMaxSpin->setRange(0, 1000);
     layout->addWidget(m_configWidgets[configIndex].triggerDelayRandomMaxSpin, row, 3);
     row++;
     
     // 随机时长
-    m_configWidgets[configIndex].enableTriggerDurationRandomCheck = new QCheckBox(QStringLiteral("启用随机时长"), this);
+    m_configWidgets[configIndex].enableTriggerDurationRandomCheck = new Fluent::FluentCheckBox(QStringLiteral("启用随机时长"), this);
     layout->addWidget(m_configWidgets[configIndex].enableTriggerDurationRandomCheck, row, 0, 1, 4);
     row++;
     
     layout->addWidget(new QLabel(QStringLiteral("时长最小(ms):"), this), row, 0);
-    m_configWidgets[configIndex].triggerDurationRandomMinSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDurationRandomMinSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerDurationRandomMinSpin->setRange(0, 500);
     layout->addWidget(m_configWidgets[configIndex].triggerDurationRandomMinSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("时长最大(ms):"), this), row, 2);
-    m_configWidgets[configIndex].triggerDurationRandomMaxSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].triggerDurationRandomMaxSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].triggerDurationRandomMaxSpin->setRange(0, 500);
     layout->addWidget(m_configWidgets[configIndex].triggerDurationRandomMaxSpin, row, 3);
     
@@ -1043,27 +902,30 @@ QGroupBox* YoloAimSettingsDialog::createAutoTriggerGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createRecoilGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("💥 后坐力控制"), this);
+    QGroupBox* group = new Fluent::FluentGroupBox(QStringLiteral("💥 后坐力控制"), this);
     group->setCheckable(true);
     group->setChecked(false);
     
     QGridLayout* layout = new QGridLayout(group);
+    layout->setContentsMargins(16, 24, 16, 16);
+    layout->setHorizontalSpacing(16);
+    layout->setVerticalSpacing(12);
     
     int row = 0;
     
     layout->addWidget(new QLabel(QStringLiteral("强度:"), this), row, 0);
-    m_configWidgets[configIndex].recoilStrengthSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].recoilStrengthSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].recoilStrengthSpin->setRange(0.0, 50.0);
     layout->addWidget(m_configWidgets[configIndex].recoilStrengthSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("速度:"), this), row, 2);
-    m_configWidgets[configIndex].recoilSpeedSpin = new QSpinBox(this);
+    m_configWidgets[configIndex].recoilSpeedSpin = new Fluent::FluentSpinBox(this);
     m_configWidgets[configIndex].recoilSpeedSpin->setRange(1, 100);
     layout->addWidget(m_configWidgets[configIndex].recoilSpeedSpin, row, 3);
     row++;
     
     layout->addWidget(new QLabel(QStringLiteral("PID增益比例:"), this), row, 0);
-    m_configWidgets[configIndex].recoilPidGainScaleSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].recoilPidGainScaleSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].recoilPidGainScaleSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].recoilPidGainScaleSpin->setDecimals(2);
     layout->addWidget(m_configWidgets[configIndex].recoilPidGainScaleSpin, row, 1);
@@ -1073,29 +935,32 @@ QGroupBox* YoloAimSettingsDialog::createRecoilGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createPredictorGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("🔮 预测器"), this);
+    QGroupBox* group = new Fluent::FluentGroupBox(QStringLiteral("🔮 预测器"), this);
     group->setCheckable(true);
     group->setChecked(true);
     
     QGridLayout* layout = new QGridLayout(group);
+    layout->setContentsMargins(16, 24, 16, 16);
+    layout->setHorizontalSpacing(16);
+    layout->setVerticalSpacing(12);
     
     int row = 0;
     
     layout->addWidget(new QLabel(QStringLiteral("X预测权重:"), this), row, 0);
-    m_configWidgets[configIndex].predictionWeightXSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].predictionWeightXSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].predictionWeightXSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].predictionWeightXSpin->setDecimals(2);
     layout->addWidget(m_configWidgets[configIndex].predictionWeightXSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("Y预测权重:"), this), row, 2);
-    m_configWidgets[configIndex].predictionWeightYSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].predictionWeightYSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].predictionWeightYSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].predictionWeightYSpin->setDecimals(2);
     layout->addWidget(m_configWidgets[configIndex].predictionWeightYSpin, row, 3);
     row++;
     
     layout->addWidget(new QLabel(QStringLiteral("最大预测时间(s):"), this), row, 0);
-    m_configWidgets[configIndex].maxPredictionTimeSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].maxPredictionTimeSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].maxPredictionTimeSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].maxPredictionTimeSpin->setDecimals(2);
     layout->addWidget(m_configWidgets[configIndex].maxPredictionTimeSpin, row, 1);
@@ -1105,22 +970,25 @@ QGroupBox* YoloAimSettingsDialog::createPredictorGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createBezierGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("🌊 贝塞尔曲线"), this);
+    QGroupBox* group = new Fluent::FluentGroupBox(QStringLiteral("🌊 贝塞尔曲线"), this);
     group->setCheckable(true);
     group->setChecked(false);
     
     QGridLayout* layout = new QGridLayout(group);
+    layout->setContentsMargins(16, 24, 16, 16);
+    layout->setHorizontalSpacing(16);
+    layout->setVerticalSpacing(12);
     
     int row = 0;
     
     layout->addWidget(new QLabel(QStringLiteral("曲率:"), this), row, 0);
-    m_configWidgets[configIndex].bezierCurvatureSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].bezierCurvatureSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].bezierCurvatureSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].bezierCurvatureSpin->setDecimals(2);
     layout->addWidget(m_configWidgets[configIndex].bezierCurvatureSpin, row, 1);
     
     layout->addWidget(new QLabel(QStringLiteral("随机性:"), this), row, 2);
-    m_configWidgets[configIndex].bezierRandomnessSpin = new QDoubleSpinBox(this);
+    m_configWidgets[configIndex].bezierRandomnessSpin = new Fluent::FluentDoubleSpinBox(this);
     m_configWidgets[configIndex].bezierRandomnessSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].bezierRandomnessSpin->setDecimals(2);
     layout->addWidget(m_configWidgets[configIndex].bezierRandomnessSpin, row, 3);
@@ -1130,23 +998,28 @@ QGroupBox* YoloAimSettingsDialog::createBezierGroup(int configIndex)
 
 QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
 {
-    QGroupBox* group = new QGroupBox(QStringLiteral("🎛️ 高级PID参数"), this);
+    QGroupBox* group = new Fluent::FluentGroupBox(QStringLiteral("🎛️ 高级PID参数"), this);
     QVBoxLayout* mainLayout = new QVBoxLayout(group);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(16);
 
     // 基础PID参数
-    QGroupBox* basicPidGroup = new QGroupBox(QStringLiteral("📊 基础PID"), group);
+    QGroupBox* basicPidGroup = new Fluent::FluentGroupBox(QStringLiteral("📊 基础PID"), group);
     QGridLayout* basicPidLayout = new QGridLayout(basicPidGroup);
+    basicPidLayout->setContentsMargins(16, 24, 16, 16);
+    basicPidLayout->setHorizontalSpacing(16);
+    basicPidLayout->setVerticalSpacing(12);
     int row = 0;
 
     basicPidLayout->addWidget(new QLabel(QStringLiteral("P最小:"), group), row, 0);
-    m_configWidgets[configIndex].pMinSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pMinSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].pMinSpin->setRange(0.0, 2.0);
     m_configWidgets[configIndex].pMinSpin->setDecimals(3);
     m_configWidgets[configIndex].pMinSpin->setSingleStep(0.01);
     basicPidLayout->addWidget(m_configWidgets[configIndex].pMinSpin, row, 1);
 
     basicPidLayout->addWidget(new QLabel(QStringLiteral("P最大:"), group), row, 2);
-    m_configWidgets[configIndex].pMaxSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pMaxSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].pMaxSpin->setRange(0.0, 5.0);
     m_configWidgets[configIndex].pMaxSpin->setDecimals(3);
     m_configWidgets[configIndex].pMaxSpin->setSingleStep(0.01);
@@ -1154,14 +1027,14 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     row++;
 
     basicPidLayout->addWidget(new QLabel(QStringLiteral("P斜率:"), group), row, 0);
-    m_configWidgets[configIndex].pSlopeSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pSlopeSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].pSlopeSpin->setRange(0.0, 10.0);
     m_configWidgets[configIndex].pSlopeSpin->setDecimals(3);
     m_configWidgets[configIndex].pSlopeSpin->setSingleStep(0.01);
     basicPidLayout->addWidget(m_configWidgets[configIndex].pSlopeSpin, row, 1);
 
     basicPidLayout->addWidget(new QLabel(QStringLiteral("D:"), group), row, 2);
-    m_configWidgets[configIndex].dSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].dSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].dSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].dSpin->setDecimals(4);
     m_configWidgets[configIndex].dSpin->setSingleStep(0.001);
@@ -1169,14 +1042,14 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     row++;
 
     basicPidLayout->addWidget(new QLabel(QStringLiteral("I:"), group), row, 0);
-    m_configWidgets[configIndex].iSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].iSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].iSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].iSpin->setDecimals(4);
     m_configWidgets[configIndex].iSpin->setSingleStep(0.001);
     basicPidLayout->addWidget(m_configWidgets[configIndex].iSpin, row, 1);
 
     basicPidLayout->addWidget(new QLabel(QStringLiteral("D滤波α:"), group), row, 2);
-    m_configWidgets[configIndex].derivativeFilterAlphaSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].derivativeFilterAlphaSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].derivativeFilterAlphaSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].derivativeFilterAlphaSpin->setDecimals(3);
     m_configWidgets[configIndex].derivativeFilterAlphaSpin->setSingleStep(0.01);
@@ -1185,51 +1058,54 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     mainLayout->addWidget(basicPidGroup);
 
     // 高级PID系数
-    QGroupBox* advPidGroup = new QGroupBox(QStringLiteral("⚡ 高级PID系数"), group);
+    QGroupBox* advPidGroup = new Fluent::FluentGroupBox(QStringLiteral("⚡ 高级PID系数"), group);
     QGridLayout* advPidLayout = new QGridLayout(advPidGroup);
+    advPidLayout->setContentsMargins(16, 24, 16, 16);
+    advPidLayout->setHorizontalSpacing(16);
+    advPidLayout->setVerticalSpacing(12);
     row = 0;
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("目标阈值:"), group), row, 0);
-    m_configWidgets[configIndex].advTargetThresholdSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advTargetThresholdSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advTargetThresholdSpin->setRange(0.0, 200.0);
     m_configWidgets[configIndex].advTargetThresholdSpin->setDecimals(1);
     advPidLayout->addWidget(m_configWidgets[configIndex].advTargetThresholdSpin, row, 1);
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("最小系数:"), group), row, 2);
-    m_configWidgets[configIndex].advMinCoefficientSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advMinCoefficientSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advMinCoefficientSpin->setRange(0.0, 10.0);
     m_configWidgets[configIndex].advMinCoefficientSpin->setDecimals(2);
     advPidLayout->addWidget(m_configWidgets[configIndex].advMinCoefficientSpin, row, 3);
     row++;
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("最大系数:"), group), row, 0);
-    m_configWidgets[configIndex].advMaxCoefficientSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advMaxCoefficientSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advMaxCoefficientSpin->setRange(0.0, 10.0);
     m_configWidgets[configIndex].advMaxCoefficientSpin->setDecimals(2);
     advPidLayout->addWidget(m_configWidgets[configIndex].advMaxCoefficientSpin, row, 1);
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("过渡锐度:"), group), row, 2);
-    m_configWidgets[configIndex].advTransitionSharpnessSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advTransitionSharpnessSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advTransitionSharpnessSpin->setRange(0.0, 20.0);
     m_configWidgets[configIndex].advTransitionSharpnessSpin->setDecimals(1);
     advPidLayout->addWidget(m_configWidgets[configIndex].advTransitionSharpnessSpin, row, 3);
     row++;
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("过渡中点:"), group), row, 0);
-    m_configWidgets[configIndex].advTransitionMidpointSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advTransitionMidpointSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advTransitionMidpointSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].advTransitionMidpointSpin->setDecimals(2);
     advPidLayout->addWidget(m_configWidgets[configIndex].advTransitionMidpointSpin, row, 1);
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("输出平滑:"), group), row, 2);
-    m_configWidgets[configIndex].advOutputSmoothingSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advOutputSmoothingSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advOutputSmoothingSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].advOutputSmoothingSpin->setDecimals(2);
     advPidLayout->addWidget(m_configWidgets[configIndex].advOutputSmoothingSpin, row, 3);
     row++;
 
     advPidLayout->addWidget(new QLabel(QStringLiteral("速度因子:"), group), row, 0);
-    m_configWidgets[configIndex].advSpeedFactorSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].advSpeedFactorSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].advSpeedFactorSpin->setRange(0.0, 5.0);
     m_configWidgets[configIndex].advSpeedFactorSpin->setDecimals(2);
     advPidLayout->addWidget(m_configWidgets[configIndex].advSpeedFactorSpin, row, 1);
@@ -1237,29 +1113,32 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     mainLayout->addWidget(advPidGroup);
 
     // OneEuro滤波器
-    QGroupBox* oneEuroGroup = new QGroupBox(QStringLiteral("🔬 OneEuro滤波器"), group);
+    QGroupBox* oneEuroGroup = new Fluent::FluentGroupBox(QStringLiteral("🔬 OneEuro滤波器"), group);
     QGridLayout* oneEuroLayout = new QGridLayout(oneEuroGroup);
+    oneEuroLayout->setContentsMargins(16, 24, 16, 16);
+    oneEuroLayout->setHorizontalSpacing(16);
+    oneEuroLayout->setVerticalSpacing(12);
     row = 0;
 
-    m_configWidgets[configIndex].useOneEuroFilterCheck = new QCheckBox(QStringLiteral("启用OneEuro滤波"), group);
+    m_configWidgets[configIndex].useOneEuroFilterCheck = new Fluent::FluentCheckBox(QStringLiteral("启用OneEuro滤波"), group);
     oneEuroLayout->addWidget(m_configWidgets[configIndex].useOneEuroFilterCheck, row, 0, 1, 4);
     row++;
 
     oneEuroLayout->addWidget(new QLabel(QStringLiteral("最小截止:"), group), row, 0);
-    m_configWidgets[configIndex].oneEuroMinCutoffSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].oneEuroMinCutoffSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].oneEuroMinCutoffSpin->setRange(0.0, 10.0);
     m_configWidgets[configIndex].oneEuroMinCutoffSpin->setDecimals(2);
     oneEuroLayout->addWidget(m_configWidgets[configIndex].oneEuroMinCutoffSpin, row, 1);
 
     oneEuroLayout->addWidget(new QLabel(QStringLiteral("Beta:"), group), row, 2);
-    m_configWidgets[configIndex].oneEuroBetaSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].oneEuroBetaSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].oneEuroBetaSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].oneEuroBetaSpin->setDecimals(2);
     oneEuroLayout->addWidget(m_configWidgets[configIndex].oneEuroBetaSpin, row, 3);
     row++;
 
     oneEuroLayout->addWidget(new QLabel(QStringLiteral("D截止:"), group), row, 0);
-    m_configWidgets[configIndex].oneEuroDCutoffSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].oneEuroDCutoffSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].oneEuroDCutoffSpin->setRange(0.0, 10.0);
     m_configWidgets[configIndex].oneEuroDCutoffSpin->setDecimals(2);
     oneEuroLayout->addWidget(m_configWidgets[configIndex].oneEuroDCutoffSpin, row, 1);
@@ -1267,18 +1146,21 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     mainLayout->addWidget(oneEuroGroup);
 
     // 积分控制
-    QGroupBox* integralGroup = new QGroupBox(QStringLiteral("📐 积分控制"), group);
+    QGroupBox* integralGroup = new Fluent::FluentGroupBox(QStringLiteral("📐 积分控制"), group);
     QGridLayout* integralLayout = new QGridLayout(integralGroup);
+    integralLayout->setContentsMargins(16, 24, 16, 16);
+    integralLayout->setHorizontalSpacing(16);
+    integralLayout->setVerticalSpacing(12);
     row = 0;
 
     integralLayout->addWidget(new QLabel(QStringLiteral("积分限幅:"), group), row, 0);
-    m_configWidgets[configIndex].integralLimitSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].integralLimitSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].integralLimitSpin->setRange(0.0, 500.0);
     m_configWidgets[configIndex].integralLimitSpin->setDecimals(1);
     integralLayout->addWidget(m_configWidgets[configIndex].integralLimitSpin, row, 1);
 
     integralLayout->addWidget(new QLabel(QStringLiteral("积分速率:"), group), row, 2);
-    m_configWidgets[configIndex].integralRateSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].integralRateSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].integralRateSpin->setRange(0.0, 2.0);
     m_configWidgets[configIndex].integralRateSpin->setDecimals(2);
     m_configWidgets[configIndex].integralRateSpin->setSingleStep(0.1);
@@ -1287,18 +1169,21 @@ QGroupBox* YoloAimSettingsDialog::createAdvancedPIDGroup(int configIndex)
     mainLayout->addWidget(integralGroup);
 
     // P增益爬坡
-    QGroupBox* rampGroup = new QGroupBox(QStringLiteral("📈 P增益爬坡"), group);
+    QGroupBox* rampGroup = new Fluent::FluentGroupBox(QStringLiteral("📈 P增益爬坡"), group);
     QGridLayout* rampLayout = new QGridLayout(rampGroup);
+    rampLayout->setContentsMargins(16, 24, 16, 16);
+    rampLayout->setHorizontalSpacing(16);
+    rampLayout->setVerticalSpacing(12);
     row = 0;
 
     rampLayout->addWidget(new QLabel(QStringLiteral("初始缩放:"), group), row, 0);
-    m_configWidgets[configIndex].pGainRampInitialScaleSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pGainRampInitialScaleSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].pGainRampInitialScaleSpin->setRange(0.0, 1.0);
     m_configWidgets[configIndex].pGainRampInitialScaleSpin->setDecimals(2);
     rampLayout->addWidget(m_configWidgets[configIndex].pGainRampInitialScaleSpin, row, 1);
 
     rampLayout->addWidget(new QLabel(QStringLiteral("爬坡时长(s):"), group), row, 2);
-    m_configWidgets[configIndex].pGainRampDurationSpin = new QDoubleSpinBox(group);
+    m_configWidgets[configIndex].pGainRampDurationSpin = new Fluent::FluentDoubleSpinBox(group);
     m_configWidgets[configIndex].pGainRampDurationSpin->setRange(0.0, 5.0);
     m_configWidgets[configIndex].pGainRampDurationSpin->setDecimals(2);
     rampLayout->addWidget(m_configWidgets[configIndex].pGainRampDurationSpin, row, 3);

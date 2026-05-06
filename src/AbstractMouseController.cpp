@@ -971,6 +971,13 @@ void AbstractMouseController::tick()
         finalMoveY += recoilThisFrame;
     }
 
+    // 时间相关移动：应用帧率补偿，确保移动速度不受帧率波动影响
+    if (config.enableTimeBasedMovement && deltaTime > 0.0f) {
+        float timeFactor = deltaTime * config.targetFrameRate;
+        finalMoveX *= timeFactor;
+        finalMoveY *= timeFactor;
+    }
+
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
     

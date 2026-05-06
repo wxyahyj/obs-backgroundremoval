@@ -90,7 +90,8 @@
         "USE_PKGCONFIG": false,
         "USE_SYSTEM_ONNXRUNTIME": false,
         "OpenCV_DIR": "E:/obs-heji/obs-backgroundremoval/libs/opencv",
-        "Eigen3_DIR": "E:/obs-heji/obs-backgroundremoval/libs/eigen3"
+        "Eigen3_DIR": "E:/obs-heji/obs-backgroundremoval/libs/eigen3",
+        "DIRECTML": "ON"
       }
     },
     {

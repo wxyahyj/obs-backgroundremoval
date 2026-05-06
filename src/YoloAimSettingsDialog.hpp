@@ -4,21 +4,24 @@
 
 #include <QDialog>
 #include <QMainWindow>
-#include <QComboBox>
-#include <QTabWidget>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
-#include <QCheckBox>
-#include <QLineEdit>
-#include <QPushButton>
-#include <QLabel>
-#include <QSlider>
-#include <QGroupBox>
-#include <QScrollArea>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
-class YoloAimSettingsDialog : public QDialog
+#include "Fluent/FluentDialog.h"
+#include "Fluent/FluentButton.h"
+#include "Fluent/FluentCheckBox.h"
+#include "Fluent/FluentComboBox.h"
+#include "Fluent/FluentSpinBox.h"
+#include "Fluent/FluentLineEdit.h"
+#include "Fluent/FluentSlider.h"
+#include "Fluent/FluentLabel.h"
+#include "Fluent/FluentTabWidget.h"
+#include "Fluent/FluentScrollArea.h"
+#include "Fluent/FluentTheme.h"
+#include "Fluent/FluentGroupBox.h"
+#include "Fluent/FluentWidget.h"
+
+class YoloAimSettingsDialog : public Fluent::FluentDialog
 {
     Q_OBJECT
 
@@ -70,80 +73,80 @@ private:
     void initAllConfigWidgetStructs();
     void switchConfigVisibility();
     
-    QComboBox* m_sourceCombo;
-    QTabWidget* m_tabWidget;
-    QComboBox* m_configSelect;
+    Fluent::FluentComboBox* m_sourceCombo;
+    Fluent::FluentTabWidget* m_tabWidget;
+    Fluent::FluentComboBox* m_configSelect;
     
-    QCheckBox* m_showDetectionResultsCheck;
-    QCheckBox* m_showFOVCheck;
-    QCheckBox* m_showFOVCircleCheck;
-    QCheckBox* m_showFOVCrossCheck;
-    QSpinBox* m_fovRadiusSpin;
-    QSpinBox* m_fovCrossLineScaleSpin;
-    QSpinBox* m_fovCrossLineThicknessSpin;
-    QSpinBox* m_fovCircleThicknessSpin;
+    Fluent::FluentCheckBox* m_showDetectionResultsCheck;
+    Fluent::FluentCheckBox* m_showFOVCheck;
+    Fluent::FluentCheckBox* m_showFOVCircleCheck;
+    Fluent::FluentCheckBox* m_showFOVCrossCheck;
+    Fluent::FluentSpinBox* m_fovRadiusSpin;
+    Fluent::FluentSpinBox* m_fovCrossLineScaleSpin;
+    Fluent::FluentSpinBox* m_fovCrossLineThicknessSpin;
+    Fluent::FluentSpinBox* m_fovCircleThicknessSpin;
     
     // 模型配置页面
-    QLineEdit* m_modelPathEdit;
-    QPushButton* m_modelPathBtn;
-    QComboBox* m_modelVersionCombo;
-    QComboBox* m_useGPUCombo;
-    QCheckBox* m_useGPUTextureCheck;
-    QComboBox* m_inputResolutionCombo;
-    QSpinBox* m_numThreadsSpin;
+    Fluent::FluentLineEdit* m_modelPathEdit;
+    Fluent::FluentButton* m_modelPathBtn;
+    Fluent::FluentComboBox* m_modelVersionCombo;
+    Fluent::FluentComboBox* m_useGPUCombo;
+    Fluent::FluentCheckBox* m_useGPUTextureCheck;
+    Fluent::FluentComboBox* m_inputResolutionCombo;
+    Fluent::FluentSpinBox* m_numThreadsSpin;
     
     // 检测配置页面
-    QDoubleSpinBox* m_confidenceThresholdSpin;
-    QDoubleSpinBox* m_nmsThresholdSpin;
-    QComboBox* m_targetClassCombo;
-    QLineEdit* m_targetClassesTextEdit;
-    QSpinBox* m_inferenceIntervalSpin;
+    Fluent::FluentDoubleSpinBox* m_confidenceThresholdSpin;
+    Fluent::FluentDoubleSpinBox* m_nmsThresholdSpin;
+    Fluent::FluentComboBox* m_targetClassCombo;
+    Fluent::FluentLineEdit* m_targetClassesTextEdit;
+    Fluent::FluentSpinBox* m_inferenceIntervalSpin;
     
     // 视觉页面 - 区域检测
-    QCheckBox* m_useRegionCheck;
-    QSpinBox* m_regionXSpin;
-    QSpinBox* m_regionYSpin;
-    QSpinBox* m_regionWidthSpin;
-    QSpinBox* m_regionHeightSpin;
+    Fluent::FluentCheckBox* m_useRegionCheck;
+    Fluent::FluentSpinBox* m_regionXSpin;
+    Fluent::FluentSpinBox* m_regionYSpin;
+    Fluent::FluentSpinBox* m_regionWidthSpin;
+    Fluent::FluentSpinBox* m_regionHeightSpin;
     
     // 视觉页面 - 渲染配置
-    QSpinBox* m_bboxLineWidthSpin;
-    QPushButton* m_bboxColorBtn;
-    QDoubleSpinBox* m_labelFontScaleSpin;
+    Fluent::FluentSpinBox* m_bboxLineWidthSpin;
+    Fluent::FluentButton* m_bboxColorBtn;
+    Fluent::FluentDoubleSpinBox* m_labelFontScaleSpin;
     
     // 视觉页面 - 动态FOV
-    QCheckBox* m_useDynamicFOVCheck;
-    QCheckBox* m_showFOV2Check;
-    QSpinBox* m_fovRadius2Spin;
-    QPushButton* m_fovColorBtn;
-    QPushButton* m_fovColor2Btn;
-    QSpinBox* m_dynamicFovShrinkSpin;
-    QSpinBox* m_dynamicFovTransitionSpin;
+    Fluent::FluentCheckBox* m_useDynamicFOVCheck;
+    Fluent::FluentCheckBox* m_showFOV2Check;
+    Fluent::FluentSpinBox* m_fovRadius2Spin;
+    Fluent::FluentButton* m_fovColorBtn;
+    Fluent::FluentButton* m_fovColor2Btn;
+    Fluent::FluentSpinBox* m_dynamicFovShrinkSpin;
+    Fluent::FluentSpinBox* m_dynamicFovTransitionSpin;
     
     // 检测框平滑
-    QCheckBox* m_detectionSmoothingCheck;
-    QDoubleSpinBox* m_detectionSmoothingAlphaSpin;
+    Fluent::FluentCheckBox* m_detectionSmoothingCheck;
+    Fluent::FluentDoubleSpinBox* m_detectionSmoothingAlphaSpin;
     
     // KalmanFilter 追踪设置
-    QCheckBox* m_useKalmanTrackerCheck;
-    QSpinBox* m_kalmanGenerateThresholdSpin;
-    QSpinBox* m_kalmanTerminateCountSpin;
+    Fluent::FluentCheckBox* m_useKalmanTrackerCheck;
+    Fluent::FluentSpinBox* m_kalmanGenerateThresholdSpin;
+    Fluent::FluentSpinBox* m_kalmanTerminateCountSpin;
     
     // 神经网络轨迹生成器设置
-    QCheckBox* m_enableNeuralPathCheck;
-    QSpinBox* m_neuralPathPointsSpin;
-    QDoubleSpinBox* m_neuralMouseStepSizeSpin;
-    QSpinBox* m_neuralTargetRadiusSpin;
-    QSpinBox* m_neuralConsumePerFrameSpin;
+    Fluent::FluentCheckBox* m_enableNeuralPathCheck;
+    Fluent::FluentSpinBox* m_neuralPathPointsSpin;
+    Fluent::FluentDoubleSpinBox* m_neuralMouseStepSizeSpin;
+    Fluent::FluentSpinBox* m_neuralTargetRadiusSpin;
+    Fluent::FluentSpinBox* m_neuralConsumePerFrameSpin;
     
     // 高级配置
-    QCheckBox* m_exportCoordinatesCheck;
-    QLineEdit* m_coordinateOutputPathEdit;
-    QPushButton* m_coordinateOutputPathBtn;
+    Fluent::FluentCheckBox* m_exportCoordinatesCheck;
+    Fluent::FluentLineEdit* m_coordinateOutputPathEdit;
+    Fluent::FluentButton* m_coordinateOutputPathBtn;
     
     // 推理控制
-    QPushButton* m_toggleInferenceBtn;
-    QLabel* m_inferenceStatusLabel;
+    Fluent::FluentButton* m_toggleInferenceBtn;
+    Fluent::FluentLabel* m_inferenceStatusLabel;
     
     int m_currentConfig;
     QString m_currentSource;
@@ -153,76 +156,76 @@ private:
     QWidget* m_trackingConfigContainers[5];
     
     struct ConfigWidgets {
-        QCheckBox* enabledCheck;
-        QComboBox* hotkeyCombo;
-        QComboBox* controllerTypeCombo;
+        Fluent::FluentCheckBox* enabledCheck;
+        Fluent::FluentComboBox* hotkeyCombo;
+        Fluent::FluentComboBox* controllerTypeCombo;
         
-        QDoubleSpinBox* pMinSpin;
-        QDoubleSpinBox* pMaxSpin;
-        QDoubleSpinBox* pSlopeSpin;
-        QDoubleSpinBox* dSpin;
-        QDoubleSpinBox* iSpin;
-        QDoubleSpinBox* derivativeFilterAlphaSpin;
+        Fluent::FluentDoubleSpinBox* pMinSpin;
+        Fluent::FluentDoubleSpinBox* pMaxSpin;
+        Fluent::FluentDoubleSpinBox* pSlopeSpin;
+        Fluent::FluentDoubleSpinBox* dSpin;
+        Fluent::FluentDoubleSpinBox* iSpin;
+        Fluent::FluentDoubleSpinBox* derivativeFilterAlphaSpin;
         
-        QDoubleSpinBox* advTargetThresholdSpin;
-        QDoubleSpinBox* advMinCoefficientSpin;
-        QDoubleSpinBox* advMaxCoefficientSpin;
-        QDoubleSpinBox* advTransitionSharpnessSpin;
-        QDoubleSpinBox* advTransitionMidpointSpin;
-        QDoubleSpinBox* advOutputSmoothingSpin;
-        QDoubleSpinBox* advSpeedFactorSpin;
+        Fluent::FluentDoubleSpinBox* advTargetThresholdSpin;
+        Fluent::FluentDoubleSpinBox* advMinCoefficientSpin;
+        Fluent::FluentDoubleSpinBox* advMaxCoefficientSpin;
+        Fluent::FluentDoubleSpinBox* advTransitionSharpnessSpin;
+        Fluent::FluentDoubleSpinBox* advTransitionMidpointSpin;
+        Fluent::FluentDoubleSpinBox* advOutputSmoothingSpin;
+        Fluent::FluentDoubleSpinBox* advSpeedFactorSpin;
         
-        QCheckBox* useOneEuroFilterCheck;
-        QDoubleSpinBox* oneEuroMinCutoffSpin;
-        QDoubleSpinBox* oneEuroBetaSpin;
-        QDoubleSpinBox* oneEuroDCutoffSpin;
+        Fluent::FluentCheckBox* useOneEuroFilterCheck;
+        Fluent::FluentDoubleSpinBox* oneEuroMinCutoffSpin;
+        Fluent::FluentDoubleSpinBox* oneEuroBetaSpin;
+        Fluent::FluentDoubleSpinBox* oneEuroDCutoffSpin;
         
-        QDoubleSpinBox* aimSmoothingXSpin;
-        QDoubleSpinBox* aimSmoothingYSpin;
-        QDoubleSpinBox* targetYOffsetSpin;
-        QDoubleSpinBox* maxPixelMoveSpin;
-        QDoubleSpinBox* deadZonePixelsSpin;
+        Fluent::FluentDoubleSpinBox* aimSmoothingXSpin;
+        Fluent::FluentDoubleSpinBox* aimSmoothingYSpin;
+        Fluent::FluentDoubleSpinBox* targetYOffsetSpin;
+        Fluent::FluentDoubleSpinBox* maxPixelMoveSpin;
+        Fluent::FluentDoubleSpinBox* deadZonePixelsSpin;
         
-        QSpinBox* screenOffsetXSpin;
-        QSpinBox* screenOffsetYSpin;
-        QSpinBox* screenWidthSpin;
-        QSpinBox* screenHeightSpin;
+        Fluent::FluentSpinBox* screenOffsetXSpin;
+        Fluent::FluentSpinBox* screenOffsetYSpin;
+        Fluent::FluentSpinBox* screenWidthSpin;
+        Fluent::FluentSpinBox* screenHeightSpin;
         
-        QCheckBox* enableYAxisUnlockCheck;
-        QSpinBox* yAxisUnlockDelaySpin;
+        Fluent::FluentCheckBox* enableYAxisUnlockCheck;
+        Fluent::FluentSpinBox* yAxisUnlockDelaySpin;
         
         QGroupBox* autoTriggerGroup;
-        QSpinBox* triggerRadiusSpin;
-        QSpinBox* triggerCooldownSpin;
-        QSpinBox* triggerFireDelaySpin;
-        QSpinBox* triggerFireDurationSpin;
-        QSpinBox* triggerIntervalSpin;
-        QCheckBox* enableTriggerDelayRandomCheck;
-        QSpinBox* triggerDelayRandomMinSpin;
-        QSpinBox* triggerDelayRandomMaxSpin;
-        QCheckBox* enableTriggerDurationRandomCheck;
-        QSpinBox* triggerDurationRandomMinSpin;
-        QSpinBox* triggerDurationRandomMaxSpin;
-        QSpinBox* triggerMoveCompensationSpin;
+        Fluent::FluentSpinBox* triggerRadiusSpin;
+        Fluent::FluentSpinBox* triggerCooldownSpin;
+        Fluent::FluentSpinBox* triggerFireDelaySpin;
+        Fluent::FluentSpinBox* triggerFireDurationSpin;
+        Fluent::FluentSpinBox* triggerIntervalSpin;
+        Fluent::FluentCheckBox* enableTriggerDelayRandomCheck;
+        Fluent::FluentSpinBox* triggerDelayRandomMinSpin;
+        Fluent::FluentSpinBox* triggerDelayRandomMaxSpin;
+        Fluent::FluentCheckBox* enableTriggerDurationRandomCheck;
+        Fluent::FluentSpinBox* triggerDurationRandomMinSpin;
+        Fluent::FluentSpinBox* triggerDurationRandomMaxSpin;
+        Fluent::FluentSpinBox* triggerMoveCompensationSpin;
         
         QGroupBox* recoilGroup;
-        QDoubleSpinBox* recoilStrengthSpin;
-        QSpinBox* recoilSpeedSpin;
-        QDoubleSpinBox* recoilPidGainScaleSpin;
+        Fluent::FluentDoubleSpinBox* recoilStrengthSpin;
+        Fluent::FluentSpinBox* recoilSpeedSpin;
+        Fluent::FluentDoubleSpinBox* recoilPidGainScaleSpin;
         
-        QDoubleSpinBox* integralLimitSpin;
-        QDoubleSpinBox* integralRateSpin;
-        QDoubleSpinBox* pGainRampInitialScaleSpin;
-        QDoubleSpinBox* pGainRampDurationSpin;
+        Fluent::FluentDoubleSpinBox* integralLimitSpin;
+        Fluent::FluentDoubleSpinBox* integralRateSpin;
+        Fluent::FluentDoubleSpinBox* pGainRampInitialScaleSpin;
+        Fluent::FluentDoubleSpinBox* pGainRampDurationSpin;
         
         QGroupBox* predictorGroup;
-        QDoubleSpinBox* predictionWeightXSpin;
-        QDoubleSpinBox* predictionWeightYSpin;
-        QDoubleSpinBox* maxPredictionTimeSpin;
+        Fluent::FluentDoubleSpinBox* predictionWeightXSpin;
+        Fluent::FluentDoubleSpinBox* predictionWeightYSpin;
+        Fluent::FluentDoubleSpinBox* maxPredictionTimeSpin;
         
         QGroupBox* bezierGroup;
-        QDoubleSpinBox* bezierCurvatureSpin;
-        QDoubleSpinBox* bezierRandomnessSpin;
+        Fluent::FluentDoubleSpinBox* bezierCurvatureSpin;
+        Fluent::FluentDoubleSpinBox* bezierRandomnessSpin;
     };
     
     ConfigWidgets m_configWidgets[5];

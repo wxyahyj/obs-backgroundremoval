@@ -186,6 +186,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int inputCropY[BUFFER_COUNT] = {0};
 	int inputCropWidth[BUFFER_COUNT] = {0};
 	int inputCropHeight[BUFFER_COUNT] = {0};
+	
+	// 保护 inputFrames 的互斥锁（防止分辨率变化时重新分配导致的竞态条件）
+	std::mutex inputFramesMutex;
 
 	// 无锁索引管理
 	std::atomic<int> inputWriteIdx{0};      // 主线程写入位置
@@ -406,6 +409,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int neuralTargetRadius;
 		int neuralConsumePerFrame;  // 每帧消费路径点数（加速执行）
 		bool enableNeuralPathDebug;
+		// 时间相关移动参数（帧率补偿）
+		bool enableTimeBasedMovement;
+		float targetFrameRate;
 
 		MouseControlConfig() {
 			enabled = false;
@@ -479,6 +485,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			neuralTargetRadius = 8;
 			neuralConsumePerFrame = 2;
 			enableNeuralPathDebug = false;
+			// 时间相关移动默认值
+			enableTimeBasedMovement = true;
+			targetFrameRate = 60.0f;
 		}
 	};
 
@@ -4060,13 +4069,21 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		}
 
 		// 读取帧数据（克隆以避免数据竞争）
-		cv::Mat frame = filter->inputFrames[readIdx].clone();
-		int fullWidth = filter->inputFrameWidths[readIdx];
-		int fullHeight = filter->inputFrameHeights[readIdx];
-		int cropX = filter->inputCropX[readIdx];
-		int cropY = filter->inputCropY[readIdx];
-		int cropWidth = filter->inputCropWidth[readIdx];
-		int cropHeight = filter->inputCropHeight[readIdx];
+		// 加锁保护 inputFrames 的读取，防止分辨率变化时的竞态条件
+		cv::Mat frame;
+		int fullWidth, fullHeight;
+		int cropX, cropY;
+		int cropWidth, cropHeight;
+		{
+			std::lock_guard<std::mutex> lock(filter->inputFramesMutex);
+			frame = filter->inputFrames[readIdx].clone();
+			fullWidth = filter->inputFrameWidths[readIdx];
+			fullHeight = filter->inputFrameHeights[readIdx];
+			cropX = filter->inputCropX[readIdx];
+			cropY = filter->inputCropY[readIdx];
+			cropWidth = filter->inputCropWidth[readIdx];
+			cropHeight = filter->inputCropHeight[readIdx];
+		}
 
 		// 标记输入缓冲区为空闲（已读取完毕）
 		filter->bufferState[readIdx].store(0, std::memory_order_release);
@@ -5347,6 +5364,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.neuralTargetRadius = cfg.neuralTargetRadius;
 		mcConfig.neuralConsumePerFrame = cfg.neuralConsumePerFrame;
 		mcConfig.enableNeuralPathDebug = cfg.enableNeuralPathDebug;
+		// 时间相关移动参数（帧率补偿）
+		mcConfig.enableTimeBasedMovement = cfg.enableTimeBasedMovement;
+		mcConfig.targetFrameRate = cfg.targetFrameRate;
 		
 		static int syncCount = 0;
 		syncCount++;
@@ -5670,11 +5690,15 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							if (tf->bufferState[checkIdx].compare_exchange_strong(
 								expected, 1, std::memory_order_acq_rel)) {
 								// 成功获取空闲槽位，写入数据
-								if (tf->inputFrames[checkIdx].rows != height || 
-									tf->inputFrames[checkIdx].cols != width) {
-									tf->inputFrames[checkIdx] = cv::Mat(height, width, CV_8UC4);
+								// 加锁保护 inputFrames 的重新分配和写入，防止分辨率变化时的竞态条件
+								{
+									std::lock_guard<std::mutex> lock(tf->inputFramesMutex);
+									if (tf->inputFrames[checkIdx].rows != height || 
+										tf->inputFrames[checkIdx].cols != width) {
+										tf->inputFrames[checkIdx] = cv::Mat(height, width, CV_8UC4);
+									}
+									temp.copyTo(tf->inputFrames[checkIdx]);
 								}
-								temp.copyTo(tf->inputFrames[checkIdx]);
 								
 								// 记录帧信息和裁切区域
 								tf->inputFrameWidths[checkIdx] = width;

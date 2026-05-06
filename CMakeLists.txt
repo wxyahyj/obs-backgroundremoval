@@ -27,8 +27,8 @@ if(ENABLE_FRONTEND_API)
 endif()
 
 if(ENABLE_QT)
-  find_package(Qt6 COMPONENTS Widgets Core REQUIRED)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
+  find_package(Qt6 COMPONENTS Widgets Core Svg REQUIRED)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Svg)
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
     PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
@@ -40,6 +40,12 @@ if(ENABLE_QT)
   if(WIN32)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_QT)
   endif()
+  
+  # 集成QtFluentWidgets UI库 (MIT许可证)
+  set(FLUENT_BUILD_DESIGNER_PLUGIN OFF CACHE BOOL "Disable QtFluentWidgets Designer plugin" FORCE)
+  add_subdirectory(${CMAKE_SOURCE_DIR}/QtFluentWidgets-master ${CMAKE_BINARY_DIR}/QtFluentWidgets)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE QtFluentWidgets)
+  message(STATUS "QtFluentWidgets UI library integrated")
 endif()
 
 if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
@@ -52,7 +58,10 @@ if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
   find_package(CURL CONFIG REQUIRED)
   find_package(OpenCV CONFIG REQUIRED)
   find_package(nlohmann_json CONFIG REQUIRED)
-  find_package(Eigen3 CONFIG REQUIRED)
+  # Eigen3由creeper-qt提供，不再单独查找
+  if(NOT TARGET Eigen3::Eigen)
+    find_package(Eigen3 CONFIG REQUIRED)
+  endif()
 elseif(USE_PKGCONFIG)
   # Use pkg-config to find dependencies (Arch Linux, etc.)
 
@@ -86,7 +95,9 @@ elseif(USE_PKGCONFIG)
   find_package(nlohmann_json CONFIG QUIET)
   
   # Eigen3
-  find_package(Eigen3 CONFIG REQUIRED)
+  if(NOT TARGET Eigen3::Eigen)
+    find_package(Eigen3 CONFIG REQUIRED)
+  endif()
 else()
   # Let system find dependencies (Fallback)
 
@@ -95,7 +106,9 @@ else()
   find_package(CURL REQUIRED)
   find_package(OpenCV CONFIG REQUIRED)
   find_package(nlohmann_json CONFIG REQUIRED)
-  find_package(Eigen3 CONFIG REQUIRED)
+  if(NOT TARGET Eigen3::Eigen)
+    find_package(Eigen3 CONFIG REQUIRED)
+  endif()
 endif()
 
 if(APPLE)
@@ -270,22 +283,9 @@ if(WIN32)
   if(DIRECTML)
     message(STATUS "ONNX Runtime DirectML Execution Provider enabled (DirectML build)")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
-    # DirectML 需要 dxcore.lib
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore)
-  else()
-    check_library_exists(
-      onnxruntime::onnxruntime
-      OrtSessionOptionsAppendExecutionProvider_DML
-      onnxruntime_c_api.h
-      HAVE_ONNXRUNTIME_DML_EP
-    )
-    if(HAVE_ONNXRUNTIME_DML_EP)
-      message(STATUS "ONNX Runtime DirectML Execution Provider found")
-      target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
-      # DirectML 需要 dxcore.lib
-      target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore)
-    endif()
   endif()
+  # DirectML 需要 dxcore.lib (Windows上始终链接，因为onnxruntime可能包含DML代码)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore)
 endif()
 
 target_sources(
@@ -299,6 +299,7 @@ target_sources(
     src/models/ModelYOLO.cpp
     src/ThreadPool.cpp
     src/FOVRenderer.cpp
+    src/YOLODetector.cpp
 )
 
 if(WIN32)

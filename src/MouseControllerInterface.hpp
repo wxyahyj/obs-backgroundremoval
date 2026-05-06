@@ -176,6 +176,10 @@ struct MouseControllerConfig {
     int neuralTargetRadius = 8;                // 目标半径（到达判定）
     int neuralConsumePerFrame = 2;             // 每帧消费路径点数（加速执行）
     bool enableNeuralPathDebug = false;        // 是否输出神经网络调试日志
+    
+    // 时间相关移动配置（帧率补偿）
+    bool enableTimeBasedMovement = true;       // 是否启用时间相关移动（帧率补偿）
+    float targetFrameRate = 60.0f;             // 目标帧率基准（用于计算时间因子）
 
 };
 
