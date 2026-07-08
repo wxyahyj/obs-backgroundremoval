@@ -1,4 +1,5 @@
-#include "yolo_detector_filter.h"
+#include "yolo-detector-filter.h"  // extern "C" OBS回调声明
+#include "yolo_detector_filter.h"  // 结构体+C++函数声明
 
 #include <onnxruntime_cxx_api.h>
 
@@ -2738,8 +2739,8 @@ void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &fram
 static void drawSingleCurve(cv::Mat &canvas,
                              int baseY, int topMargin, int bottomMargin,
                              int width,
-                             const std::deque<yolo_detector_filter::PidDebugData> &history,
-                             std::function<float(const yolo_detector_filter::PidDebugData&)> getValue,
+                             const std::deque<PidDebugData> &history,
+                             std::function<float(const PidDebugData&)> getValue,
                              float maxValue,
                              const cv::Scalar &color,
                              int thickness = 2)
@@ -2985,11 +2986,11 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     drawZeroLine(canvas, r0Mid, width);
 
     drawSingleCurve(canvas, r0Mid, r0Top, r0Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.targetVelocityX; },
+                    [](const PidDebugData &d) { return d.targetVelocityX; },
                     maxVel, cv::Scalar(0, 0, 220), 2);  // X: 红
 
     drawSingleCurve(canvas, r0Mid, r0Top, r0Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.targetVelocityY; },
+                    [](const PidDebugData &d) { return d.targetVelocityY; },
                     maxVel, cv::Scalar(0, 200, 0), 2);    // Y: 绿
 
     // =====================================================================
@@ -3002,11 +3003,11 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     drawZeroLine(canvas, r1Mid, width);
 
     drawSingleCurve(canvas, r1Mid, r1Top, r1Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.errorX; },
+                    [](const PidDebugData &d) { return d.errorX; },
                     maxErr, cv::Scalar(0, 0, 220), 2);
 
     drawSingleCurve(canvas, r1Mid, r1Top, r1Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.errorY; },
+                    [](const PidDebugData &d) { return d.errorY; },
                     maxErr, cv::Scalar(0, 200, 0), 2);
 
     // =====================================================================
@@ -3020,26 +3021,26 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
 
     // P项曲线（红色系）
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.pTermX; },
+                    [](const PidDebugData &d) { return d.pTermX; },
                     maxComp, cv::Scalar(100, 50, 55), 2);
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.pTermY; },
+                    [](const PidDebugData &d) { return d.pTermY; },
                     maxComp, cv::Scalar(140, 75, 80), 2);
 
     // I项曲线（绿色系）
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.iTermX; },
+                    [](const PidDebugData &d) { return d.iTermX; },
                     maxComp, cv::Scalar(50, 120, 55), 2);
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.iTermY; },
+                    [](const PidDebugData &d) { return d.iTermY; },
                     maxComp, cv::Scalar(70, 155, 75), 2);
 
     // D项曲线（蓝色系）
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.dTermX; },
+                    [](const PidDebugData &d) { return d.dTermX; },
                     maxComp, cv::Scalar(55, 60, 130), 2);
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.dTermY; },
+                    [](const PidDebugData &d) { return d.dTermY; },
                     maxComp, cv::Scalar(75, 80, 160), 2);
 
     // 图例
@@ -3060,11 +3061,11 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     drawZeroLine(canvas, r3Mid, width);
 
     drawSingleCurve(canvas, r3Mid, r3Top, r3Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.outputX; },
+                    [](const PidDebugData &d) { return d.outputX; },
                     maxOut, cv::Scalar(0, 0, 220), 2);
 
     drawSingleCurve(canvas, r3Mid, r3Top, r3Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDebugData &d) { return d.outputY; },
+                    [](const PidDebugData &d) { return d.outputY; },
                     maxOut, cv::Scalar(0, 200, 0), 2);
 
     // =====================================================================
@@ -3193,7 +3194,7 @@ void setupPidDataCallback(yolo_detector_filter *filter)
 	filter->mouseController->setPidDataCallback([filter](const PidDebugData &data) {
 		std::lock_guard<std::mutex> lock(filter->pidHistoryMutex);
 
-		yolo_detector_filter::PidDebugData point;
+		PidDebugData point;
 		point.errorX = data.errorX;
 		point.errorY = data.errorY;
 		point.outputX = data.outputX;

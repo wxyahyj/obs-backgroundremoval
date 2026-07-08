@@ -328,7 +328,7 @@ void AbstractMouseController::tick()
         frameCount_++;
         if (frameCount_ % 30 == 1 && enableNeuralPathDebug_) {
             obs_log(LOG_INFO, "[%s] NeuralPath FRAME=%d: target=(%.1f,%.1f) fovCenter=(%.1f,%.1f) relative=(%.1f,%.1f) initialized=%d",
-                    getLogPrefix(), frameCount, targetPixelX, targetPixelY, fovCenterX, fovCenterY,
+                    getLogPrefix(), frameCount_, targetPixelX, targetPixelY, fovCenterX, fovCenterY,
                     relativeTargetX, relativeTargetY, neuralPathInitialized_ ? 1 : 0);
         }
         
