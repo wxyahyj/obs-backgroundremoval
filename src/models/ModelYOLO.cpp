@@ -230,32 +230,34 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                 trt_options.trt_int8_enable = 0;  // INT8需要校准，暂不启用
                 trt_options.trt_max_partition_iterations = 1000;  // 最大分区迭代次数
                 trt_options.trt_min_subgraph_size = 1;  // 最小子图大小
-                
+
+                // 持有缓存路径字符串，确保session创建期间内存有效
+                std::string cachePathStr;
 #ifdef _WIN32
                 std::wstring modelPathW(modelPath.begin(), modelPath.end());
                 size_t lastSlash = modelPathW.find_last_of(L"\\/");
                 if (lastSlash != std::wstring::npos) {
                     std::wstring cachePathW = modelPathW.substr(0, lastSlash) + L"\\trt_cache";
                     CreateDirectoryW(cachePathW.c_str(), NULL);
-                    
+
                     std::string cachePathNarrow;
                     int len = WideCharToMultiByte(CP_ACP, 0, cachePathW.c_str(), -1, NULL, 0, NULL, NULL);
                     cachePathNarrow.resize(len);
                     WideCharToMultiByte(CP_ACP, 0, cachePathW.c_str(), -1, &cachePathNarrow[0], len, NULL, NULL);
                     cachePathNarrow.pop_back();
-                    
-                    trt_options.trt_engine_cache_path = _strdup(cachePathNarrow.c_str());
-                    
-                    obs_log(LOG_INFO, "[ModelYOLO] TensorRT cache path: %s", cachePathNarrow.c_str());
+
+                    cachePathStr = cachePathNarrow;
+                    trt_options.trt_engine_cache_path = cachePathStr.c_str();
+
+                    obs_log(LOG_INFO, "[ModelYOLO] TensorRT cache path: %s", cachePathStr.c_str());
                 }
 #else
                 size_t lastSlash = modelPath.find_last_of("/");
                 if (lastSlash != std::string::npos) {
-                    char cachePath[1024];
-                    snprintf(cachePath, sizeof(cachePath), "%s/trt_cache", modelPath.substr(0, lastSlash).c_str());
-                    mkdir(cachePath, 0755);
-                    trt_options.trt_engine_cache_path = strdup(cachePath);
-                    obs_log(LOG_INFO, "[ModelYOLO] TensorRT cache path: %s", cachePath);
+                    cachePathStr = modelPath.substr(0, lastSlash) + "/trt_cache";
+                    mkdir(cachePathStr.c_str(), 0755);
+                    trt_options.trt_engine_cache_path = cachePathStr.c_str();
+                    obs_log(LOG_INFO, "[ModelYOLO] TensorRT cache path: %s", cachePathStr.c_str());
                 }
 #endif
                 sessionOptions.AppendExecutionProvider_TensorRT(trt_options);
