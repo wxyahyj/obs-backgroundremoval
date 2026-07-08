@@ -1097,33 +1097,33 @@ bool ModelYOLO::initializeGpuMemory() {
         obs_log(LOG_ERROR, "[ModelYOLO] Cannot init GPU memory: session or IOBinding not ready");
         return false;
     }
-    
+
     try {
         // 创建GPU内存信息
         if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
-            gpuMemInfo_ = new Ort::MemoryInfo(
+            gpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
                 Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault)
             );
-            
+
             // 创建CUDA分配器
-            gpuAllocator_ = new Ort::Allocator(*session_, *gpuMemInfo_);
-            
+            gpuAllocator_ = std::make_unique<Ort::Allocator>(*session_, *gpuMemInfo_);
+
             // 预分配GPU输入张量
             std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
             gpuInputTensor_ = Ort::Value::CreateTensor<float>(
                 *gpuAllocator_, inputShape.data(), inputShape.size()
             );
-            
+
             // 预分配GPU输出张量
             if (!outputDims_.empty()) {
                 gpuOutputTensor_ = Ort::Value::CreateTensor<float>(
                     *gpuAllocator_, outputDims_[0].data(), outputDims_[0].size()
                 );
             }
-            
+
             useGpuMemory_ = true;
-            obs_log(LOG_INFO, "[ModelYOLO] CUDA persistent memory allocated: input %dx%d", 
+            obs_log(LOG_INFO, "[ModelYOLO] CUDA persistent memory allocated: input %dx%d",
                     inputWidth_, inputHeight_);
             return true;
 #else
@@ -1133,10 +1133,10 @@ bool ModelYOLO::initializeGpuMemory() {
         } else if (currentDevice_ == "dml") {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
             // DirectML使用CPU内存作为暂存，但IOBinding仍然有效
-            gpuMemInfo_ = new Ort::MemoryInfo(
+            gpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
                 Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)
             );
-            
+
             useGpuMemory_ = false;  // DML不使用真正的GPU内存分配
             obs_log(LOG_INFO, "[ModelYOLO] DirectML mode: using IOBinding with CPU memory");
             return true;
@@ -1144,7 +1144,7 @@ bool ModelYOLO::initializeGpuMemory() {
             return false;
 #endif
         }
-        
+
         return false;
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize GPU memory: %s", e.what());
@@ -1154,16 +1154,10 @@ bool ModelYOLO::initializeGpuMemory() {
 }
 
 void ModelYOLO::releaseGpuMemory() {
-    if (gpuAllocator_) {
-        delete gpuAllocator_;
-        gpuAllocator_ = nullptr;
-    }
-    
-    if (gpuMemInfo_) {
-        delete gpuMemInfo_;
-        gpuMemInfo_ = nullptr;
-    }
-    
+    // unique_ptr 自动释放，只需 reset
+    gpuAllocator_.reset();
+    gpuMemInfo_.reset();
+
     // Ort::Value会自动释放
     gpuInputTensor_ = Ort::Value(nullptr);
     gpuOutputTensor_ = Ort::Value(nullptr);
@@ -1238,24 +1232,20 @@ bool ModelYOLO::initializeDmlPreprocessor() {
     try {
         // DmlPreprocessor不再需要传入D3D11设备
         // 它会从输入纹理动态获取OBS的D3D11设备
-        dmlPreprocessor_ = new DmlPreprocessor();
+        dmlPreprocessor_ = std::make_unique<DmlPreprocessor>();
         if (!dmlPreprocessor_->initialize()) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize DML preprocessor");
-            delete dmlPreprocessor_;
-            dmlPreprocessor_ = nullptr;
+            dmlPreprocessor_.reset();
             return false;
         }
-        
+
         dmlInteropInitialized_ = true;
         obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized successfully");
         return true;
-        
+
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] DML preprocessor init exception: %s", e.what());
-        if (dmlPreprocessor_) {
-            delete dmlPreprocessor_;
-            dmlPreprocessor_ = nullptr;
-        }
+        dmlPreprocessor_.reset();
         return false;
     }
 #else
@@ -1268,10 +1258,9 @@ void ModelYOLO::releaseDmlInterop() {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
     if (dmlPreprocessor_) {
         dmlPreprocessor_->release();
-        delete dmlPreprocessor_;
-        dmlPreprocessor_ = nullptr;
+        dmlPreprocessor_.reset();
     }
-    
+
     dmlInteropInitialized_ = false;
     obs_log(LOG_INFO, "[ModelYOLO] DML interop released");
 #endif
