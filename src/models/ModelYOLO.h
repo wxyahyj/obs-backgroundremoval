@@ -264,10 +264,10 @@ private:
     // === 阶段1：GPU持久内存 ===
     bool useGpuMemory_;
     std::string currentDevice_;
-    Ort::Allocator* gpuAllocator_;
+    std::unique_ptr<Ort::Allocator> gpuAllocator_;
     Ort::Value gpuInputTensor_;
     Ort::Value gpuOutputTensor_;
-    Ort::MemoryInfo* gpuMemInfo_;
+    std::unique_ptr<Ort::MemoryInfo> gpuMemInfo_;
     
     // === 阶段2：CUDA纹理共享 ===
     bool cudaInteropInitialized_;
@@ -277,7 +277,7 @@ private:
     
     // === DML纹理共享 ===
     bool dmlInteropInitialized_;
-    class DmlPreprocessor* dmlPreprocessor_;
+    std::unique_ptr<DmlPreprocessor> dmlPreprocessor_;
     
     // === 延迟统计 ===
     LatencyStats latencyStats_;

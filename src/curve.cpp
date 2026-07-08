@@ -49,7 +49,7 @@ DenseLayer::DenseLayer(int input_size, int output_size, const std::string& activ
     biases = Eigen::VectorXd::Zero(output_size);
 }
 
-Eigen::VectorXd DenseLayer::forward(const Eigen::VectorXd& input) {
+Eigen::VectorXd DenseLayer::forward(Eigen::Ref<const Eigen::VectorXd> input) {
     this->input = input;
     output = weights.transpose() * input + biases;
 
@@ -80,7 +80,7 @@ DropoutLayer::DropoutLayer(double dropout_rate)
     : dropout_rate(dropout_rate) {
 }
 
-Eigen::VectorXd DropoutLayer::forward(const Eigen::VectorXd& input) {
+Eigen::VectorXd DropoutLayer::forward(Eigen::Ref<const Eigen::VectorXd> input) {
     Eigen::VectorXd output = input;
 
     for (int i = 0; i < input.size(); i++) {
@@ -101,7 +101,7 @@ NeuralNetwork::~NeuralNetwork() {
     layers.clear();
 }
 
-Eigen::VectorXd NeuralNetwork::forward(const Eigen::VectorXd& input) {
+Eigen::VectorXd NeuralNetwork::forward(Eigen::Ref<const Eigen::VectorXd> input) {
     Eigen::VectorXd current_input = input;
     for (auto* layer : layers) {
         current_input = layer->forward(current_input);
@@ -357,7 +357,7 @@ Eigen::Vector2d MMousePredictor::predict_next_point(
         normalized_direction = distance_to_target / distance_magnitude;
     }
 
-    Eigen::VectorXd features(4);
+    Eigen::Vector4d features;  // 栈分配，避免每帧堆分配
     features << distance_to_target[0] / width,
         distance_to_target[1] / height,
         normalized_direction[0],

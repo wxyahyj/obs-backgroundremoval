@@ -14,13 +14,13 @@
 class Layer {
 public:
     virtual ~Layer() = default;
-    virtual Eigen::VectorXd forward(const Eigen::VectorXd& input) = 0;
+    virtual Eigen::VectorXd forward(Eigen::Ref<const Eigen::VectorXd> input) = 0;
 };
 
 class DenseLayer : public Layer {
 public:
     DenseLayer(int input_size, int output_size, const std::string& activation);
-    Eigen::VectorXd forward(const Eigen::VectorXd& input) override;
+    Eigen::VectorXd forward(Eigen::Ref<const Eigen::VectorXd> input) override;
     void load_weights(const std::vector<std::vector<double>>& weights_data,
         const std::vector<double>& biases_data);
 
@@ -37,7 +37,7 @@ private:
 class DropoutLayer : public Layer {
 public:
     DropoutLayer(double dropout_rate);
-    Eigen::VectorXd forward(const Eigen::VectorXd& input) override;
+    Eigen::VectorXd forward(Eigen::Ref<const Eigen::VectorXd> input) override;
 
 private:
     double dropout_rate;
@@ -48,7 +48,7 @@ class NeuralNetwork {
 public:
     NeuralNetwork();
     ~NeuralNetwork();
-    Eigen::VectorXd forward(const Eigen::VectorXd& input);
+    Eigen::VectorXd forward(Eigen::Ref<const Eigen::VectorXd> input);
     void load_embedded_weights();
 
 private:
