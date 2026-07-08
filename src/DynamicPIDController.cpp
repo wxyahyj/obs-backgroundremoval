@@ -47,6 +47,10 @@ float DynamicPIDAxis::controlLoop(float currentError, float timeInterval, float 
         }
     }
 
+    if (timeInterval <= 0.0f) {
+        return totalOutput;  // 避免除零
+    }
+
     errorChangeRate = (currentError - previousError) / timeInterval;
 
     if (hasReached) {

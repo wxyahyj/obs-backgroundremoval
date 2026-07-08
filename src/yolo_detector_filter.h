@@ -317,6 +317,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			cachedD3D11Texture->Release();
 			cachedD3D11Texture = nullptr;
 		}
+		if (cachedD3d11Device) {
+			cachedD3d11Device->Release();
+			cachedD3d11Device = nullptr;
+		}
 #endif
 	}
 };

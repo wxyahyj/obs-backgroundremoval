@@ -252,7 +252,7 @@ static void drawSingleCurve(cv::Mat &canvas,
 
     std::vector<cv::Point> points;
     int x = 0;
-    int step = std::max(1, width / static_cast<int>(history.size()));
+    int step = (history.size() > 0) ? std::max(1, width / static_cast<int>(history.size())) : 1;
 
     for (const auto &data : history) {
         float value = getValue(data);

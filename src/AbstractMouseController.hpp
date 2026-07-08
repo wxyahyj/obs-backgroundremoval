@@ -27,7 +27,8 @@ public:
     
     float update(float measurement) {
         float P_pred = P_ + Q_;
-        float K = P_pred / (P_pred + R_);
+        float denom = P_pred + R_;
+        float K = (denom > 1e-10f) ? P_pred / denom : 0.0f;
         float innov = measurement - x_;
         x_ = x_ + K * innov;
         P_ = (1.0f - K) * P_pred;
