@@ -120,6 +120,17 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     // 更新神经网络轨迹生成器配置
     enableNeuralPath_ = config.enableNeuralPath;
+
+    // 更新GhostTracker配置（只在config变更时设置一次）
+    {
+        GhostTracker::Config ghostConfig;
+        ghostConfig.enabled = config.enableGhostTracker;
+        ghostConfig.curvature = config.ghostCurvature;
+        ghostConfig.noiseIntensity = config.ghostNoiseIntensity;
+        ghostConfig.verticalSnapRatio = config.ghostVerticalSnapRatio;
+        ghostConfig.noiseFreq = config.ghostNoiseFreq;
+        ghostTracker.setConfig(ghostConfig);
+    }
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
@@ -924,15 +935,8 @@ void AbstractMouseController::tick()
                          ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
                 float targetW = target->width * fw;
                 float targetH = target->height * fh;
-                
-                GhostTracker::Config ghostConfig;
-                ghostConfig.enabled = true;
-                ghostConfig.curvature = config.ghostCurvature;
-                ghostConfig.noiseIntensity = config.ghostNoiseIntensity;
-                ghostConfig.verticalSnapRatio = config.ghostVerticalSnapRatio;
-                ghostConfig.noiseFreq = config.ghostNoiseFreq;
-                ghostTracker.setConfig(ghostConfig);
-                
+
+                // GhostTracker配置已在updateConfig()中设置，不再每帧重建
                 // 传入误差（相对于准心的偏移）
                 if (ghostTracker.apply(errorX, errorY,
                                        targetW, targetH,
