@@ -1,4 +1,4 @@
-#include "yolo-detector-filter.h"
+#include "yolo_detector_filter.h"
 
 #include <onnxruntime_cxx_api.h>
 
@@ -10,7 +10,6 @@
 #include <commdlg.h>
 #pragma comment(lib, "gdiplus.lib")
 #include "MouseController.hpp"
-#include "MouseControllerFactory.hpp"
 #include "ConfigManager.hpp"
 #ifdef HAVE_CUDA
 #include <d3d11.h>
@@ -20,529 +19,19 @@
 #include <opencv2/imgproc.hpp>
 
 #include <numeric>
-#include <memory>
 #include <exception>
 #include <fstream>
-#include <new>
-#include <mutex>
-#include <thread>
 #include <regex>
-#include <thread>
-#include <chrono>
 #include <sstream>
-#include <functional>
-#include <deque>
 #include <map>
 #include <algorithm>
 
 #include <plugin-support.h>
-#include "models/ModelYOLO.h"
-#include "models/Detection.h"
 #include "HungarianAlgorithm.hpp"
-#include "FilterData.h"
 #include "obs-utils/obs-utils.h"
 #include "consts.h"
-#include "KalmanFilter.hpp"
-#include "CrosshairDetector.hpp"
 
-// 目标重识别结构体
-struct LostTarget {
-    int trackId;
-    float x, y, width, height;
-    float centerX, centerY;
-    int lostFrames;
-    std::chrono::steady_clock::time_point lostTime;
-};
-
-struct yolo_detector_filter : public filter_data, public std::enable_shared_from_this<yolo_detector_filter> {
-	// 禁用拷贝语义，防止资源重复管理
-	yolo_detector_filter(const yolo_detector_filter&) = delete;
-	yolo_detector_filter& operator=(const yolo_detector_filter&) = delete;
-	// 保留默认构造和移动语义（make_shared需要）
-	yolo_detector_filter() = default;
-	yolo_detector_filter(yolo_detector_filter&&) = default;
-	yolo_detector_filter& operator=(yolo_detector_filter&&) = default;
-	
-	std::unique_ptr<ModelYOLO> yoloModel;
-	std::mutex yoloModelMutex;
-	ModelYOLO::Version modelVersion;
-
-	std::vector<Detection> detections;
-	std::mutex detectionsMutex;
-
-	std::vector<Detection> trackedTargets;
-	std::mutex trackedTargetsMutex;
-	int nextTrackId;
-	int maxLostFrames;
-	float iouThreshold;
-	
-	// KalmanFilter 增强追踪
-	bool useKalmanTracker = false;
-	int kalmanGenerateThreshold = 2;
-	int kalmanTerminateCount = 5;
-	KalmanP kalmanTracker;
-	
-	// 卡尔曼预测位置渲染
-	struct KalmanPrediction {
-		float x, y, width, height;
-		int trackId;
-	};
-	std::vector<KalmanPrediction> kalmanPredictions;
-	std::mutex kalmanPredictionsMutex;
-	bool showKalmanPredictions = true;
-	uint32_t kalmanPredictionColor = 0xFF00FFFF; // 青色 (ARGB)
-	
-	// 多帧预测轨迹
-	int kalmanPredictionFrames = 5;  // 预测帧数
-	std::vector<std::vector<std::pair<float, float>>> kalmanTrajectories;  // 多帧预测轨迹
-	std::mutex kalmanTrajectoriesMutex;
-	bool showKalmanTrajectories = true;  // 是否显示预测轨迹
-	uint32_t kalmanTrajectoryColor = 0xFFFFFF00; // 黄色 (ARGB)
-	
-	// 多指标融合追踪权重
-	float trackingWeightIou;
-	float trackingWeightCenter;
-	float trackingWeightAspect;
-	float trackingWeightArea;
-	
-	// 目标重识别缓冲区
-	std::vector<LostTarget> lostTargets;
-	std::mutex lostTargetsMutex;
-	int maxReidentifyFrames;  // 重识别最大帧数
-	float reidentifyCenterThreshold;  // 重识别中心点距离阈值
-
-	std::string modelPath;
-	int inputResolution;
-	float confidenceThreshold;
-	float nmsThreshold;
-	int targetClassId;
-	std::vector<int> targetClasses;
-	int inferenceIntervalFrames;
-
-	bool showBBox;
-	bool showLabel;
-	bool showConfidence;
-	int bboxLineWidth;
-	uint32_t bboxColor;
-
-	bool exportCoordinates;
-	std::string coordinateOutputPath;
-
-	bool showFOV;
-	int fovRadius;
-	uint32_t fovColor;
-	int fovCrossLineScale;
-	int fovCrossLineThickness;
-	int fovCircleThickness;
-	bool showFOVCircle;
-	bool showFOVCross;
-
-	bool showFOV2;
-	int fovRadius2;
-	uint32_t fovColor2;
-	bool useDynamicFOV;
-	bool isInFOV2Mode;
-	bool hasTargetInFOV2;
-
-	bool showDetectionResults;
-	float labelFontScale;
-
-	int regionX;
-	int regionY;
-	int regionWidth;
-	int regionHeight;
-	bool useRegion;
-
-	std::thread inferenceThread;
-	std::atomic<bool> inferenceRunning;
-	int frameCounter;
-
-	int inferenceFrameWidth;
-	int inferenceFrameHeight;
-	int cropOffsetX;
-	int cropOffsetY;
-	std::mutex inferenceFrameSizeMutex;
-
-	uint64_t totalFrames;
-	uint64_t inferenceCount;
-	double avgInferenceTimeMs;
-
-	std::atomic<bool> isInferencing;
-
-	// 异步推理统计
-	std::atomic<int> framesSubmitted{0};
-	std::atomic<int> framesInferred{0};
-	std::atomic<int> framesConsumed{0};
-	std::atomic<int> framesDropped{0};
-
-	// === 四缓冲区异步推理 ===
-	static constexpr int BUFFER_COUNT = 4;
-
-	// 输入帧缓冲区（主线程 → 推理线程）
-	cv::Mat inputFrames[BUFFER_COUNT];
-	int inputFrameWidths[BUFFER_COUNT] = {0};
-	int inputFrameHeights[BUFFER_COUNT] = {0};
-	int inputCropX[BUFFER_COUNT] = {0};
-	int inputCropY[BUFFER_COUNT] = {0};
-	int inputCropWidth[BUFFER_COUNT] = {0};
-	int inputCropHeight[BUFFER_COUNT] = {0};
-	
-	// 保护 inputFrames 的互斥锁（防止分辨率变化时重新分配导致的竞态条件）
-	std::mutex inputFramesMutex;
-
-	// 无锁索引管理
-	std::atomic<int> inputWriteIdx{0};      // 主线程写入位置
-	std::atomic<int> inputReadIdx{0};       // 推理线程读取位置
-	std::atomic<int64_t> lastResultTimestamp{0}; // 上次有新结果的时刻
-
-	// 缓冲区状态：0=空闲, 1=有数据待推理, 2=正在推理, 3=推理完成
-	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
-
-	// === 原子指针数据传递（替代输出缓冲区） ===
-	struct InferenceResult {
-		std::vector<Detection> detections;
-		std::vector<Detection> trackedTargets;
-		int frameWidth = 0;
-		int frameHeight = 0;
-		int cropX = 0;
-		int cropY = 0;
-		int64_t timestamp = 0;
-	};
-	// 使用 mutex 保护的 shared_ptr 替代 atomic<shared_ptr>（MSVC兼容性）
-	std::shared_ptr<InferenceResult> inferenceResultPtr_{nullptr};
-	mutable std::mutex inferenceResultMutex_;
-
-	std::chrono::high_resolution_clock::time_point lastFpsTime;
-	int fpsFrameCount;
-	double currentFps;
-
-	gs_effect_t *solidEffect;
-
-	// 线程池相关成员
-	std::vector<std::thread> threadPool;
-	
-#ifdef _WIN32
-	// GPU纹理推理支持
-	bool useGpuTextureInference = false;
-	ID3D11Texture2D* cachedD3D11Texture = nullptr;
-	int gpuTextureWidth = 0;
-	int gpuTextureHeight = 0;
-#endif
-	
-	std::queue<std::function<void()>> taskQueue;
-	std::mutex taskQueueMutex;
-	std::condition_variable taskCondition;
-	std::atomic<bool> threadPoolRunning;
-
-	// 内存池相关成员
-	struct ImageBufferKey {
-		int rows;
-		int cols;
-		int type;
-
-		bool operator==(const ImageBufferKey& other) const {
-			return rows == other.rows && cols == other.cols && type == other.type;
-		}
-	};
-
-	struct ImageBufferKeyHash {
-		size_t operator()(const ImageBufferKey& key) const {
-			size_t h1 = std::hash<int>()(key.rows);
-			size_t h2 = std::hash<int>()(key.cols);
-			size_t h3 = std::hash<int>()(key.type);
-			return h1 ^ (h2 << 1) ^ (h3 << 2);
-		}
-	};
-
-	std::unordered_map<ImageBufferKey, std::vector<cv::Mat>, ImageBufferKeyHash> imageBufferPool;
-	std::vector<std::vector<Detection>> detectionBufferPool;
-	std::mutex bufferPoolMutex;
-	const int MAX_BUFFER_POOL_SIZE = 3;
-	const int THREAD_POOL_SIZE = 4;
-
-#ifdef _WIN32
-	bool showFloatingWindow;
-	int floatingWindowWidth;
-	int floatingWindowHeight;
-	int floatingWindowX;
-	int floatingWindowY;
-	bool floatingWindowDragging;
-	POINT floatingWindowDragOffset;
-	HWND floatingWindowHandle;
-	std::mutex floatingWindowMutex;
-	cv::Mat floatingWindowFrame;
-	bool showTrackIdInFloatingWindow;
-
-		// PID调试数据 — 使用统一的 PidDebugData (MouseControllerInterface.hpp)
-	static const int PID_HISTORY_SIZE = 200;
-	std::deque<PidDebugData> pidHistory;
-	std::mutex pidHistoryMutex;
-	bool showPidDebugWindow;
-	HWND pidDebugWindowHandle;
-	int pidDebugWindowWidth;
-	int pidDebugWindowHeight;
-	int pidDebugWindowX;
-	int pidDebugWindowY;
-	bool pidDebugWindowDragging;
-	POINT pidDebugWindowDragOffset;
-	std::mutex pidDebugWindowMutex;
-	cv::Mat pidDebugWindowFrame;
-
-	static const int MAX_CONFIGS = 5;
-
-    // 全局标准PID参数（独立于各配置）
-    int algorithmTypeGlobal;  // 0=高级PID, 1=动态PID
-    
-    // 动态FOV参数
-    float dynamicFovShrinkPercent;      // 缩放百分比 (0.1-1.0)
-    float dynamicFovTransitionTime;     // 过渡时间（毫秒）
-    float currentFovRadius;             // 当前实际FOV半径
-    std::chrono::steady_clock::time_point fovTransitionStartTime;
-    bool isFovTransitioning;
-    float fovTransitionStartRadius;
-    float fovTransitionEndRadius;
-
-	struct MouseControlConfig {
-		bool enabled;
-		int hotkey;
-		float pMin;
-		float pMax;
-		float pSlope;
-		float d;
-		float i;
-		float maxPixelMove;
-		float deadZonePixels;
-		int screenOffsetX;
-		int screenOffsetY;
-		int screenWidth;
-		int screenHeight;
-		float derivativeFilterAlpha;
-		float adaptivePGainRate;       // 自适应P增益变化率
-		float dTermScale;              // D项缩放因子
-		float targetYOffset;
-		int controllerType;
-		std::string makcuPort;
-		int makcuBaudRate;
-		bool enableYAxisUnlock;
-		int yAxisUnlockDelay;
-		bool enableAutoTrigger;
-		int triggerRadius;
-		int triggerCooldown;
-		int triggerFireDelay;
-		int triggerFireDuration;
-		int triggerInterval;
-		bool enableTriggerDelayRandom;
-		int triggerDelayRandomMin;
-		int triggerDelayRandomMax;
-		bool enableTriggerDurationRandom;
-		int triggerDurationRandomMin;
-		int triggerDurationRandomMax;
-		int triggerMoveCompensation;
-		// 积分参数
-		float integralLimit;
-		float integralRate;
-		float pGainRampInitialScale;
-		float pGainRampDuration;
-		// DerivativePredictor参数
-		bool useDerivativePredictor;
-		float predictionWeightX;
-		float predictionWeightY;
-		float velocitySmoothFactor;
-		float accelerationSmoothFactor;
-		float maxPredictionTime;
-		// 持续自瞄和自动压枪参数
-		bool continuousAimEnabled;
-		bool autoRecoilControlEnabled;
-		float recoilStrength;
-		int recoilSpeed;
-		float recoilPidGainScale;  // 压枪时Y轴PID增益系数
-		// 算法选择
-		int algorithmType;  // 0=高级PID, 1=动态PID
-		// 贝塞尔曲线移动参数
-		bool enableBezierMovement;
-		float bezierCurvature;
-		float bezierRandomness;
-		// GhostTracker曲线轨迹参数
-		bool enableGhostTracker;
-		float ghostCurvature;
-		float ghostNoiseIntensity;
-		float ghostVerticalSnapRatio;
-		float ghostNoiseFreq;
-		// 神经网络轨迹生成器参数
-		bool enableNeuralPath;
-		int neuralPathPoints;
-		double neuralMouseStepSize;
-		int neuralTargetRadius;
-		int neuralConsumePerFrame;  // 每帧消费路径点数（加速执行）
-		bool enableNeuralPathDebug;
-		// 时间相关移动参数（帧率补偿）
-		bool enableTimeBasedMovement;
-		float targetFrameRate;
-
-		MouseControlConfig() {
-			enabled = false;
-			hotkey = VK_XBUTTON1;
-			pMin = 0.153f;
-			pMax = 0.6f;
-			pSlope = 1.0f;
-			d = 0.007f;
-			i = 0.01f;
-			maxPixelMove = 128.0f;
-			deadZonePixels = 5.0f;
-			screenOffsetX = 0;
-			screenOffsetY = 0;
-			screenWidth = 0;
-			screenHeight = 0;
-			derivativeFilterAlpha = 0.2f;
-			adaptivePGainRate = 0.03f;
-			dTermScale = 0.3f;
-			targetYOffset = 0.0f;
-			controllerType = 0;
-			makcuPort = "COM5";
-			makcuBaudRate = 4000000;
-			enableYAxisUnlock = false;
-			yAxisUnlockDelay = 500;
-			enableAutoTrigger = false;
-			triggerRadius = 5;
-			triggerCooldown = 200;
-			triggerFireDelay = 0;
-			triggerFireDuration = 50;
-			triggerInterval = 50;
-			enableTriggerDelayRandom = false;
-			triggerDelayRandomMin = 0;
-			triggerDelayRandomMax = 0;
-			enableTriggerDurationRandom = false;
-			triggerDurationRandomMin = 0;
-			triggerDurationRandomMax = 0;
-			triggerMoveCompensation = 0;
-			// 积分参数默认值
-			integralLimit = 100.0f;
-			integralRate = 1.0f;
-			pGainRampInitialScale = 0.6f;
-			pGainRampDuration = 0.5f;
-			predictionWeightX = 0.3f;
-		predictionWeightY = 0.1f;
-			useDerivativePredictor = true;
-			maxPredictionTime = 0.1f;
-			// 持续自瞄和自动压枪默认值
-			continuousAimEnabled = false;
-			autoRecoilControlEnabled = false;
-			recoilStrength = 5.0f;
-			recoilSpeed = 16;
-			recoilPidGainScale = 0.3f;  // 压枪时Y轴PID增益系数默认30%
-			// 算法选择默认值
-			algorithmType = 0;  // 默认使用高级PID
-			// 标准PID参数默认值
-			algorithmType = 0;  // 默认高级PID
-			// 贝塞尔曲线移动参数默认值
-			enableBezierMovement = false;
-			bezierCurvature = 0.3f;
-			bezierRandomness = 0.2f;
-			// GhostTracker曲线轨迹默认值
-			enableGhostTracker = false;
-			ghostCurvature = 0.5f;
-			ghostNoiseIntensity = 12.0f;
-			ghostVerticalSnapRatio = 3.0f;
-			ghostNoiseFreq = 0.8f;
-			// 神经网络轨迹生成器默认值
-			enableNeuralPath = false;
-			neuralPathPoints = 35;
-			neuralMouseStepSize = 8.0;
-			neuralTargetRadius = 8;
-			neuralConsumePerFrame = 2;
-			enableNeuralPathDebug = false;
-			// 时间相关移动默认值
-			enableTimeBasedMovement = true;
-			targetFrameRate = 60.0f;
-		}
-	};
-
-	int targetSwitchDelayMs = 500;
-	float targetSwitchTolerance = 0.15f;
-
-	std::array<MouseControlConfig, MAX_CONFIGS> mouseConfigs;
-	int currentConfigIndex;
-	std::unique_ptr<MouseControllerInterface> mouseController;
-
-	std::string configName;
-	std::string configList;
-
-	// 专业PID参数
-	float externalKpX;
-	float externalKiX;
-	float externalKdX;
-	float externalKpY;
-	float externalKiY;
-	float externalKdY;
-	float externalPredictX;
-	float externalPredictY;
-	float externalRateX;
-	float externalRateY;
-	float externalKiMode;
-	float externalKpLimit;
-	float externalKiLimit;
-	float externalKdLimit;
-	float externalOutputLimit;
-	float externalKiRate;
-	float externalKiDeadband;
-	
-	// 准星检测器
-	CrosshairDetector crosshairDetector;
-	CrosshairDetectorConfig crosshairConfig;
-	cv::Mat crosshairFrameBuf;  // BGR帧缓冲（仅中心区域）
-	std::mutex crosshairFrameMutex;
-	bool crosshairNeedsPick = false;  // 吸管取色标记（由_update设置，video_tick消费）
-	cv::Mat crosshairDebugMask;       // 调试用HSV掩码
-	std::mutex crosshairDebugMutex;   // 调试掩码互斥锁
-	float crosshairPixelX = -1.0f;    // 准星像素位置X（完整帧坐标），-1表示未检测到
-	float crosshairPixelY = -1.0f;    // 准星像素位置Y（完整帧坐标）
-	bool crosshairDetected = false;   // 当前帧是否检测到准星
-	// 准星帧捕获的裁切偏移（中心区域在完整帧中的起始位置）
-	int crosshairCropOffsetX = 0;
-	int crosshairCropOffsetY = 0;
-	int crosshairFullFrameW = 0;  // 捕获时的完整帧宽度
-	int crosshairFullFrameH = 0;  // 捕获时的完整帧高度
-	
-#endif
-
-	~yolo_detector_filter() {
-		obs_log(LOG_INFO, "YOLO detector filter destructor called");
-#ifdef _WIN32
-		if (cachedD3D11Texture) {
-			cachedD3D11Texture->Release();
-			cachedD3D11Texture = nullptr;
-		}
-#endif
-	}
-};
-
-void inferenceThreadWorker(yolo_detector_filter *filter);
-static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
-static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
-static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
-static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
-static void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
-static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
-static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
-static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
-static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data);
-#ifdef _WIN32
-static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property, void *data);
-static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property, void *data);
-#endif
-
-
-#ifdef _WIN32
-static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-static void createFloatingWindow(yolo_detector_filter *filter);
-static void destroyFloatingWindow(yolo_detector_filter *filter);
-static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame);
-static void renderFloatingWindow(yolo_detector_filter *filter);
-static void setupPidDataCallback(yolo_detector_filter *filter);
-static void createPidDebugWindow(yolo_detector_filter *filter);
-static void destroyPidDebugWindow(yolo_detector_filter *filter);
-static void updatePidDebugWindow(yolo_detector_filter *filter);
-#endif
+// 结构体和前向声明已移至 yolo_detector_filter.h
 
 const char *yolo_detector_filter_getname(void *unused)
 {
@@ -2501,7 +1990,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->isDisabled = false;
 }
 
-static bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data)
+bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data)
 {
 	auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
 	if (!ptr) {
@@ -2526,7 +2015,7 @@ static bool toggleInference(obs_properties_t *props, obs_property_t *property, v
 	return true;
 }
 
-static bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data)
+bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data)
 {
 	auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
 	if (!ptr) {
@@ -2562,7 +2051,7 @@ static bool refreshStats(obs_properties_t *props, obs_property_t *property, void
 	return true;
 }
 
-static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data)
+bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data)
 {
     auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
     if (!ptr) {
@@ -2596,7 +2085,7 @@ static bool testMAKCUConnection(obs_properties_t *props, obs_property_t *propert
     return true;
 }
 
-static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property, void *data)
+bool saveConfigCallback(obs_properties_t *props, obs_property_t *property, void *data)
 {
     auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
     if (!ptr) {
@@ -2755,7 +2244,7 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
     return true;
 }
 
-static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property, void *data)
+bool loadConfigCallback(obs_properties_t *props, obs_property_t *property, void *data)
 {
     auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
     if (!ptr) {
@@ -3033,7 +2522,7 @@ static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property
 #ifdef _WIN32
 static yolo_detector_filter *g_floatingWindowFilter = nullptr;
 
-static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	yolo_detector_filter *filter = g_floatingWindowFilter;
 
@@ -3129,7 +2618,7 @@ static LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 	return 0;
 }
 
-static void createFloatingWindow(yolo_detector_filter *filter)
+void createFloatingWindow(yolo_detector_filter *filter)
 {
 	if (filter->floatingWindowHandle) {
 		return;
@@ -3166,7 +2655,7 @@ static void createFloatingWindow(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] Floating window created");
 }
 
-static void destroyFloatingWindow(yolo_detector_filter *filter)
+void destroyFloatingWindow(yolo_detector_filter *filter)
 {
 	if (filter->floatingWindowHandle) {
 		DestroyWindow(filter->floatingWindowHandle);
@@ -3176,7 +2665,7 @@ static void destroyFloatingWindow(yolo_detector_filter *filter)
 	}
 }
 
-static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame)
+void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Mat &frame)
 {
 	std::lock_guard<std::mutex> lock(filter->floatingWindowMutex);
 	frame.copyTo(filter->floatingWindowFrame);
@@ -3687,7 +3176,7 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     }
 }
 
-static void renderFloatingWindow(yolo_detector_filter *filter)
+void renderFloatingWindow(yolo_detector_filter *filter)
 {
 	if (!filter->floatingWindowHandle || filter->floatingWindowFrame.empty()) {
 		return;
@@ -3695,7 +3184,7 @@ static void renderFloatingWindow(yolo_detector_filter *filter)
 	InvalidateRect(filter->floatingWindowHandle, NULL, FALSE);
 }
 
-static void setupPidDataCallback(yolo_detector_filter *filter)
+void setupPidDataCallback(yolo_detector_filter *filter)
 {
 	if (!filter || !filter->mouseController) {
 		return;
@@ -3820,7 +3309,7 @@ static LRESULT CALLBACK PidDebugWindowProc(HWND hwnd, UINT msg, WPARAM wParam, L
 	return 0;
 }
 
-static void createPidDebugWindow(yolo_detector_filter *filter)
+void createPidDebugWindow(yolo_detector_filter *filter)
 {
 	if (filter->pidDebugWindowHandle) {
 		return;
@@ -3861,7 +3350,7 @@ static void createPidDebugWindow(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] PID debug window created");
 }
 
-static void destroyPidDebugWindow(yolo_detector_filter *filter)
+void destroyPidDebugWindow(yolo_detector_filter *filter)
 {
 	if (filter->pidDebugWindowHandle) {
 		DestroyWindow(filter->pidDebugWindowHandle);
@@ -3871,7 +3360,7 @@ static void destroyPidDebugWindow(yolo_detector_filter *filter)
 	}
 }
 
-static void updatePidDebugWindow(yolo_detector_filter *filter)
+void updatePidDebugWindow(yolo_detector_filter *filter)
 {
 	if (!filter->pidDebugWindowHandle) {
 		return;
@@ -4423,7 +3912,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 	obs_log(LOG_INFO, "[YOLO Detector] Async inference thread stopped");
 }
 
-static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	std::lock_guard<std::mutex> lock(filter->detectionsMutex);
 
@@ -4466,7 +3955,7 @@ static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWid
 	gs_technique_end(tech);
 }
 
-static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (!filter->useKalmanTracker || !filter->showKalmanPredictions) {
 		return;
@@ -4545,7 +4034,7 @@ static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frame
 	gs_technique_end(tech);
 }
 
-static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (!filter->useKalmanTracker || !filter->showKalmanTrajectories) {
 		return;
@@ -4609,7 +4098,7 @@ static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t fram
 	gs_technique_end(tech);
 }
 
-static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (!filter->showFOV) {
 		return;
@@ -4662,7 +4151,7 @@ static void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_
 	gs_technique_end(tech);
 }
 
-static void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (!filter->useRegion) {
 		return;
@@ -4778,7 +4267,7 @@ static void renderLabelsWithOpenCV(cv::Mat &image, yolo_detector_filter *filter)
 	}
 }
 
-static void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
+void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight)
 {
 	if (filter->coordinateOutputPath.empty()) {
 		return;
