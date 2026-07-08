@@ -11,6 +11,28 @@ std::vector<int> HungarianAlgorithm::solve(const std::vector<std::vector<float>>
     int n = static_cast<int>(costMatrix.size());
     int m = static_cast<int>(costMatrix[0].size());
 
+    // 小矩阵快路径：n≤2时暴力匹配，避免O(n³)开销
+    if (n <= 2 && m <= 2) {
+        std::vector<int> result(n, -1);
+        if (n == 1 && m == 1) {
+            result[0] = 0;
+        } else if (n == 1 && m == 2) {
+            result[0] = (costMatrix[0][0] <= costMatrix[0][1]) ? 0 : 1;
+        } else if (n == 2 && m == 1) {
+            result[0] = 0;
+            // result[1] stays -1 (unmatched)
+        } else { // n==2 && m==2
+            float cost00 = costMatrix[0][0] + costMatrix[1][1];
+            float cost01 = costMatrix[0][1] + costMatrix[1][0];
+            if (cost00 <= cost01) {
+                result[0] = 0; result[1] = 1;
+            } else {
+                result[0] = 1; result[1] = 0;
+            }
+        }
+        return result;
+    }
+
     int size = std::max(n, m);
 
     std::vector<std::vector<float>> matrix(size, std::vector<float>(size, 0.0f));
