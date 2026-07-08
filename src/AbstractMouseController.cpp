@@ -627,8 +627,8 @@ void AbstractMouseController::tick()
             iOutX = 0.0f;
         }
         
-        // Step 13: 总输出
-        float totalX = round1(pOutX + iOutX + d2OutX);
+        // Step 13: 总输出（D2已折叠进iOutX，不要再加）
+        float totalX = round1(pOutX + iOutX);
         
         if (config.maxPixelMove > 0.0f) {
             totalX = atan2Clamp(totalX, config.maxPixelMove, config.maxPixelMove);
@@ -745,7 +745,7 @@ void AbstractMouseController::tick()
             iOutY = 0.0f;
         }
         
-        float totalY = round1(pOutY + iOutY + d2OutY);
+        float totalY = round1(pOutY + iOutY);
         
         if (config.maxPixelMove > 0.0f) {
             totalY = atan2Clamp(totalY, config.maxPixelMove, config.maxPixelMove);

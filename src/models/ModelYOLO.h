@@ -202,7 +202,8 @@ private:
     std::vector<int> performNMS(
         const std::vector<cv::Rect2f>& boxes,
         const std::vector<float>& scores,
-        float nmsThreshold
+        float nmsThreshold,
+        const std::vector<int>& classIds = {}
     );
 
     float calculateIoU(const cv::Rect2f& a, const cv::Rect2f& b);

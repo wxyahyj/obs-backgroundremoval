@@ -447,29 +447,34 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
         float* gChannel = outputBuffer + channelSize;
         float* bChannel = outputBuffer + channelSize * 2;
         
-        // SIMD优化：一次处理4个像素
+        // SIMD优化：一次处理4个像素（SSE存储，避免AVX2写越界）
         int i = 0;
 #ifdef __AVX2__
         const __m256 normVec = _mm256_set1_ps(norm);
-        for (; i + 3 < channelSize; i += 4) {
-            // 加载16字节（4个BGRA像素）
+        for (; i + 7 < channelSize; i += 8) {
+            // 加载32字节（8个BGRA像素）
             __m128i bgra0 = _mm_loadu_si128((const __m128i*)(inputData + i * 4));
-            
-            // 提取各通道（每通道4个8位值）
-            __m128i b0 = _mm_and_si128(bgra0, _mm_set1_epi32(0xFF));
-            __m128i g0 = _mm_and_si128(_mm_srli_epi32(bgra0, 8), _mm_set1_epi32(0xFF));
-            __m128i r0 = _mm_and_si128(_mm_srli_epi32(bgra0, 16), _mm_set1_epi32(0xFF));
-            
+            __m128i bgra1 = _mm_loadu_si128((const __m128i*)(inputData + (i + 4) * 4));
+
+            // 提取各通道（每通道8个8位值）
+            __m128i b0_lo = _mm_and_si128(bgra0, _mm_set1_epi32(0xFF));
+            __m128i g0_lo = _mm_and_si128(_mm_srli_epi32(bgra0, 8), _mm_set1_epi32(0xFF));
+            __m128i r0_lo = _mm_and_si128(_mm_srli_epi32(bgra0, 16), _mm_set1_epi32(0xFF));
+            __m128i b0_hi = _mm_and_si128(bgra1, _mm_set1_epi32(0xFF));
+            __m128i g0_hi = _mm_and_si128(_mm_srli_epi32(bgra1, 8), _mm_set1_epi32(0xFF));
+            __m128i r0_hi = _mm_and_si128(_mm_srli_epi32(bgra1, 16), _mm_set1_epi32(0xFF));
+
+            // 合并为256位向量
+            __m256i bAll = _mm256_set_m128i(b0_hi, b0_lo);
+            __m256i gAll = _mm256_set_m128i(g0_hi, g0_lo);
+            __m256i rAll = _mm256_set_m128i(r0_hi, r0_lo);
+
             // 转换为浮点并归一化
-            __m256 rFloat = _mm256_cvtepi32_ps(r0);
-            __m256 gFloat = _mm256_cvtepi32_ps(g0);
-            __m256 bFloat = _mm256_cvtepi32_ps(b0);
-            
-            rFloat = _mm256_mul_ps(rFloat, normVec);
-            gFloat = _mm256_mul_ps(gFloat, normVec);
-            bFloat = _mm256_mul_ps(bFloat, normVec);
-            
-            // 存储到输出缓冲区
+            __m256 rFloat = _mm256_mul_ps(_mm256_cvtepi32_ps(rAll), normVec);
+            __m256 gFloat = _mm256_mul_ps(_mm256_cvtepi32_ps(gAll), normVec);
+            __m256 bFloat = _mm256_mul_ps(_mm256_cvtepi32_ps(bAll), normVec);
+
+            // 存储到输出缓冲区（8个float，正好匹配8个像素）
             _mm256_storeu_ps(rChannel + i, rFloat);
             _mm256_storeu_ps(gChannel + i, gFloat);
             _mm256_storeu_ps(bChannel + i, bFloat);
@@ -850,7 +855,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         classIds.push_back(maxClassId);
     }
 
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
+    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
 
     for (int idx : nmsIndices) {
         Detection det;
@@ -937,7 +942,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
         classIds.push_back(maxClassId);
     }
 
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
+    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
 
     for (int idx : nmsIndices) {
         Detection det;
@@ -974,7 +979,8 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv11(
 std::vector<int> ModelYOLO::performNMS(
     const std::vector<cv::Rect2f>& boxes,
     const std::vector<float>& scores,
-    float nmsThreshold
+    float nmsThreshold,
+    const std::vector<int>& classIds
 ) {
     std::vector<int> indices(scores.size());
     std::iota(indices.begin(), indices.end(), 0);
@@ -1003,7 +1009,12 @@ std::vector<int> ModelYOLO::performNMS(
 
             float iou = calculateIoU(boxes[idx], boxes[idx2]);
 
-            if (iou > nmsThreshold) {
+            // 按类NMS：只抑制同类框
+            bool sameClass = classIds.empty() ||
+                (idx < (int)classIds.size() && idx2 < (int)classIds.size() &&
+                 classIds[idx] == classIds[idx2]);
+
+            if (sameClass && iou > nmsThreshold) {
                 suppressed[idx2] = true;
             }
         }
@@ -1534,7 +1545,7 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
         size_t requiredSize = 3 * inputHeight_ * inputWidth_;
         if (inputBuffer_.size() < requiredSize) {
             inputBuffer_.resize(requiredSize);
-            inputBufferSize_ = requiredSize * sizeof(float);
+            inputBufferSize_ = requiredSize;  // 元素数，非字节数
         }
         
         // 使用 DML 预处理器从纹理预处理
