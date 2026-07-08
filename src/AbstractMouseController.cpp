@@ -923,10 +923,10 @@ void AbstractMouseController::tick()
             float dirY = moveY / moveDist;
             float perpX = -dirY;  // 垂直于移动方向
             float perpY = dirX;
-            
-            // 使用误差作为输入（目标相对于准心的偏移）
+
+            // 复用上方已选中的target，不再重复调用selectTarget()
+            // （原代码重复调用会导致目标锁定状态不一致）
             float ghostOffsetX = 0.0f, ghostOffsetY = 0.0f;
-            Detection* target = selectTarget();
             if (target) {
                 int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth :
                          ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
