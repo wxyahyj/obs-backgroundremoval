@@ -820,6 +820,11 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							tf->cachedD3D11Texture = d3dTex;
 							tf->gpuTextureWidth = width;
 							tf->gpuTextureHeight = height;
+
+							// 首次：缓存D3D11设备（推理线程需要用它做DML预处理）
+							if (!tf->cachedD3d11Device) {
+								d3dTex->GetDevice(&tf->cachedD3d11Device);
+							}
 						}
 					}
 				}

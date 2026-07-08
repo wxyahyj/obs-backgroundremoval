@@ -1,6 +1,5 @@
 #include "DmlPreprocessor.h"
 #include <obs-module.h>
-#include <graphics/graphics.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -19,167 +18,61 @@ DmlPreprocessor::~DmlPreprocessor()
 
 bool DmlPreprocessor::initialize()
 {
-    if (initialized_) {
-        return true;
-    }
-    
-    // 创建D3D12设备（用于未来的GPU加速预处理，可选）
-    if (!createD3D12Device()) {
-        // D3D12设备创建失败不影响基本功能
-        // 可以在没有D3D12的情况下运行CPU预处理
-    }
-    
+    if (initialized_) return true;
     fenceEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    if (!fenceEvent_) {
-        // 即使fence创建失败，也可以继续
-    }
-    
     initialized_ = true;
     return true;
 }
 
 void DmlPreprocessor::release()
 {
-    if (!initialized_) {
-        return;
-    }
-    
-    // 清理缓存的staging texture
+    if (!initialized_) return;
     cachedStagingTexture_.Reset();
     memset(&cachedStagingDesc_, 0, sizeof(cachedStagingDesc_));
-    
     commandList_.Reset();
     commandAllocator_.Reset();
     commandQueue_.Reset();
-    
-    if (fenceEvent_) {
-        CloseHandle(fenceEvent_);
-        fenceEvent_ = nullptr;
-    }
-    
+    if (fenceEvent_) { CloseHandle(fenceEvent_); fenceEvent_ = nullptr; }
     fence_.Reset();
     d3d12Device_.Reset();
-    
     initialized_ = false;
 }
 
-bool DmlPreprocessor::createD3D12Device()
-{
-    HRESULT hr = D3D12CreateDevice(
-        nullptr,
-        D3D_FEATURE_LEVEL_11_0,
-        IID_PPV_ARGS(&d3d12Device_)
-    );
-    
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
-    queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-    queueDesc.NodeMask = 0;
-    
-    hr = d3d12Device_->CreateCommandQueue(
-        &queueDesc,
-        IID_PPV_ARGS(&commandQueue_)
-    );
-    
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    hr = d3d12Device_->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
-        IID_PPV_ARGS(&commandAllocator_)
-    );
-    
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    hr = d3d12Device_->CreateCommandList(
-        0,
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
-        commandAllocator_.Get(),
-        nullptr,
-        IID_PPV_ARGS(&commandList_)
-    );
-    
-    if (FAILED(hr)) {
-        return false;
-    }
-    
-    commandList_->Close();
-    
-    hr = d3d12Device_->CreateFence(
-        0,
-        D3D12_FENCE_FLAG_NONE,
-        IID_PPV_ARGS(&fence_)
-    );
-    
-    return SUCCEEDED(hr);
-}
-
 DmlPreprocessParams DmlPreprocessor::calculateParams(
-    int srcWidth, int srcHeight,
-    int dstWidth, int dstHeight)
+    int srcWidth, int srcHeight, int dstWidth, int dstHeight)
 {
     DmlPreprocessParams params;
-    params.srcWidth = srcWidth;
-    params.srcHeight = srcHeight;
-    params.dstWidth = dstWidth;
-    params.dstHeight = dstHeight;
-    
-    // 计算letterbox参数
+    params.srcWidth = srcWidth; params.srcHeight = srcHeight;
+    params.dstWidth = dstWidth; params.dstHeight = dstHeight;
     float scaleX = static_cast<float>(dstWidth) / srcWidth;
     float scaleY = static_cast<float>(dstHeight) / srcHeight;
     params.scale = std::min(scaleX, scaleY);
-    
     int newWidth = static_cast<int>(srcWidth * params.scale);
     int newHeight = static_cast<int>(srcHeight * params.scale);
-    
     params.padX = (dstWidth - newWidth) / 2;
     params.padY = (dstHeight - newHeight) / 2;
-    
     return params;
 }
 
 bool DmlPreprocessor::preprocessFromTexture(
-    ID3D11Texture2D* srcTexture,
-    float* dstBuffer,
-    int dstWidth,
-    int dstHeight,
-    DmlPreprocessParams* outParams)
+    ID3D11Texture2D* srcTexture, float* dstBuffer,
+    int dstWidth, int dstHeight, DmlPreprocessParams* outParams)
 {
-    if (!initialized_ || !srcTexture || !dstBuffer) {
-        return false;
-    }
-    
+    if (!initialized_ || !srcTexture || !dstBuffer) return false;
     D3D11_TEXTURE2D_DESC srcDesc;
     srcTexture->GetDesc(&srcDesc);
-    
     DmlPreprocessParams params = calculateParams(
-        srcDesc.Width, srcDesc.Height,
-        dstWidth, dstHeight
-    );
-    
-    if (outParams) {
-        *outParams = params;
-    }
-    
+        srcDesc.Width, srcDesc.Height, dstWidth, dstHeight);
+    if (outParams) *outParams = params;
     return copyAndPreprocess(srcTexture, dstBuffer, params);
 }
 
 bool DmlPreprocessor::copyAndPreprocess(
-    ID3D11Texture2D* srcTexture,
-    float* dstBuffer,
+    ID3D11Texture2D* srcTexture, float* dstBuffer,
     const DmlPreprocessParams& params)
 {
-    // ⚠️ 禁用DML GPU纹理预处理
-    // 原因：obs_enter_graphics() 不能在推理线程中调用
-    // 必须在OBS渲染线程中执行纹理复制操作
-    // TODO: 将纹理复制移到OBS渲染回调中，在渲染线程内完成D3D11操作
+    // D3D11 Immediate Context (CopyResource) 只能在渲染线程调用
+    // 推理线程无法安全执行GPU→CPU纹理拷贝
+    // 需要将此操作移到video_render回调中才能启用
     return false;
 }

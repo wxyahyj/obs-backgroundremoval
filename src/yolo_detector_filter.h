@@ -177,6 +177,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 #ifdef _WIN32
 	bool useGpuTextureInference = false;
 	ID3D11Texture2D* cachedD3D11Texture = nullptr;
+	ID3D11Device* cachedD3d11Device = nullptr;  // 缓存D3D11设备，推理线程用
 	int gpuTextureWidth = 0;
 	int gpuTextureHeight = 0;
 #endif

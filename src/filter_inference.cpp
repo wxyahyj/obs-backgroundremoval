@@ -65,15 +65,16 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			continue;
 		}
 
-		// 读取帧数据（克隆以避免数据竞争）
-		// 加锁保护 inputFrames 的读取，防止分辨率变化时的竞态条件
+		// 读取帧数据
+		// bufferState已从1→2(原子CAS)，渲染线程不会覆写此slot直到我们设回0
+		// 因此可以直接引用，无需clone（省去每帧~8MB拷贝）
 		cv::Mat frame;
 		int fullWidth, fullHeight;
 		int cropX, cropY;
 		int cropWidth, cropHeight;
 		{
 			std::lock_guard<std::mutex> lock(filter->inputFramesMutex);
-			frame = filter->inputFrames[readIdx].clone();
+			frame = filter->inputFrames[readIdx];  // 引用，不clone
 			fullWidth = filter->inputFrameWidths[readIdx];
 			fullHeight = filter->inputFrameHeights[readIdx];
 			cropX = filter->inputCropX[readIdx];
@@ -82,7 +83,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			cropHeight = filter->inputCropHeight[readIdx];
 		}
 
-		// 标记输入缓冲区为空闲（已读取完毕）
+		// 标记输入缓冲区为空闲（已读取完毕，渲染线程可覆写）
 		filter->bufferState[readIdx].store(0, std::memory_order_release);
 		
 		// 安全检查：确保帧数据有效
