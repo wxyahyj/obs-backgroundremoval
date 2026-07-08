@@ -273,43 +273,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	cv::Mat floatingWindowFrame;
 	bool showTrackIdInFloatingWindow;
 
-		// PID调试数据
-	static const int PID_HISTORY_SIZE = 200;  // 保存最近200帧的PID数据
-	struct PidDataPoint {
-		// === 基础数据（原有） ===
-		float errorX;
-		float errorY;
-		float outputX;
-		float outputY;
-		float targetX;
-		float targetY;
-		float targetVelocityX;  // 目标X速度（像素/帧）
-		float targetVelocityY;  // 目标Y速度（像素/帧）
-		float currentKp;        // 当前使用的Kp
-		float currentKi;        // 当前使用的Ki
-		float currentKd;        // 当前使用的Kd
-
-		// === 新增：P/I/D 分项输出 ===
-		float pTermX = 0;
-		float pTermY = 0;
-		float iTermX = 0;
-		float iTermY = 0;
-		float dTermX = 0;
-		float dTermY = 0;
-
-		// === 新增：积分状态 ===
-		float integralAbsX = 0;
-		float integralAbsY = 0;
-		float integralRatioX = 0;
-		float integralRatioY = 0;
-
-		// === 新增：控制诊断 ===
-		int controlMode = 0;    // 0=IDLE 1=TRACKING 2=LOCKED 3=I_SATURATION 4=OSCILLATING 5=PREDICTING
-		bool isFiring = false;
-
-		std::chrono::steady_clock::time_point timestamp;
-	};
-	std::deque<PidDataPoint> pidHistory;
+		// PID调试数据 — 使用统一的 PidDebugData (MouseControllerInterface.hpp)
+	static const int PID_HISTORY_SIZE = 200;
+	std::deque<PidDebugData> pidHistory;
 	std::mutex pidHistoryMutex;
 	bool showPidDebugWindow;
 	HWND pidDebugWindowHandle;
@@ -3283,8 +3249,8 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 static void drawSingleCurve(cv::Mat &canvas,
                              int baseY, int topMargin, int bottomMargin,
                              int width,
-                             const std::deque<yolo_detector_filter::PidDataPoint> &history,
-                             std::function<float(const yolo_detector_filter::PidDataPoint&)> getValue,
+                             const std::deque<yolo_detector_filter::PidDebugData> &history,
+                             std::function<float(const yolo_detector_filter::PidDebugData&)> getValue,
                              float maxValue,
                              const cv::Scalar &color,
                              int thickness = 2)
@@ -3530,11 +3496,11 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     drawZeroLine(canvas, r0Mid, width);
 
     drawSingleCurve(canvas, r0Mid, r0Top, r0Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.targetVelocityX; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.targetVelocityX; },
                     maxVel, cv::Scalar(0, 0, 220), 2);  // X: 红
 
     drawSingleCurve(canvas, r0Mid, r0Top, r0Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.targetVelocityY; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.targetVelocityY; },
                     maxVel, cv::Scalar(0, 200, 0), 2);    // Y: 绿
 
     // =====================================================================
@@ -3547,11 +3513,11 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     drawZeroLine(canvas, r1Mid, width);
 
     drawSingleCurve(canvas, r1Mid, r1Top, r1Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.errorX; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.errorX; },
                     maxErr, cv::Scalar(0, 0, 220), 2);
 
     drawSingleCurve(canvas, r1Mid, r1Top, r1Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.errorY; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.errorY; },
                     maxErr, cv::Scalar(0, 200, 0), 2);
 
     // =====================================================================
@@ -3565,26 +3531,26 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
 
     // P项曲线（红色系）
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.pTermX; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.pTermX; },
                     maxComp, cv::Scalar(100, 50, 55), 2);
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.pTermY; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.pTermY; },
                     maxComp, cv::Scalar(140, 75, 80), 2);
 
     // I项曲线（绿色系）
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.iTermX; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.iTermX; },
                     maxComp, cv::Scalar(50, 120, 55), 2);
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.iTermY; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.iTermY; },
                     maxComp, cv::Scalar(70, 155, 75), 2);
 
     // D项曲线（蓝色系）
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.dTermX; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.dTermX; },
                     maxComp, cv::Scalar(55, 60, 130), 2);
     drawSingleCurve(canvas, r2Mid, r2Top, r2Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.dTermY; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.dTermY; },
                     maxComp, cv::Scalar(75, 80, 160), 2);
 
     // 图例
@@ -3605,11 +3571,11 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
     drawZeroLine(canvas, r3Mid, width);
 
     drawSingleCurve(canvas, r3Mid, r3Top, r3Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.outputX; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.outputX; },
                     maxOut, cv::Scalar(0, 0, 220), 2);
 
     drawSingleCurve(canvas, r3Mid, r3Top, r3Bot, width, filter->pidHistory,
-                    [](const yolo_detector_filter::PidDataPoint &d) { return d.outputY; },
+                    [](const yolo_detector_filter::PidDebugData &d) { return d.outputY; },
                     maxOut, cv::Scalar(0, 200, 0), 2);
 
     // =====================================================================
@@ -3693,7 +3659,7 @@ static void drawPidDebugGraph(yolo_detector_filter *filter, cv::Mat &canvas)
 
         // 算法类型
         const char *algoNames[] = {"AdvPID", "StdPID", "Chris"};
-        // algorithmType 存储在 PidDataPoint 中但此处未直接使用，显示默认值
+        // algorithmType 存储在 PidDebugData 中但此处未直接使用，显示默认值
         cv::putText(canvas, algoNames[0],
                     cv::Point(firingX + 52, modeY),
                     cv::FONT_HERSHEY_SIMPLEX, 0.36, cv::Scalar(140, 140, 160), 1);
@@ -3738,7 +3704,7 @@ static void setupPidDataCallback(yolo_detector_filter *filter)
 	filter->mouseController->setPidDataCallback([filter](const PidDebugData &data) {
 		std::lock_guard<std::mutex> lock(filter->pidHistoryMutex);
 
-		yolo_detector_filter::PidDataPoint point;
+		yolo_detector_filter::PidDebugData point;
 		point.errorX = data.errorX;
 		point.errorY = data.errorY;
 		point.outputX = data.outputX;
