@@ -130,25 +130,25 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			if (filter->yoloModel) {
 #ifdef _WIN32
 #if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
-				if (filter->useGpuTextureInference && filter->cachedD3D11Texture &&
-				    filter->gpuTextureWidth > 0 && filter->gpuTextureHeight > 0) {
+				// 捕获纹理指针并AddRef，防止渲染线程在推理期间释放
+				ID3D11Texture2D* texRef = filter->cachedD3D11Texture;
+				int texW = filter->gpuTextureWidth;
+				int texH = filter->gpuTextureHeight;
+				if (texRef) texRef->AddRef();
+
+				if (filter->useGpuTextureInference && texRef &&
+				    texW > 0 && texH > 0) {
 					bool gpuInferenceSuccess = false;
 #ifdef HAVE_CUDA
 					if (filter->yoloModel->isGpuTextureSupported() && !gpuInferenceSuccess) {
 						try {
 							newDetections = filter->yoloModel->inferenceFromTexture(
-								filter->cachedD3D11Texture,
-								filter->gpuTextureWidth,
-								filter->gpuTextureHeight,
-								fullWidth, fullHeight
-							);
+								texRef, texW, texH, fullWidth, fullHeight);
 							gpuInferenceSuccess = true;
 						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference failed: %s, falling back to CPU", e.what());
-							gpuInferenceSuccess = false;
+							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference failed: %s", e.what());
 						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference unknown error, falling back to CPU");
-							gpuInferenceSuccess = false;
+							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference unknown error");
 						}
 					}
 #endif
@@ -156,24 +156,19 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					if (filter->yoloModel->isDmlTextureSupported() && !gpuInferenceSuccess) {
 						try {
 							newDetections = filter->yoloModel->inferenceFromTextureDml(
-								filter->cachedD3D11Texture,
-								filter->gpuTextureWidth,
-								filter->gpuTextureHeight,
-								fullWidth, fullHeight
-							);
+								texRef, texW, texH, fullWidth, fullHeight);
 							gpuInferenceSuccess = true;
 						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference failed: %s, falling back to CPU", e.what());
-							gpuInferenceSuccess = false;
+							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference failed: %s", e.what());
 						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference unknown error, falling back to CPU");
-							gpuInferenceSuccess = false;
+							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference unknown error");
 						}
 					}
 #endif
 					if (!gpuInferenceSuccess) {
 						newDetections = filter->yoloModel->inference(inferenceFrame);
 					}
+					if (texRef) texRef->Release();  // 释放推理线程持有的引用
 				} else {
 					newDetections = filter->yoloModel->inference(inferenceFrame);
 				}

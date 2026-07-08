@@ -286,6 +286,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::array<MouseControlConfig, MAX_CONFIGS> mouseConfigs;
 	int currentConfigIndex;
 	std::unique_ptr<MouseControllerInterface> mouseController;
+	std::mutex mouseConfigsMutex;  // 保护 mouseConfigs + mouseController
 
 	std::string configName;
 	std::string configList;

@@ -397,14 +397,16 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			// 需要映射回完整帧像素坐标
 			if (!crosshairDets.empty()) {
 				const auto& chDet = crosshairDets[0];
-				// 裁切帧内像素坐标
 				int cropPxX = static_cast<int>(chDet.centerX * bgrFrame.cols);
 				int cropPxY = static_cast<int>(chDet.centerY * bgrFrame.rows);
-				// 映射到完整帧像素坐标
-				tf->crosshairPixelX = static_cast<float>(cropPxX + tf->crosshairCropOffsetX);
-				tf->crosshairPixelY = static_cast<float>(cropPxY + tf->crosshairCropOffsetY);
-				tf->crosshairDetected = true;
+				{
+					std::lock_guard<std::mutex> lock(tf->crosshairFrameMutex);
+					tf->crosshairPixelX = static_cast<float>(cropPxX + tf->crosshairCropOffsetX);
+					tf->crosshairPixelY = static_cast<float>(cropPxY + tf->crosshairCropOffsetY);
+					tf->crosshairDetected = true;
+				}
 			} else {
+				std::lock_guard<std::mutex> lock(tf->crosshairFrameMutex);
 				tf->crosshairDetected = false;
 				// 检测失败，重置跟踪状态，下一帧重新从中心搜索
 				tf->crosshairDetector.resetTracking();
@@ -619,6 +621,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			detectionsCopy = tf->detections;
 		}
 
+		// 锁定mouseConfigsMutex保护 config读取 + mouseController写入
+		{
+		std::lock_guard<std::mutex> cfgLock(tf->mouseConfigsMutex);
+
 		int activeConfig = getActiveConfig();
 		float shrinkedRadius = static_cast<float>(tf->fovRadius) * tf->dynamicFovShrinkPercent;
 		
@@ -666,11 +672,13 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropY = tf->cropOffsetY;
 					}
 					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-					// 传递准星位置作为瞄准起点（后坐力补偿）
-					if (tf->crosshairDetected) {
-						tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
-					} else {
-						tf->mouseController->setAimOrigin(-1.0f, -1.0f);  // 无准星时用画面中心
+					{
+						std::lock_guard<std::mutex> lock(tf->crosshairFrameMutex);
+						if (tf->crosshairDetected) {
+							tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
+						} else {
+							tf->mouseController->setAimOrigin(-1.0f, -1.0f);
+						}
 					}
 					tf->mouseController->tick();
 				} else {
@@ -686,7 +694,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				tf->mouseController->updateConfig(mcConfig);
 				tf->mouseController->tick();
 			}
-		}
+			}
+		} // end mouseConfigsMutex lock
 	} else {
 		// 不使用动态FOV，正常处理 - 无论是否在推理，只要有鼠标控制器就调用tick()确保能释放自动扳机
 		if (tf->mouseController) {
@@ -708,11 +717,13 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropY = tf->cropOffsetY;
 					}
 					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-					// 传递准星位置作为瞄准起点（后坐力补偿）
-					if (tf->crosshairDetected) {
-						tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
-					} else {
-						tf->mouseController->setAimOrigin(-1.0f, -1.0f);  // 无准星时用画面中心
+					{
+						std::lock_guard<std::mutex> lock(tf->crosshairFrameMutex);
+						if (tf->crosshairDetected) {
+							tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
+						} else {
+							tf->mouseController->setAimOrigin(-1.0f, -1.0f);
+						}
 					}
 					tf->mouseController->tick();
 				} else {
@@ -1233,11 +1244,18 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		}
 
 		// 准星检测：绘制准星位置（紫色十字标注）
-		if (tf->crosshairConfig.enabled && tf->crosshairDetected) {
-			cv::Scalar crosshairColor(255, 0, 255, 255); // 紫色(BGRA)
-			// crosshairPixelX/Y 是相对于完整帧的像素坐标，需转换到裁切后坐标
-			int cx = static_cast<int>(tf->crosshairPixelX) - cropOffsetX;
-			int cy = static_cast<int>(tf->crosshairPixelY) - cropOffsetY;
+		bool chDetected = false;
+		float chPixelX = 0, chPixelY = 0;
+		{
+			std::lock_guard<std::mutex> lock(tf->crosshairFrameMutex);
+			chDetected = tf->crosshairDetected;
+			chPixelX = tf->crosshairPixelX;
+			chPixelY = tf->crosshairPixelY;
+		}
+		if (tf->crosshairConfig.enabled && chDetected) {
+			cv::Scalar crosshairColor(255, 0, 255, 255);
+			int cx = static_cast<int>(chPixelX) - cropOffsetX;
+			int cy = static_cast<int>(chPixelY) - cropOffsetY;
 			if (cx >= 0 && cx < croppedFrame.cols && cy >= 0 && cy < croppedFrame.rows) {
 				// 绘制十字准星标记
 				int armLen = 12;
