@@ -296,6 +296,10 @@ target_sources(
     src/obs-utils/obs-config-utils.cpp
     src/yolo-detector-filter-info.c
     src/yolo-detector-filter.cpp
+    src/filter_properties.cpp
+    src/filter_floating.cpp
+    src/filter_inference.cpp
+    src/filter_rendering.cpp
     src/models/ModelYOLO.cpp
     src/ThreadPool.cpp
     src/FOVRenderer.cpp

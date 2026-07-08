@@ -332,7 +332,7 @@ void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t fr
 void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 
 // === UI (filter_properties.cpp) ===
-obs_properties_t *yolo_detector_filter_properties(void *data);
+// yolo_detector_filter_properties 声明在 yolo-detector-filter.h (extern "C")
 bool toggleInference(obs_properties_t *props, obs_property_t *property, void *data);
 bool refreshStats(obs_properties_t *props, obs_property_t *property, void *data);
 bool testMAKCUConnection(obs_properties_t *props, obs_property_t *property, void *data);
