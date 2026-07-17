@@ -248,8 +248,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float adaptivePGainRate = 0.03f, dTermScale = 0.3f;
 		float targetYOffset = 0.0f;
 		int controllerType = 0;
-		std::string makcuPort = "COM5";
-		int makcuBaudRate = 4000000;
+	std::string makcuPort = "COM5";
+	int makcuBaudRate = 4000000;
+	int logiDriverType = 0;  // LogiDriver子类型：0=自动, 1=GHUB, 2=LGS, 3=Razer
 		bool enableYAxisUnlock = false;
 		int yAxisUnlockDelay = 500;
 		bool enableAutoTrigger = false;

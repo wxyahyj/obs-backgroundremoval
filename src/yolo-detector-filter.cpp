@@ -362,6 +362,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int controllerType;
 		std::string makcuPort;
 		int makcuBaudRate;
+		int logiDriverType;  // LogiDriver子类型：0=自动, 1=GHUB, 2=LGS, 3=Razer
 		bool enableYAxisUnlock;
 		int yAxisUnlockDelay;
 		bool enableAutoTrigger;
@@ -439,6 +440,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			controllerType = 0;
 			makcuPort = "COM5";
 			makcuBaudRate = 4000000;
+			logiDriverType = 0;  // 默认自动检测
 			enableYAxisUnlock = false;
 			yAxisUnlockDelay = 500;
 			enableAutoTrigger = false;
@@ -788,7 +790,18 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *controllerTypeList = obs_properties_add_list(props, propName, "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(controllerTypeList, "Windows API", 0);
 		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
-		obs_property_set_long_description(controllerTypeList, "鼠标控制方式：WindowsAPI使用系统API，MAKCU使用串口设备");
+		obs_property_list_add_int(controllerTypeList, "罗技/雷蛇驱动", 2);
+		obs_property_set_long_description(controllerTypeList, "鼠标控制方式：WindowsAPI使用系统API，MAKCU使用串口设备，罗技/雷蛇驱动使用内核级驱动");
+		obs_property_set_modified_callback(controllerTypeList, onConfigChanged);
+
+		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
+		obs_property_t *logiDriverTypeList = obs_properties_add_list(props, propName, "驱动子类型", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(logiDriverTypeList, "自动检测", 0);
+		obs_property_list_add_int(logiDriverTypeList, "Logitech G HUB", 1);
+		obs_property_list_add_int(logiDriverTypeList, "Logitech LGS", 2);
+		obs_property_list_add_int(logiDriverTypeList, "Razer Synapse", 3);
+		obs_property_set_long_description(logiDriverTypeList, "驱动子类型：自动检测优先尝试所有驱动，或强制指定特定驱动");
+		obs_property_set_modified_callback(logiDriverTypeList, onConfigChanged);
 
 		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
 		obs_property_t *makcuPortProp = obs_properties_add_text(props, propName, "MAKCU 端口", OBS_TEXT_DEFAULT);
@@ -1268,6 +1281,8 @@ static void setMouseBasicPropertiesVisible(obs_properties_t *props, int configIn
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "logi_driver_type_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "dead_zone_pixels_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	snprintf(propName, sizeof(propName), "max_pixel_move_%d", configIndex);
@@ -1384,6 +1399,26 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
+	}
+
+	// 根据控制器类型动态显示/隐藏专属字段
+	for (int i = 0; i < 5; i++) {
+		bool isCurrentConfig = (i == currentConfig);
+		if (!isCurrentConfig || page != 2) continue;
+
+		char propName[64];
+		snprintf(propName, sizeof(propName), "controller_type_%d", i);
+		int ctrlType = (int)obs_data_get_int(settings, propName);
+
+		bool showMakcu = (ctrlType == 1);     // MAKCU
+		bool showLogi = (ctrlType == 2);      // LogiDriver
+
+		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
+		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
+		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
+		obs_property_set_visible(obs_properties_get(props, propName), showLogi);
 	}
 
 	// 动态PID参数只在algorithm == 3时显示
@@ -1515,6 +1550,26 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
 		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
 		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
+	}
+
+	// 根据控制器类型动态显示/隐藏专属字段
+	for (int i = 0; i < 5; i++) {
+		bool isCurrentConfig = (i == currentConfig);
+		if (!isCurrentConfig || page != 2) continue;
+
+		char propName[64];
+		snprintf(propName, sizeof(propName), "controller_type_%d", i);
+		int ctrlType = (int)obs_data_get_int(settings, propName);
+
+		bool showMakcu = (ctrlType == 1);     // MAKCU
+		bool showLogi = (ctrlType == 2);      // LogiDriver
+
+		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
+		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
+		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
+		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
+		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
+		obs_property_set_visible(obs_properties_get(props, propName), showLogi);
 	}
 
 	// 动态PID参数只在algorithm == 3时显示
@@ -1762,6 +1817,9 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, VK_XBUTTON1);
 
 		snprintf(propName, sizeof(propName), "controller_type_%d", i);
+		obs_data_set_default_int(settings, propName, 0);
+
+		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
 		obs_data_set_default_int(settings, propName, 0);
 
 		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
@@ -2293,6 +2351,9 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "controller_type_%d", i);
 		tf->mouseConfigs[i].controllerType = (int)obs_data_get_int(settings, propName);
 
+		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
+		tf->mouseConfigs[i].logiDriverType = (int)obs_data_get_int(settings, propName);
+
 		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
 		tf->mouseConfigs[i].makcuPort = obs_data_get_string(settings, propName);
 
@@ -2683,7 +2744,10 @@ static bool saveConfigCallback(obs_properties_t *props, obs_property_t *property
         
         snprintf(propName, sizeof(propName), "controller_type_%d", i);
         fprintf(f, "      \"controllerType\": %d,\n", (int)obs_data_get_int(settings, propName));
-        
+
+        snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
+        fprintf(f, "      \"logiDriverType\": %d,\n", (int)obs_data_get_int(settings, propName));
+
         snprintf(propName, sizeof(propName), "makcu_port_%d", i);
         fprintf(f, "      \"makcuPort\": \"%s\",\n", obs_data_get_string(settings, propName));
         
@@ -2904,7 +2968,12 @@ static bool loadConfigCallback(obs_properties_t *props, obs_property_t *property
         if (findValueInConfig(i, "controllerType", val)) {
             obs_data_set_int(settings, propName, atoi(val.c_str()));
         }
-        
+
+        snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
+        if (findValueInConfig(i, "logiDriverType", val)) {
+            obs_data_set_int(settings, propName, atoi(val.c_str()));
+        }
+
         snprintf(propName, sizeof(propName), "makcu_port_%d", i);
         if (findValueInConfig(i, "makcuPort", val)) {
             obs_data_set_string(settings, propName, val.c_str());
@@ -5236,7 +5305,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		
 		ControllerType newType = static_cast<ControllerType>(cfg.controllerType);
 		if (!tf->mouseController || tf->mouseController->getControllerType() != newType) {
-			tf->mouseController = MouseControllerFactory::createController(newType, cfg.makcuPort, cfg.makcuBaudRate);
+			tf->mouseController = MouseControllerFactory::createController(newType, cfg.makcuPort, cfg.makcuBaudRate, cfg.logiDriverType);
 			setupPidDataCallback(tf.get());
 		}
 
@@ -5268,6 +5337,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.controllerType = static_cast<ControllerType>(cfg.controllerType);
 		mcConfig.makcuPort = cfg.makcuPort;
 		mcConfig.makcuBaudRate = cfg.makcuBaudRate;
+		mcConfig.logiDriverType = cfg.logiDriverType;
 		mcConfig.yUnlockEnabled = cfg.enableYAxisUnlock;
 		mcConfig.yUnlockDelayMs = cfg.yAxisUnlockDelay;
 		mcConfig.autoTriggerEnabled = cfg.enableAutoTrigger;

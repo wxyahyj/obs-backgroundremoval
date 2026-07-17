@@ -7,10 +7,11 @@
 #include "MouseControllerInterface.hpp"
 #include "MouseController.hpp"
 #include "MAKCUMouseController.hpp"
+#include "LogiDriverMouseController.hpp"
 
 class MouseControllerFactory {
 public:
-    static std::unique_ptr<MouseControllerInterface> createController(ControllerType type, const std::string& makcuPort = "COM5", int makcuBaudRate = 40000);
+    static std::unique_ptr<MouseControllerInterface> createController(ControllerType type, const std::string& makcuPort = "COM5", int makcuBaudRate = 40000, int logiDriverType = 0);
 };
 
 #endif

@@ -48,6 +48,7 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.controllerType = ControllerType::WindowsAPI;
     config.makcuPort = "";
     config.makcuBaudRate = 115200;
+    config.logiDriverType = 0;
     config.yUnlockDelayMs = 100;
     config.yUnlockEnabled = false;
     config.autoTriggerEnabled = false;
@@ -169,6 +170,7 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["controllerType"] = static_cast<int>(config.controllerType);
     j["makcuPort"] = config.makcuPort;
     j["makcuBaudRate"] = config.makcuBaudRate;
+    j["logiDriverType"] = config.logiDriverType;
     j["yUnlockDelayMs"] = config.yUnlockDelayMs;
     j["yUnlockEnabled"] = config.yUnlockEnabled;
     j["autoTriggerEnabled"] = config.autoTriggerEnabled;
@@ -238,8 +240,9 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
         if (j.contains("targetYOffset")) config.targetYOffset = j["targetYOffset"].get<float>();
         if (j.contains("derivativeFilterAlpha")) config.derivativeFilterAlpha = j["derivativeFilterAlpha"].get<float>();
         if (j.contains("controllerType")) config.controllerType = static_cast<ControllerType>(j["controllerType"].get<int>());
-        if (j.contains("makcuPort")) config.makcuPort = j["makcuPort"].get<std::string>();
-        if (j.contains("makcuBaudRate")) config.makcuBaudRate = j["makcuBaudRate"].get<int>();
+    if (j.contains("makcuPort")) config.makcuPort = j["makcuPort"].get<std::string>();
+    if (j.contains("makcuBaudRate")) config.makcuBaudRate = j["makcuBaudRate"].get<int>();
+    if (j.contains("logiDriverType")) config.logiDriverType = j["logiDriverType"].get<int>();
         if (j.contains("yUnlockDelayMs")) config.yUnlockDelayMs = j["yUnlockDelayMs"].get<int>();
         if (j.contains("yUnlockEnabled")) config.yUnlockEnabled = j["yUnlockEnabled"].get<bool>();
         if (j.contains("autoTriggerEnabled")) config.autoTriggerEnabled = j["autoTriggerEnabled"].get<bool>();

@@ -9,7 +9,8 @@
 
 enum class ControllerType {
     WindowsAPI,
-    MAKCU
+    MAKCU,
+    LogiDriver      // 罗技G HUB / LGS / 雷蛇 Synapse 驱动
 };
 
 enum class AlgorithmType {
@@ -102,6 +103,7 @@ struct MouseControllerConfig {
     ControllerType controllerType = ControllerType::WindowsAPI;
     std::string makcuPort;
     int makcuBaudRate = 115200;
+    int logiDriverType = 0;  // LogiDriver子类型：0=自动, 1=GHUB, 2=LGS, 3=Razer
     int yUnlockDelayMs = 300;
     bool yUnlockEnabled = false;
     bool autoTriggerEnabled = false;

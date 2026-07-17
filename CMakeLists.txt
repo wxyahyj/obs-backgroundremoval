@@ -309,6 +309,8 @@ if(WIN32)
       src/AbstractMouseController.cpp
       src/MouseController.cpp
       src/MAKCUMouseController.cpp
+      src/LogiDriverMouseController.cpp
+      src/logi_driver.cpp
       src/DerivativePredictor.cpp
       src/MouseControllerFactory.cpp
       src/ConfigManager.cpp
