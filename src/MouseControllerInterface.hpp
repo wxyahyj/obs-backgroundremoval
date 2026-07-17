@@ -15,7 +15,8 @@ enum class ControllerType {
 
 enum class AlgorithmType {
     AdvancedPID,      // 高级PID（精简版）
-    ExternalPID       // 外部PID库（pid_x64.lib）
+    ExternalPID,      // 外部PID库（pid_x64.lib）
+    AimController     // aim 控制器（增量式PID+预测+噪声，完整版）
 };
 
 // PID数据回调函数类型
@@ -168,7 +169,19 @@ struct MouseControllerConfig {
     float externalOutputLimit = 0.0f;          // 输出限幅（0=不限幅）
     float externalKiRate = 0.05f;              // 积分速率
     float externalKiDeadband = 0.5f;           // 积分死区
-    
+
+    // aim 控制器参数（增量式PID+运动预测+柏林噪声，完整版）
+    float aimKp = 0.6f;                        // 比例增益
+    float aimKi = 0.01f;                       // 积分增益
+    float aimKd = 0.007f;                      // 微分增益
+    bool  aimNoiseEnabled = false;             // 是否启用人类化抖动（柏林噪声）
+    float aimNoiseAmplitude = 2.0f;            // 噪声幅度（像素，仅 aimNoiseEnabled=true 时生效）
+    float aimPredictionWeightX = 0.3f;         // X轴预测权重
+    float aimPredictionWeightY = 0.1f;         // Y轴预测权重
+    float aimRampTime = 0.3f;                  // 渐入时间（秒，从 aimInitScale 到 1.0）
+    float aimInitScale = 0.6f;                 // 初始输出缩放（0-1，渐入起点）
+    float aimOutputMax = 128.0f;               // 最大输出幅度
+
     // 多指标融合追踪权重
     float trackingWeightIou = 0.4f;       // IoU距离权重
     float trackingWeightCenter = 0.3f;    // 中心点距离权重

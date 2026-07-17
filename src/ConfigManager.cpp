@@ -49,6 +49,17 @@ ExtendedMouseControllerConfig ExtendedMouseControllerConfig::getDefault() {
     config.makcuPort = "";
     config.makcuBaudRate = 115200;
     config.logiDriverType = 0;
+    // aim 控制器默认参数
+    config.aimKp = 0.6f;
+    config.aimKi = 0.01f;
+    config.aimKd = 0.007f;
+    config.aimNoiseEnabled = false;
+    config.aimNoiseAmplitude = 2.0f;
+    config.aimPredictionWeightX = 0.3f;
+    config.aimPredictionWeightY = 0.1f;
+    config.aimRampTime = 0.3f;
+    config.aimInitScale = 0.6f;
+    config.aimOutputMax = 128.0f;
     config.yUnlockDelayMs = 100;
     config.yUnlockEnabled = false;
     config.autoTriggerEnabled = false;
@@ -171,6 +182,17 @@ nlohmann::json ConfigManager::configToJson(const ExtendedMouseControllerConfig& 
     j["makcuPort"] = config.makcuPort;
     j["makcuBaudRate"] = config.makcuBaudRate;
     j["logiDriverType"] = config.logiDriverType;
+    // aim 控制器参数序列化
+    j["aimKp"] = config.aimKp;
+    j["aimKi"] = config.aimKi;
+    j["aimKd"] = config.aimKd;
+    j["aimNoiseEnabled"] = config.aimNoiseEnabled;
+    j["aimNoiseAmplitude"] = config.aimNoiseAmplitude;
+    j["aimPredictionWeightX"] = config.aimPredictionWeightX;
+    j["aimPredictionWeightY"] = config.aimPredictionWeightY;
+    j["aimRampTime"] = config.aimRampTime;
+    j["aimInitScale"] = config.aimInitScale;
+    j["aimOutputMax"] = config.aimOutputMax;
     j["yUnlockDelayMs"] = config.yUnlockDelayMs;
     j["yUnlockEnabled"] = config.yUnlockEnabled;
     j["autoTriggerEnabled"] = config.autoTriggerEnabled;
@@ -243,6 +265,17 @@ bool ConfigManager::jsonToConfig(const nlohmann::json& j, ExtendedMouseControlle
     if (j.contains("makcuPort")) config.makcuPort = j["makcuPort"].get<std::string>();
     if (j.contains("makcuBaudRate")) config.makcuBaudRate = j["makcuBaudRate"].get<int>();
     if (j.contains("logiDriverType")) config.logiDriverType = j["logiDriverType"].get<int>();
+    // aim 控制器参数反序列化
+    if (j.contains("aimKp")) config.aimKp = j["aimKp"].get<float>();
+    if (j.contains("aimKi")) config.aimKi = j["aimKi"].get<float>();
+    if (j.contains("aimKd")) config.aimKd = j["aimKd"].get<float>();
+    if (j.contains("aimNoiseEnabled")) config.aimNoiseEnabled = j["aimNoiseEnabled"].get<bool>();
+    if (j.contains("aimNoiseAmplitude")) config.aimNoiseAmplitude = j["aimNoiseAmplitude"].get<float>();
+    if (j.contains("aimPredictionWeightX")) config.aimPredictionWeightX = j["aimPredictionWeightX"].get<float>();
+    if (j.contains("aimPredictionWeightY")) config.aimPredictionWeightY = j["aimPredictionWeightY"].get<float>();
+    if (j.contains("aimRampTime")) config.aimRampTime = j["aimRampTime"].get<float>();
+    if (j.contains("aimInitScale")) config.aimInitScale = j["aimInitScale"].get<float>();
+    if (j.contains("aimOutputMax")) config.aimOutputMax = j["aimOutputMax"].get<float>();
         if (j.contains("yUnlockDelayMs")) config.yUnlockDelayMs = j["yUnlockDelayMs"].get<int>();
         if (j.contains("yUnlockEnabled")) config.yUnlockEnabled = j["yUnlockEnabled"].get<bool>();
         if (j.contains("autoTriggerEnabled")) config.autoTriggerEnabled = j["autoTriggerEnabled"].get<bool>();

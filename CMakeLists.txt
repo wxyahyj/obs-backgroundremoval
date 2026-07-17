@@ -312,6 +312,7 @@ if(WIN32)
       src/LogiDriverMouseController.cpp
       src/logi_driver.cpp
       src/DerivativePredictor.cpp
+      src/aim_controller.cpp
       src/MouseControllerFactory.cpp
       src/ConfigManager.cpp
       src/HungarianAlgorithm.cpp

@@ -874,8 +874,59 @@ void AbstractMouseController::tick()
 
         previousErrorX = errorX;
         previousErrorY = errorY;
+    } else if (config.algorithmType == AlgorithmType::AimController) {
+        // aim 控制器（增量式PID+运动预测+柏林噪声，完整版）
+        // 算法切换时重置 aim 控制器状态，避免沿用旧算法的状态
+        if (lastAppliedAlgorithm_ != AlgorithmType::AimController) {
+            aimController_.reset();
+            lastAppliedAlgorithm_ = AlgorithmType::AimController;
+        }
+        // 实时应用 PID 参数和输出限幅
+        aimController_.configure_pid(config.aimKp, config.aimKi, config.aimKd);
+        aimController_.set_output_limits(-config.aimOutputMax, config.aimOutputMax);
+
+        // 噪声幅度：开关关闭时强制为0
+        double noiseAmp = config.aimNoiseEnabled ? (double)config.aimNoiseAmplitude : 0.0;
+
+        // 调用 aim 控制器（使用 aim 自带的运动预测器，不依赖现有 predictor）
+        auto result = aimController_.update(
+            (double)errorX,
+            (double)errorY,
+            (double)config.aimPredictionWeightX,
+            (double)config.aimPredictionWeightY,
+            (double)config.aimInitScale,
+            (double)config.aimRampTime,
+            (double)config.aimOutputMax,
+            noiseAmp);
+
+        moveX = (float)result.move_x;
+        moveY = (float)result.move_y;
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.aimKp;
+            data.currentKi = config.aimKi;
+            data.currentKd = config.aimKd;
+            data.algorithmType = 5;  // 5=AimController（与 NeuralPath 区分）
+            data.isFiring = isFiring;
+            pidDataCallback_(data);
+        }
+
+        previousErrorX = errorX;
+        previousErrorY = errorY;
+    } else {
+        // 非 AimController 算法：更新 lastAppliedAlgorithm_ 以便下次切换检测
+        lastAppliedAlgorithm_ = config.algorithmType;
     }
-    
+
     bool firing = checkFiring();
     
     if (firing && config.autoRecoilControlEnabled) {

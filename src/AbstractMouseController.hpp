@@ -16,6 +16,7 @@
 #include "curve.hpp"
 #include "../libs/pid/pid.h"
 #include "utils/GhostTracker.hpp"
+#include "aim_controller.hpp"
 
 // 简单1D卡尔曼滤波器（专业PID风格，成员变量公开）
 class SimpleKalmanFilter {
@@ -116,6 +117,10 @@ protected:
     PidController externalPidX;  // 外部PID X轴控制器
     PidController externalPidY;  // 外部PID Y轴控制器
     bool externalPidInitialized_; // 外部PID是否已初始化
+
+    // aim 控制器（增量式PID+运动预测+柏林噪声，完整版）
+    aim::AimController aimController_;
+    AlgorithmType lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;  // 上次应用的算法类型，用于检测算法切换
 
     std::chrono::steady_clock::time_point lastTickTime;
     float deltaTime;

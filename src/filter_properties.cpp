@@ -506,7 +506,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *algorithmTypeList = obs_properties_add_list(props, "algorithm_type_global", "控制算法", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(algorithmTypeList, "高级PID (动态P增益)", 0);
 	obs_property_list_add_int(algorithmTypeList, "专业PID (卡尔曼滤波)", 1);
-	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含动态P增益、预测等功能；专业PID内置卡尔曼滤波和自适应增益");
+	obs_property_list_add_int(algorithmTypeList, "aim 控制器 (增量式PID+预测+噪声)", 2);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含动态P增益、预测等功能；专业PID内置卡尔曼滤波和自适应增益；aim 控制器集成增量式PID+运动预测+柏林噪声");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 专业PID参数组
@@ -545,6 +546,30 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(extKiRateProp, "卡尔曼滤波器采样率，影响积分和平滑");
 	obs_property_t *extKiDeadbandProp = obs_properties_add_float_slider(props, "external_ki_deadband", "积分死区", 0.0, 10.0, 0.01);
 	obs_property_set_long_description(extKiDeadbandProp, "误差变化超过此值时重置状态");
+
+	// aim 控制器参数组（增量式PID+运动预测+柏林噪声）
+	obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *aimKpProp = obs_properties_add_float_slider(props, "aim_kp", "比例增益 Kp", 0.0, 3.0, 0.01);
+	obs_property_set_long_description(aimKpProp, "aim 控制器比例增益，响应速度");
+	obs_property_t *aimKiProp = obs_properties_add_float_slider(props, "aim_ki", "积分增益 Ki", 0.0, 0.5, 0.001);
+	obs_property_set_long_description(aimKiProp, "aim 控制器积分增益，消除稳态误差");
+	obs_property_t *aimKdProp = obs_properties_add_float_slider(props, "aim_kd", "微分增益 Kd", 0.0, 0.2, 0.001);
+	obs_property_set_long_description(aimKdProp, "aim 控制器微分增益，抑制超调");
+	obs_property_t *aimNoiseEnabledProp = obs_properties_add_bool(props, "aim_noise_enabled", "启用人类化抖动");
+	obs_property_set_long_description(aimNoiseEnabledProp, "启用柏林噪声模拟人类操作的自然抖动");
+	obs_property_set_modified_callback(aimNoiseEnabledProp, onPageChanged);
+	obs_property_t *aimNoiseAmpProp = obs_properties_add_float_slider(props, "aim_noise_amplitude", "噪声幅度", 0.0, 20.0, 0.1);
+	obs_property_set_long_description(aimNoiseAmpProp, "柏林噪声幅度（像素），仅启用抖动时生效");
+	obs_property_t *aimPredWeightXProp = obs_properties_add_float_slider(props, "aim_prediction_weight_x", "X轴预测权重", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(aimPredWeightXProp, "aim 控制器自带运动预测器的X轴权重");
+	obs_property_t *aimPredWeightYProp = obs_properties_add_float_slider(props, "aim_prediction_weight_y", "Y轴预测权重", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(aimPredWeightYProp, "aim 控制器自带运动预测器的Y轴权重");
+	obs_property_t *aimRampTimeProp = obs_properties_add_float_slider(props, "aim_ramp_time", "渐入时间(秒)", 0.0, 2.0, 0.01);
+	obs_property_set_long_description(aimRampTimeProp, "从初始缩放到满输出的过渡时间");
+	obs_property_t *aimInitScaleProp = obs_properties_add_float_slider(props, "aim_init_scale", "初始缩放", 0.0, 1.0, 0.01);
+	obs_property_set_long_description(aimInitScaleProp, "锁定瞬间的输出缩放比例，避免大幅移动");
+	obs_property_t *aimOutputMaxProp = obs_properties_add_float_slider(props, "aim_output_max", "最大输出", 1.0, 500.0, 1.0);
+	obs_property_set_long_description(aimOutputMaxProp, "aim 控制器单帧最大输出幅度");
 
 	// ========== 页面7: 准星检测 ==========
 #ifdef _WIN32
@@ -887,6 +912,21 @@ bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data
 	obs_property_set_visible(obs_properties_get(props, "external_ki_rate"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_ki_deadband"), page == 3 && algorithm == 1);
 
+	// aim 控制器参数只在 algorithm == 2 时显示
+	bool aimVisible = (page == 3 && algorithm == 2);
+	bool aimNoiseVisible = aimVisible && obs_data_get_bool(settings, "aim_noise_enabled");
+	obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_kp"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_ki"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_kd"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_noise_enabled"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_x"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_y"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_ramp_time"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_init_scale"), aimVisible);
+	obs_property_set_visible(obs_properties_get(props, "aim_output_max"), aimVisible);
+
 	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
 
@@ -1030,6 +1070,23 @@ bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t
 	obs_property_set_visible(obs_properties_get(props, "external_predict_y"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_rate_x"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 1);
+
+	// aim 控制器参数只在 algorithm == 2 时显示
+	{
+		bool aimVis = (page == 3 && algorithm == 2);
+		bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
+		obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_kp"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_ki"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_kd"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_noise_enabled"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_x"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_y"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_ramp_time"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_init_scale"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_output_max"), aimVis);
+	}
 
 	// 测试连接按钮只在基础页面显示
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
@@ -1493,6 +1550,17 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "external_output_limit", 0.0);
     obs_data_set_default_double(settings, "external_ki_rate", 0.05);
     obs_data_set_default_double(settings, "external_ki_deadband", 0.5);
+    // aim 控制器参数默认值
+    obs_data_set_default_double(settings, "aim_kp", 0.6);
+    obs_data_set_default_double(settings, "aim_ki", 0.01);
+    obs_data_set_default_double(settings, "aim_kd", 0.007);
+    obs_data_set_default_bool(settings, "aim_noise_enabled", false);
+    obs_data_set_default_double(settings, "aim_noise_amplitude", 2.0);
+    obs_data_set_default_double(settings, "aim_prediction_weight_x", 0.3);
+    obs_data_set_default_double(settings, "aim_prediction_weight_y", 0.1);
+    obs_data_set_default_double(settings, "aim_ramp_time", 0.3);
+    obs_data_set_default_double(settings, "aim_init_scale", 0.6);
+    obs_data_set_default_double(settings, "aim_output_max", 128.0);
     obs_data_set_default_double(settings, "incremental_side_comp_denom", 1.0);
     obs_data_set_default_double(settings, "incremental_input_alpha", 0.3);
     obs_data_set_default_double(settings, "incremental_d_alpha", 0.2);
@@ -1946,6 +2014,18 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->externalOutputLimit = (float)obs_data_get_double(settings, "external_output_limit");
 	tf->externalKiRate = (float)obs_data_get_double(settings, "external_ki_rate");
 	tf->externalKiDeadband = (float)obs_data_get_double(settings, "external_ki_deadband");
+
+	// aim 控制器参数读取
+	tf->aimKp = (float)obs_data_get_double(settings, "aim_kp");
+	tf->aimKi = (float)obs_data_get_double(settings, "aim_ki");
+	tf->aimKd = (float)obs_data_get_double(settings, "aim_kd");
+	tf->aimNoiseEnabled = obs_data_get_bool(settings, "aim_noise_enabled");
+	tf->aimNoiseAmplitude = (float)obs_data_get_double(settings, "aim_noise_amplitude");
+	tf->aimPredictionWeightX = (float)obs_data_get_double(settings, "aim_prediction_weight_x");
+	tf->aimPredictionWeightY = (float)obs_data_get_double(settings, "aim_prediction_weight_y");
+	tf->aimRampTime = (float)obs_data_get_double(settings, "aim_ramp_time");
+	tf->aimInitScale = (float)obs_data_get_double(settings, "aim_init_scale");
+	tf->aimOutputMax = (float)obs_data_get_double(settings, "aim_output_max");
 
 	bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {

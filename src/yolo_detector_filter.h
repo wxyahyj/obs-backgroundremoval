@@ -275,6 +275,17 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		int algorithmType = 0;
 		bool enableBezierMovement = false;
 		float bezierCurvature = 0.3f, bezierRandomness = 0.2f;
+		// aim 控制器参数（增量式PID+运动预测+柏林噪声，完整版）
+		float aimKp = 0.6f;
+		float aimKi = 0.01f;
+		float aimKd = 0.007f;
+		bool  aimNoiseEnabled = false;
+		float aimNoiseAmplitude = 2.0f;
+		float aimPredictionWeightX = 0.3f;
+		float aimPredictionWeightY = 0.1f;
+		float aimRampTime = 0.3f;
+		float aimInitScale = 0.6f;
+		float aimOutputMax = 128.0f;
 		bool enableGhostTracker = false;
 		float ghostCurvature = 0.5f, ghostNoiseIntensity = 12.0f;
 		float ghostVerticalSnapRatio = 3.0f, ghostNoiseFreq = 0.8f;
