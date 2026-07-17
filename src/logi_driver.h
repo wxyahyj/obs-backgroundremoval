@@ -20,11 +20,21 @@
 extern "C" {
 #endif
 
-/* 初始化驱动模块（初始化互斥锁等），在首次使用前调用 */
+/* 初始化驱动模块（初始化互斥锁等），在首次使用前调用。
+ * 注意：业务代码应使用 logi_driver_acquire / logi_driver_release 管理生命周期，
+ * 它们内部使用引用计数保证多实例安全。 */
 void logi_driver_init(void);
 
 /* 清理驱动模块（关闭设备、销毁互斥锁），在不再使用时调用 */
 void logi_driver_cleanup(void);
+
+/* 引用计数获取：首次引用时调用 logi_driver_init，后续引用只增加计数。
+ * 线程安全。返回 1 表示成功，0 表示失败。 */
+int logi_driver_acquire(void);
+
+/* 引用计数释放：末次引用时调用 logi_driver_cleanup。
+ * 线程安全。 */
+void logi_driver_release(void);
 
 /**
  * 打开驱动总线枚举设备（自动检测GHUB/LGS/Razer）。

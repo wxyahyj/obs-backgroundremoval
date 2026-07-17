@@ -143,6 +143,11 @@ static int                      g_forced_type = DRIVER_TYPE_NONE;
 static CRITICAL_SECTION g_mutex;
 static BOOL g_mutex_initialized = FALSE;
 
+/* 引用计数：管理 logi_driver 模块生命周期，保证多实例安全 */
+static LONG g_ref_count = 0;
+/* 一次性初始化控制：保证 logi_driver_init 只执行一次 */
+static INIT_ONCE g_init_once = INIT_ONCE_STATIC_INIT;
+
 /* ==================== 内部辅助函数 ==================== */
 
 static BOOL load_nt_functions(void)
@@ -338,7 +343,10 @@ static BOOL try_open_razer_device(void)
             break;
 
         OBJECT_DIRECTORY_INFORMATION* info = (OBJECT_DIRECTORY_INFORMATION*)buf;
-        while (info->Name.Buffer != NULL && info->Name.Length > 0) {
+        BYTE* bufEnd = buf + bufSize;
+        /* 遍历目录项，增加边界检查防止越界（防御性：内核通常保证终止符，但不依赖） */
+        while ((BYTE*)(info + 1) <= bufEnd &&
+               info->Name.Buffer != NULL && info->Name.Length > 0) {
             int nameChars = info->Name.Length / sizeof(WCHAR);
 
             if (wstr_contains_i(info->Name.Buffer, nameChars, L"RZCONTROL", 9)) {
@@ -443,18 +451,11 @@ static int send_ioctl(void* buf, ULONG size)
         {
             return 1;
         }
-        /* 失败时自动重连 */
+        /* 失败：仅标记设备无效，不在此热路径中重连（避免阻塞和内存分配）。
+         * 重连由上层 LogiDriverMouseController::ensureConnected 在下次 tick 前处理。 */
         CloseHandle(g_device);
         g_device = INVALID_HANDLE_VALUE;
         g_driver_type = DRIVER_TYPE_NONE;
-        if (try_open_razer_device()) {
-            bytesReturned = 0;
-            if (DeviceIoControl(g_device, RAZER_IOCTL,
-                    buf, size, NULL, 0, &bytesReturned, NULL))
-            {
-                return 1;
-            }
-        }
         return 0;
     }
 
@@ -464,27 +465,13 @@ static int send_ioctl(void* buf, ULONG size)
         g_device, NULL, NULL, NULL, &iosb,
         LGHUB_MOUSE_IOCTL, buf, size, NULL, 0);
 
-    /* 失败时自动重连 */
     if (status != 0) {
+        /* 失败：仅标记设备无效，不在此热路径中重连 */
         if (g_device != INVALID_HANDLE_VALUE) {
             g_NtClose(g_device);
             g_device = INVALID_HANDLE_VALUE;
         }
         g_driver_type = DRIVER_TYPE_NONE;
-
-        for (int i = 0; i < 10; i++) {
-            if (try_open_logitech_device(i)) {
-                ZeroMemory(&iosb, sizeof(iosb));
-                status = g_NtDeviceIoControlFile(
-                    g_device, NULL, NULL, NULL, &iosb,
-                    LGHUB_MOUSE_IOCTL, buf, size, NULL, 0);
-                if (status == 0) return 1;
-                g_NtClose(g_device);
-                g_device = INVALID_HANDLE_VALUE;
-                g_driver_type = DRIVER_TYPE_NONE;
-                break;
-            }
-        }
         return 0;
     }
 
@@ -560,12 +547,22 @@ static DWORD razer_button_up_flag(int button)
 
 /* ==================== 模块生命周期 ==================== */
 
+/* InitOnceExecuteOnce 回调：一次性初始化互斥锁 */
+static BOOL CALLBACK logi_driver_init_callback(
+    PINIT_ONCE initOnce, PVOID parameter, PVOID *context)
+{
+    (void)initOnce;
+    (void)parameter;
+    (void)context;
+    InitializeCriticalSection(&g_mutex);
+    g_mutex_initialized = TRUE;
+    return TRUE;
+}
+
 void logi_driver_init(void)
 {
-    if (!g_mutex_initialized) {
-        InitializeCriticalSection(&g_mutex);
-        g_mutex_initialized = TRUE;
-    }
+    /* 使用 InitOnceExecuteOnce 保证线程安全的一次性初始化 */
+    InitOnceExecuteOnce(&g_init_once, logi_driver_init_callback, NULL, NULL);
 }
 
 void logi_driver_cleanup(void)
@@ -585,6 +582,33 @@ void logi_driver_cleanup(void)
 
         DeleteCriticalSection(&g_mutex);
         g_mutex_initialized = FALSE;
+        /* 重置 INIT_ONCE，允许后续重新初始化 */
+        InitOnceInitialize(&g_init_once);
+    }
+}
+
+/* 引用计数获取：首次引用时初始化模块 */
+int logi_driver_acquire(void)
+{
+    LONG newCount = InterlockedIncrement(&g_ref_count);
+    if (newCount == 1) {
+        /* 首次引用，执行初始化 */
+        logi_driver_init();
+    }
+    return 1;
+}
+
+/* 引用计数释放：末次引用时清理模块 */
+void logi_driver_release(void)
+{
+    LONG newCount = InterlockedDecrement(&g_ref_count);
+    if (newCount <= 0) {
+        if (newCount < 0) {
+            /* 防御性：引用计数不应为负，修正回 0 */
+            InterlockedExchange(&g_ref_count, 0);
+        }
+        /* 末次引用，执行清理 */
+        logi_driver_cleanup();
     }
 }
 
@@ -595,9 +619,14 @@ int device_open(void)
     if (!load_nt_functions())
         return 0;
 
+    EnterCriticalSection(&g_mutex);
+
     /* 已打开则先关闭 */
     if (g_device != INVALID_HANDLE_VALUE) {
-        g_NtClose(g_device);
+        if (g_NtClose)
+            g_NtClose(g_device);
+        else
+            CloseHandle(g_device);
         g_device = INVALID_HANDLE_VALUE;
     }
     g_driver_type = DRIVER_TYPE_NONE;
@@ -608,22 +637,28 @@ int device_open(void)
         g_forced_type == DRIVER_TYPE_LGS)
     {
         for (int i = 0; i < 10; i++) {
-            if (try_open_logitech_device(i))
+            if (try_open_logitech_device(i)) {
+                LeaveCriticalSection(&g_mutex);
                 return 1;
+            }
         }
     }
 
     /* 尝试Razer */
     if (g_forced_type == DRIVER_TYPE_NONE || g_forced_type == DRIVER_TYPE_RAZER) {
-        if (try_open_razer_device() || try_open_razer_hid_interface())
+        if (try_open_razer_device() || try_open_razer_hid_interface()) {
+            LeaveCriticalSection(&g_mutex);
             return 1;
+        }
     }
 
+    LeaveCriticalSection(&g_mutex);
     return 0;
 }
 
 void device_close(void)
 {
+    EnterCriticalSection(&g_mutex);
     if (g_device != INVALID_HANDLE_VALUE) {
         if (g_NtClose)
             g_NtClose(g_device);
@@ -632,6 +667,9 @@ void device_close(void)
         g_device = INVALID_HANDLE_VALUE;
     }
     g_driver_type = DRIVER_TYPE_NONE;
+    /* 重置强制类型，避免下次 device_open 沿用旧配置 */
+    g_forced_type = DRIVER_TYPE_NONE;
+    LeaveCriticalSection(&g_mutex);
 }
 
 static int clamp_max(void)
@@ -641,39 +679,57 @@ static int clamp_max(void)
 
 int moveR(int x, int y)
 {
-    int maxv = clamp_max();
+    int maxv;
+    int result = 1;
+
+    EnterCriticalSection(&g_mutex);
+    maxv = clamp_max();
     /* 大位移分块发送 */
     while (x != 0 || y != 0) {
         int cx = x > maxv ? maxv : (x < -maxv ? -maxv : x);
         int cy = y > maxv ? maxv : (y < -maxv ? -maxv : y);
-        if (!send_mouse_report(BTN_NONE, cx, cy, 0))
-            return 0;
+        if (!send_mouse_report(BTN_NONE, cx, cy, 0)) {
+            result = 0;
+            break;
+        }
         x -= cx;
         y -= cy;
     }
-    return 1;
+    LeaveCriticalSection(&g_mutex);
+    return result;
 }
 
 int mouse_down(int button)
 {
+    int result;
+    EnterCriticalSection(&g_mutex);
     if (g_driver_type == DRIVER_TYPE_RAZER) {
-        return send_mouse_report((char)razer_button_down_flag(button), 0, 0, 0);
+        result = send_mouse_report((char)razer_button_down_flag(button), 0, 0, 0);
+    } else {
+        result = send_mouse_report(button_to_mask(button), 0, 0, 0);
     }
-    return send_mouse_report(button_to_mask(button), 0, 0, 0);
+    LeaveCriticalSection(&g_mutex);
+    return result;
 }
 
 int mouse_up(int button)
 {
+    int result;
+    EnterCriticalSection(&g_mutex);
     if (g_driver_type == DRIVER_TYPE_RAZER) {
-        return send_mouse_report((char)razer_button_up_flag(button), 0, 0, 0);
+        result = send_mouse_report((char)razer_button_up_flag(button), 0, 0, 0);
+    } else {
+        (void)button;
+        result = send_mouse_report(BTN_NONE, 0, 0, 0);
     }
-    (void)button;
-    return send_mouse_report(BTN_NONE, 0, 0, 0);
+    LeaveCriticalSection(&g_mutex);
+    return result;
 }
 
 int device_open2(int type)
 {
     /* type: 0=自动, 1=GHUB, 2=LGS, 3=Razer */
+    EnterCriticalSection(&g_mutex);
     if (type == 1)
         g_forced_type = DRIVER_TYPE_GHUB;
     else if (type == 2)
@@ -682,11 +738,16 @@ int device_open2(int type)
         g_forced_type = DRIVER_TYPE_RAZER;
     else
         g_forced_type = DRIVER_TYPE_NONE;
+    LeaveCriticalSection(&g_mutex);
 
     return device_open();
 }
 
 int get_driver_type(void)
 {
-    return g_driver_type;
+    int result;
+    EnterCriticalSection(&g_mutex);
+    result = g_driver_type;
+    LeaveCriticalSection(&g_mutex);
+    return result;
 }
