@@ -4,73 +4,75 @@
 #ifdef _WIN32
 
 #include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
-#include <string>
 #include <vector>
+#include <string>
 #include "models/Detection.h"
 
-// 准心形状类型
+// Crosshair detector config - simplified v2: pure pixel-scan color matching
+// [DEPRECATED v2] Shape type enum - kept for compile compatibility
 enum class CrosshairShapeType {
-	Any = 0,        // 任意形状（不过滤）
-	Cross = 1,      // 十字形（+字准心）
-	Dot = 2,        // 点状（圆点准心）
-	TShape = 3      // T字形
+	Any = 0,
+	Cross = 1,
+	Dot = 2,
+	TShape = 3
 };
 
-// 准星检测器配置
 struct CrosshairDetectorConfig {
 	bool enabled = false;
 
-	// HSV颜色范围（吸管取色后自动设置，也可手动微调）
+	// HSV color range (auto-set after pick, also manually tunable)
 	int hMin = 0, hMax = 180;
 	int sMin = 100, sMax = 255;
 	int vMin = 100, vMax = 255;
 
-	// 吸管取色容差
-	int hTolerance = 10;   // H容差 (1-90)
-	int sTolerance = 40;   // S容差 (1-128)
-	int vTolerance = 40;   // V容差 (1-128)
+	// Pick tolerances
+	int hTolerance = 10;   // H tolerance (1-90)
+	int sTolerance = 40;   // S tolerance (1-128)
+	int vTolerance = 40;   // V tolerance (1-128)
 
-	// 吸管取色状态（运行时临时状态，不序列化）
-	bool pickingColor = false;   // 是否处于取色模式
-	bool colorPicked = false;    // 是否已取色成功
-	int pickedH = 0, pickedS = 0, pickedV = 0; // 取色结果(HSV)
-	int pickedR = 0, pickedG = 0, pickedB = 0; // 取色结果(BGR，方便用户确认)
+	// Pick state (runtime transient, not serialized)
+	bool pickingColor = false;
+	bool colorPicked = false;
+	int pickedH = 0, pickedS = 0, pickedV = 0;
+	int pickedR = 0, pickedG = 0, pickedB = 0;
 
-	// 手动RGB输入（用户直接输入已知准星颜色，自动转HSV）
+	// Manual RGB input
 	int manualR = 0, manualG = 0, manualB = 0;
 
-	// 形态学参数
-	int morphKernelSize = 3;     // 核大小 (1-15)
-	int erodeIterations = 0;     // 腐蚀迭代 (0-5)，准星细小建议0
-	int dilateIterations = 3;    // 膨胀迭代 (0-10)，准心线条细需要多次膨胀连接断裂线条
+	// Detection params
+	int searchRadius = 0;       // 0=auto 1/6 frame width
+	int minPixels = 3;          // minimum matched pixels for valid detection
+	int detectEveryNFrames = 1; // detection frame interval
+// [DEPRECATED v2] Morphology params - kept for compile compatibility, unused by v2
+	int morphKernelSize = 3;
+	int erodeIterations = 0;
+	int dilateIterations = 3;
 
-	// 子矩阵分位数过滤（准心场景下通常禁用，quantileThreshold=0表示不过滤）
-	int gridRows = 4;            // 网格行数 (2-20)
-	int gridCols = 4;            // 网格列数 (2-20)
-	float quantileThreshold = 0.0f; // 分位数阈值 (0.0-1.0)，0=不过滤，准心太稀疏必须禁用
+	// [DEPRECATED v2] Sub-matrix quantile filter
+	int gridRows = 4;
+	int gridCols = 4;
+	float quantileThreshold = 0.0f;
 
-	// 模板匹配
-	float matchThreshold = 0.6f; // 匹配阈值 (0.0-1.0)
-	std::string templateImagePath; // 模板图片路径
+	// [DEPRECATED v2] Template matching
+	float matchThreshold = 0.6f;
+	std::string templateImagePath;
 
-	// 通用参数
-	int minArea = 2;             // 最小白色像素数 (像素)，质心定位不怕碎片，2就够了
-	int maxArea = 5000;          // 最大白色像素数 (像素)
-	int detectEveryNFrames = 1;  // 检测帧间隔 (1-60)
-	int searchRadius = 0;        // 搜索半径（像素，0=自动1/6帧宽，仅搜索准星附近区域）
+	// [DEPRECATED v2] Area filters
+	int minArea = 2;
+	int maxArea = 5000;
 
-	// 轮廓形状过滤
-	bool shapeFilterEnabled = false;    // 是否启用形状过滤
-	CrosshairShapeType shapeType = CrosshairShapeType::Any;  // 形状类型
-	float minFillRatio = 0.05f;         // 最小填充率（轮廓面积/boundingRect面积）
-	float maxFillRatio = 0.8f;          // 最大填充率
-	float minAspectRatio = 0.3f;        // 最小纵横比（宽/高）
-	float maxAspectRatio = 3.0f;        // 最大纵横比
+	// [DEPRECATED v2] Shape filter
+	bool shapeFilterEnabled = false;
+	int shapeType = 0;  // CrosshairShapeType cast to int
+	// CrosshairShapeType shapeType = CrosshairShapeType::Any;  // removed - enum gone
+	float minFillRatio = 0.05f;
+	float maxFillRatio = 0.8f;
+	float minAspectRatio = 0.3f;
+	float maxAspectRatio = 3.0f;
 
-	// 可视化
-	bool colorIsolationView = false;  // 颜色隔离视图（黑底只显示匹配颜色+检测框）
-	bool showDebugMask = false;       // 显示HSV掩码调试（半透明白色叠加）
+	// [DEPRECATED v2] Visualization
+	bool colorIsolationView = false;
+	bool showDebugMask = false;
 };
 
 class CrosshairDetector {
@@ -78,92 +80,62 @@ public:
 	CrosshairDetector() = default;
 	~CrosshairDetector() = default;
 
-	// 主检测接口：输入BGR帧，输出归一化坐标的Detection列表
+	// Main detect: input BGR frame, output Detection list with normalized coords
 	std::vector<Detection> detect(const cv::Mat& bgrFrame,
-	                               int frameWidth, int frameHeight,
-	                               int cropX, int cropY,
-	                               float fovCenterX, float fovCenterY,
-	                               float fovRadiusNorm);
+	                              int frameWidth, int frameHeight,
+	                              int cropX, int cropY,
+	                              float fovCenterX, float fovCenterY,
+	                              float fovRadiusNorm);
 
-	// 吸管取色：从帧中指定归一化坐标位置采样HSV，自动计算范围
+	// Pick color from frame center (simplified)
+	bool pickColorFromCenter(const cv::Mat& bgrFrame,
+	                         int frameWidth, int frameHeight,
+	                         int cropX, int cropY);
+
+	// Pick color from specified normalized position
 	bool pickColorFromFrame(const cv::Mat& bgrFrame,
 	                        float normX, float normY,
 	                        int frameWidth, int frameHeight,
 	                        int cropX, int cropY);
 
-	// 从帧中心取色（简化接口，默认取FOV中心）
-	bool pickColorFromCenter(const cv::Mat& bgrFrame,
-	                         int frameWidth, int frameHeight,
-	                         int cropX, int cropY);
-
-	// 手动输入RGB颜色：将已知准星颜色(RGB)转为HSV并设置搜索范围
+	// Apply manual RGB -> HSV range
 	void applyManualRgb(int r, int g, int b);
 
-	// 更新配置
+	// Update config
 	void updateConfig(const CrosshairDetectorConfig& cfg);
 
-	// 获取当前配置
+	// Get current config
 	const CrosshairDetectorConfig& getConfig() const { return config_; }
 
-	// 加载模板图像
-	void loadTemplate(const std::string& path);
-
-	// 重置跟踪状态
+	// Reset tracking state
 	void resetTracking();
 
-	// 获取调试掩码（用于渲染）
-	const cv::Mat& getDebugMask() const { return debugMask_; }
 
-	// 获取最近的HSV inRange掩码（颜色隔离视图用，未经形态学/分位数过滤）
-	const cv::Mat& getLastHsvMask() const { return lastHsvMask_; }
-
-	// 获取最近的HSV掩码ROI偏移（在bgrFrame中的位置）
-	void getLastMaskROI(int& roiX, int& roiY, int& roiW, int& roiH) const {
-		roiX = lastMaskRoiX_; roiY = lastMaskRoiY_;
-		roiW = lastMaskRoiW_; roiH = lastMaskRoiH_;
-	}
-
+	// [DEPRECATED v2] Stubs for compile compatibility
+	void loadTemplate(const std::string& path) {}  // inline stub
+	const cv::Mat& getDebugMask() const { static cv::Mat empty; return empty; }
+	const cv::Mat& getLastHsvMask() const { static cv::Mat empty; return empty; }
+	void getLastMaskROI(int& roiX, int& roiY, int& roiW, int& roiH) const { roiX=roiY=roiW=roiH=0; }
 private:
 	CrosshairDetectorConfig config_;
-	cv::Mat templateImage_;  // 模板图像（灰度）
-	cv::Mat debugMask_;      // 最近一次HSV掩码（调试用）
-	cv::Mat lastHsvMask_;    // 最近一次inRange掩码（颜色隔离视图用）
-	int lastMaskRoiX_ = 0, lastMaskRoiY_ = 0, lastMaskRoiW_ = 0, lastMaskRoiH_ = 0;
-	std::string lastTemplatePath_; // 上次加载的模板路径（避免重复加载）
 	int frameCounter_ = 0;
 
-	// 准心位置跟踪
-	float lastDetectedX_ = 0.5f;  // 上一帧检测到的准心X（归一化）
-	float lastDetectedY_ = 0.5f;  // 上一帧检测到的准心Y（归一化）
-	bool hasLastDetection_ = false;  // 是否有上一帧的检测结果
+	// RGB -> HSV conversion (OpenCV range: H 0-180, S/V 0-255)
+	static void rgbToHsv(int r, int g, int b, int& h, int& s, int& v);
 
-	// 子矩阵分位数过滤：将二值图划分为网格，低于阈值的子区域清零
-	void filterBySubMatrixQuantile(cv::Mat& binaryMask, int rows, int cols, float threshold);
-
-	// 轮廓形状过滤：检查mask是否符合指定形状特征
-	// 返回是否通过过滤，同时输出形状特征信息
-	bool filterByShape(const cv::Mat& mask, 
-	                   float& outFillRatio, 
-	                   float& outAspectRatio,
-	                   bool& outHasCrossPoint);
-
-	// 检测十字形特征：在mask中寻找交叉点
-	bool detectCrossShape(const cv::Mat& mask);
-
-	// 模板匹配精确定位：在候选区域内做matchTemplate
-	// 返回是否精确定位成功，如果成功则更新centerX/centerY和confidence
-	bool refineByTemplateMatch(const cv::Mat& bgrFrame,
-	                           const cv::Rect& candidateROI,
-	                           float& outX, float& outY,
-	                           float& outConfidence,
-	                           int frameWidth, int frameHeight,
-	                           int cropX, int cropY);
-
-	// HSV范围clamp到合法区间
+	// Clamp HSV to valid range
 	static void clampHSV(int& hMin, int& hMax, int& sMin, int& sMax, int& vMin, int& vMax);
 
-	// RGB→HSV转换（OpenCV范围：H 0-180, S/V 0-255）
-	static void rgbToHsv(int r, int g, int b, int& h, int& s, int& v);
+	// Match a single BGR pixel against HSV range
+	bool matchPixelHSV(uint8_t b, uint8_t g, uint8_t r,
+	                   int hMin, int hMax, int sMin, int sMax, int vMin, int vMax) const;
+
+	// Core pixel-scan detection (replaces OpenCV inRange + morphology + contours + template)
+	// Returns centroid in image pixel coordinates, or (-1,-1) if not found
+	bool scanForColor(const cv::Mat& bgrROI,
+	                  int hMin, int hMax, int sMin, int sMax, int vMin, int vMax,
+	                  int minPixels,
+	                  float& outX, float& outY) const;
 };
 
 #endif // _WIN32

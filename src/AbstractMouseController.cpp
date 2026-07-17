@@ -120,6 +120,17 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     
     // 更新神经网络轨迹生成器配置
     enableNeuralPath_ = config.enableNeuralPath;
+
+    // 更新GhostTracker配置（只在config变更时设置一次）
+    {
+        GhostTracker::Config ghostConfig;
+        ghostConfig.enabled = config.enableGhostTracker;
+        ghostConfig.curvature = config.ghostCurvature;
+        ghostConfig.noiseIntensity = config.ghostNoiseIntensity;
+        ghostConfig.verticalSnapRatio = config.ghostVerticalSnapRatio;
+        ghostConfig.noiseFreq = config.ghostNoiseFreq;
+        ghostTracker.setConfig(ghostConfig);
+    }
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
@@ -215,12 +226,11 @@ void AbstractMouseController::tick()
     }
 
     if (!config.continuousAimEnabled) {
-        static bool wasHotkeyPressed = false;
-        if (!wasHotkeyPressed && hotkeyPressed) {
+        if (!wasHotkeyPressed_ && hotkeyPressed) {
             hotkeyPressStartTime = std::chrono::steady_clock::now();
             yUnlockActive = false;
         }
-        wasHotkeyPressed = hotkeyPressed;
+        wasHotkeyPressed_ = hotkeyPressed;
 
         if (config.yUnlockEnabled) {
             auto now = std::chrono::steady_clock::now();
@@ -261,28 +271,25 @@ void AbstractMouseController::tick()
     }
     
     // 日志：目标选择
-    static int targetFrameCount = 0;
-    targetFrameCount++;
-    if (targetFrameCount % 60 == 1 && enableNeuralPathDebug_) {
+    targetFrameCount_++;
+    if (targetFrameCount_ % 60 == 1 && enableNeuralPathDebug_) {
         obs_log(LOG_INFO, "[%s] TARGET SELECTED: classId=%d, conf=%.2f, center=(%.3f,%.3f), wh=(%.3f,%.3f)",
                 getLogPrefix(), target->classId, target->confidence,
                 target->centerX, target->centerY, target->width, target->height);
     }
     
     // 诊断：检测框稳定性追踪
-    static float lastCenterX = 0, lastCenterY = 0;
-    static float maxCenterDelta = 0;
-    float centerDeltaX = std::abs(target->centerX - lastCenterX);
-    float centerDeltaY = std::abs(target->centerY - lastCenterY);
+    float centerDeltaX = std::abs(target->centerX - lastCenterX_);
+    float centerDeltaY = std::abs(target->centerY - lastCenterY_);
     float maxDeltaThisFrame = std::max(centerDeltaX, centerDeltaY);
-    if (maxDeltaThisFrame > maxCenterDelta) maxCenterDelta = maxDeltaThisFrame;
-    lastCenterX = target->centerX;
-    lastCenterY = target->centerY;
-    
-    if (targetFrameCount % 120 == 1 && enableNeuralPathDebug_) {
+    if (maxDeltaThisFrame > maxCenterDelta_) maxCenterDelta_ = maxDeltaThisFrame;
+    lastCenterX_ = target->centerX;
+    lastCenterY_ = target->centerY;
+
+    if (targetFrameCount_ % 120 == 1 && enableNeuralPathDebug_) {
         obs_log(LOG_INFO, "[%s] DETECTION STABILITY: centerDelta=(%.4f,%.4f) maxDelta=%.4f (120帧内)",
-                getLogPrefix(), centerDeltaX, centerDeltaY, maxCenterDelta);
-        maxCenterDelta = 0;
+                getLogPrefix(), centerDeltaX, centerDeltaY, maxCenterDelta_);
+        maxCenterDelta_ = 0;
     }
 
     float fovCenterX = config.inferenceFrameWidth / 2.0f;
@@ -294,7 +301,7 @@ void AbstractMouseController::tick()
         fovCenterY = aimOriginY_;
     }
     
-    if (targetFrameCount % 60 == 1 && enableNeuralPathDebug_) {
+    if (targetFrameCount_ % 60 == 1 && enableNeuralPathDebug_) {
         obs_log(LOG_INFO, "[%s] NEURAL PATH STATUS: enabled=%d, initialized=%d, hasDetections=%zu",
                 getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0,
                 currentDetections.size());
@@ -308,9 +315,8 @@ void AbstractMouseController::tick()
     
     // 神经网络轨迹生成
     if (enableNeuralPath_) {
-        static int neuralLogCount = 0;
-        neuralLogCount++;
-        if (neuralLogCount % 60 == 1 && enableNeuralPathDebug_) {
+        neuralLogCount_++;
+        if (neuralLogCount_ % 60 == 1 && enableNeuralPathDebug_) {
             obs_log(LOG_INFO, "[%s] NEURAL PATH ACTIVE: using neural trajectory (enabled=%d, initialized=%d)",
                     getLogPrefix(), enableNeuralPath_ ? 1 : 0, neuralPathInitialized_ ? 1 : 0);
         }
@@ -319,11 +325,10 @@ void AbstractMouseController::tick()
         double relativeTargetX = targetPixelX - fovCenterX;
         double relativeTargetY = targetPixelY - fovCenterY;
         
-        static int frameCount = 0;
-        frameCount++;
-        if (frameCount % 30 == 1 && enableNeuralPathDebug_) {
+        frameCount_++;
+        if (frameCount_ % 30 == 1 && enableNeuralPathDebug_) {
             obs_log(LOG_INFO, "[%s] NeuralPath FRAME=%d: target=(%.1f,%.1f) fovCenter=(%.1f,%.1f) relative=(%.1f,%.1f) initialized=%d",
-                    getLogPrefix(), frameCount, targetPixelX, targetPixelY, fovCenterX, fovCenterY,
+                    getLogPrefix(), frameCount_, targetPixelX, targetPixelY, fovCenterX, fovCenterY,
                     relativeTargetX, relativeTargetY, neuralPathInitialized_ ? 1 : 0);
         }
         
@@ -366,9 +371,8 @@ void AbstractMouseController::tick()
                 neuralPathIndex_++;
             }
 
-            static int moveFrameCount = 0;
-            moveFrameCount++;
-            if (moveFrameCount % 10 == 1 && enableNeuralPathDebug_) {
+            moveFrameCount_++;
+            if (moveFrameCount_ % 10 == 1 && enableNeuralPathDebug_) {
                 obs_log(LOG_INFO, "[%s] NeuralPath MOVE: consumed=%d, dx=%d, dy=%d, remaining=%zu",
                         getLogPrefix(), consumeCount, dx, dy,
                         neuralPathPoints_.size() - neuralPathIndex_);
@@ -404,9 +408,8 @@ void AbstractMouseController::tick()
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
     
-    static int deadZoneFrameCount = 0;
-    deadZoneFrameCount++;
-    if (deadZoneFrameCount % 60 == 1 && enableNeuralPathDebug_) {
+    deadZoneFrameCount_++;
+    if (deadZoneFrameCount_ % 60 == 1 && enableNeuralPathDebug_) {
         float distance = std::sqrt(distanceSquared);
         obs_log(LOG_INFO, "[%s] DEADZONE CHECK: error=(%.1f,%.1f) distance=%.1f deadZone=%.1f inDeadZone=%d",
                 getLogPrefix(), errorX, errorY, distance, config.deadZonePixels,
@@ -624,8 +627,8 @@ void AbstractMouseController::tick()
             iOutX = 0.0f;
         }
         
-        // Step 13: 总输出
-        float totalX = round1(pOutX + iOutX + d2OutX);
+        // Step 13: 总输出（D2已折叠进iOutX，不要再加）
+        float totalX = round1(pOutX + iOutX);
         
         if (config.maxPixelMove > 0.0f) {
             totalX = atan2Clamp(totalX, config.maxPixelMove, config.maxPixelMove);
@@ -742,7 +745,7 @@ void AbstractMouseController::tick()
             iOutY = 0.0f;
         }
         
-        float totalY = round1(pOutY + iOutY + d2OutY);
+        float totalY = round1(pOutY + iOutY);
         
         if (config.maxPixelMove > 0.0f) {
             totalY = atan2Clamp(totalY, config.maxPixelMove, config.maxPixelMove);
@@ -756,9 +759,8 @@ void AbstractMouseController::tick()
         
         moveY = totalY;
         
-        static int logCounter = 0;
-        if (++logCounter >= 30) {
-            logCounter = 0;
+        if (++logCounter_ >= 30) {
+            logCounter_ = 0;
             blog(LOG_INFO, "[%s高级PID] errorX=%.1f errorY=%.1f | kpGainX=%.2f kpGainY=%.2f | iGainX=%.2f iGainY=%.2f",
                  getLogPrefix(), errorX, errorY, adaptivePGainX, adaptivePGainY, adaptiveIGainX, adaptiveIGainY);
             blog(LOG_INFO, "[%s高级PID] pOutX=%.1f pOutY=%.1f | iOutX=%.1f iOutY=%.1f | d2OutX=%.1f d2OutY=%.1f",
@@ -844,9 +846,8 @@ void AbstractMouseController::tick()
         moveX = static_cast<float>(externalPidX.update(externalErrorX));
         moveY = static_cast<float>(externalPidY.update(externalErrorY));
 
-        static int externalLogCounter = 0;
-        if (++externalLogCounter >= 30) {
-            externalLogCounter = 0;
+        if (++externalLogCounter_ >= 30) {
+            externalLogCounter_ = 0;
             blog(LOG_INFO, "[%s外部PID] dt=%.4f | errorX=%.1f errorY=%.1f | extErrX=%.1f extErrY=%.1f | moveX=%.1f moveY=%.1f",
                  getLogPrefix(), deltaTime, errorX, errorY, externalErrorX, externalErrorY, moveX, moveY);
             blog(LOG_INFO, "[%s外部PID] KpX=%.2f KiX=%.2f KdX=%.2f | KpY=%.2f KiY=%.2f KdY=%.2f",
@@ -923,10 +924,10 @@ void AbstractMouseController::tick()
             float dirY = moveY / moveDist;
             float perpX = -dirY;  // 垂直于移动方向
             float perpY = dirX;
-            
-            // 使用误差作为输入（目标相对于准心的偏移）
+
+            // 复用上方已选中的target，不再重复调用selectTarget()
+            // （原代码重复调用会导致目标锁定状态不一致）
             float ghostOffsetX = 0.0f, ghostOffsetY = 0.0f;
-            Detection* target = selectTarget();
             if (target) {
                 int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth :
                          ((config.sourceWidth > 0) ? config.sourceWidth : 1920);
@@ -934,15 +935,8 @@ void AbstractMouseController::tick()
                          ((config.sourceHeight > 0) ? config.sourceHeight : 1080);
                 float targetW = target->width * fw;
                 float targetH = target->height * fh;
-                
-                GhostTracker::Config ghostConfig;
-                ghostConfig.enabled = true;
-                ghostConfig.curvature = config.ghostCurvature;
-                ghostConfig.noiseIntensity = config.ghostNoiseIntensity;
-                ghostConfig.verticalSnapRatio = config.ghostVerticalSnapRatio;
-                ghostConfig.noiseFreq = config.ghostNoiseFreq;
-                ghostTracker.setConfig(ghostConfig);
-                
+
+                // GhostTracker配置已在updateConfig()中设置，不再每帧重建
                 // 传入误差（相对于准心的偏移）
                 if (ghostTracker.apply(errorX, errorY,
                                        targetW, targetH,

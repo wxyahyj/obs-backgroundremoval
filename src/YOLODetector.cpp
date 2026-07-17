@@ -96,39 +96,6 @@ std::vector<Detection> YOLODetector::inference(const cv::Mat& frame) {
 }
 
 #ifdef _WIN32
-#if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
-std::vector<Detection> YOLODetector::inferenceFromTexture(void* texture, int width, int height, int fullWidth, int fullHeight) {
-    if (!initialized_ || !model_) {
-        return {};
-    }
-
-    std::vector<Detection> detections;
-    
-    {
-        std::lock_guard<std::mutex> lock(modelMutex_);
-        if (model_) {
-            try {
-#ifdef HAVE_CUDA
-                if (model_->isGpuTextureSupported()) {
-                    detections = model_->inferenceFromTexture(texture, width, height, fullWidth, fullHeight);
-                }
-#endif
-#ifdef HAVE_ONNXRUNTIME_DML_EP
-                if (model_->isDmlTextureSupported() && detections.empty()) {
-                    detections = model_->inferenceFromTextureDml(texture, width, height, fullWidth, fullHeight);
-                }
-#endif
-            } catch (const std::exception& e) {
-                obs_log(LOG_ERROR, "[YOLODetector] GPU texture inference error: %s", e.what());
-                return {};
-            }
-        }
-    }
-
-    return detections;
-}
-#endif
-#endif
 
 void YOLODetector::updateConfig(const Config& config) {
     bool needReload = (config.modelPath != config_.modelPath ||
@@ -161,3 +128,4 @@ YOLODetector::Stats YOLODetector::getStats() const {
     std::lock_guard<std::mutex> lock(statsMutex_);
     return stats_;
 }
+#endif

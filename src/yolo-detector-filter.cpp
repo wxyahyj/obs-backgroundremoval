@@ -44,6 +44,7 @@
 #include "consts.h"
 #include "KalmanFilter.hpp"
 #include "CrosshairDetector.hpp"
+#include "models/DmlPreprocessor.h"
 
 // 目标重识别结构体
 struct LostTarget {
@@ -221,13 +222,17 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 线程池相关成员
 	std::vector<std::thread> threadPool;
 	
+
 #ifdef _WIN32
-	// GPU纹理推理支持
+	// GPU?????? (DML??)
 	bool useGpuTextureInference = false;
-	ID3D11Texture2D* cachedD3D11Texture = nullptr;
-	int gpuTextureWidth = 0;
-	int gpuTextureHeight = 0;
+	DmlPreprocessedFrame dmlPreprocessedFrame;
+	std::mutex dmlPreprocessedFrameMutex;
+	std::atomic<int> dmlDirectFrames{0};
+	DmlPreprocessor dmlPreprocessor;
+	std::atomic<int> dmlFallbackFrames{0};
 #endif
+
 	
 	std::queue<std::function<void()>> taskQueue;
 	std::mutex taskQueueMutex;
@@ -523,34 +528,19 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 准星检测器
 	CrosshairDetector crosshairDetector;
 	CrosshairDetectorConfig crosshairConfig;
-	cv::Mat crosshairFrameBuf;  // BGR帧缓冲（仅中心区域）
+	cv::Mat crosshairFrameBuf;
 	std::mutex crosshairFrameMutex;
-	bool crosshairNeedsPick = false;  // 吸管取色标记（由_update设置，video_tick消费）
-	cv::Mat crosshairDebugMask;       // 调试用HSV掩码
-	std::mutex crosshairDebugMutex;   // 调试掩码互斥锁
-	float crosshairPixelX = -1.0f;    // 准星像素位置X（完整帧坐标），-1表示未检测到
-	float crosshairPixelY = -1.0f;    // 准星像素位置Y（完整帧坐标）
-	bool crosshairDetected = false;   // 当前帧是否检测到准星
-	// 准星帧捕获的裁切偏移（中心区域在完整帧中的起始位置）
-	int crosshairCropOffsetX = 0;
-	int crosshairCropOffsetY = 0;
-	int crosshairFullFrameW = 0;  // 捕获时的完整帧宽度
-	int crosshairFullFrameH = 0;  // 捕获时的完整帧高度
-	
+	bool crosshairNeedsPick = false;
+	float crosshairPixelX = -1.0f, crosshairPixelY = -1.0f;
+	bool crosshairDetected = false;
+	// ??????????????????????? crosshairFrameBuf ??????????
+	int crosshairCropOffsetX = 0, crosshairCropOffsetY = 0;
 #endif
 
 	~yolo_detector_filter() {
 		obs_log(LOG_INFO, "YOLO detector filter destructor called");
-#ifdef _WIN32
-		if (cachedD3D11Texture) {
-			cachedD3D11Texture->Release();
-			cachedD3D11Texture = nullptr;
-		}
-#endif
 	}
 };
-
-void inferenceThreadWorker(yolo_detector_filter *filter);
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
@@ -2116,6 +2106,11 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		obs_log(LOG_WARNING, "[YOLO Filter] GPU纹理推理需要CUDA、TensorRT或DML设备，已禁用");
 		tf->useGpuTextureInference = false;
 	}
+	if (tf->useGpuTextureInference) {
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+		tf->dmlPreprocessor.initialize();
+#endif
+	}
 #endif
 	tf->nmsThreshold = (float)obs_data_get_double(settings, "nms_threshold");
 	tf->targetClassId = (int)obs_data_get_int(settings, "target_class");
@@ -2504,7 +2499,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		chCfg.minArea = (int)obs_data_get_int(settings, "crosshair_min_area");
 		chCfg.maxArea = (int)obs_data_get_int(settings, "crosshair_max_area");
 		chCfg.shapeFilterEnabled = obs_data_get_bool(settings, "crosshair_shape_filter_enabled");
-		chCfg.shapeType = static_cast<CrosshairShapeType>(obs_data_get_int(settings, "crosshair_shape_type"));
+		chCfg.shapeType = (int)obs_data_get_int(settings, "crosshair_shape_type");
 		chCfg.minFillRatio = (float)obs_data_get_double(settings, "crosshair_min_fill_ratio");
 		chCfg.maxFillRatio = (float)obs_data_get_double(settings, "crosshair_max_fill_ratio");
 		chCfg.minAspectRatio = (float)obs_data_get_double(settings, "crosshair_min_aspect_ratio");
@@ -4127,55 +4122,50 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		// 执行推理
 		std::vector<Detection> newDetections;
-		{
-			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
+	{
+		std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			if (filter->yoloModel) {
 #ifdef _WIN32
-#if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
-				if (filter->useGpuTextureInference && filter->cachedD3D11Texture &&
-				    filter->gpuTextureWidth > 0 && filter->gpuTextureHeight > 0) {
-					bool gpuInferenceSuccess = false;
-#ifdef HAVE_CUDA
-					if (filter->yoloModel->isGpuTextureSupported() && !gpuInferenceSuccess) {
-						try {
-							newDetections = filter->yoloModel->inferenceFromTexture(
-								filter->cachedD3D11Texture,
-								filter->gpuTextureWidth,
-								filter->gpuTextureHeight,
-								fullWidth, fullHeight
-							);
-							gpuInferenceSuccess = true;
-						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference failed: %s, falling back to CPU", e.what());
-							gpuInferenceSuccess = false;
-						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] GPU texture inference unknown error, falling back to CPU");
-							gpuInferenceSuccess = false;
+#ifdef HAVE_ONNXRUNTIME_DML_EP
+				bool dmlAttempted = false;
+				bool dmlSucceeded = false;
+				DmlPreprocessedFrame dmlFrame;  // capture crop info from preprocessedCopy for coord transform
+				if (filter->useGpuTextureInference && filter->yoloModel->isDmlTextureSupported()) {
+					DmlPreprocessedFrame preprocessedCopy;
+					{
+						std::lock_guard<std::mutex> dmlLock(filter->dmlPreprocessedFrameMutex);
+						if (filter->dmlPreprocessedFrame.valid()) {
+							preprocessedCopy = filter->dmlPreprocessedFrame;
 						}
 					}
-#endif
-#ifdef HAVE_ONNXRUNTIME_DML_EP
-					if (filter->yoloModel->isDmlTextureSupported() && !gpuInferenceSuccess) {
+					if (preprocessedCopy.valid()) {
+						dmlAttempted = true;
 						try {
 							newDetections = filter->yoloModel->inferenceFromTextureDml(
-								filter->cachedD3D11Texture,
-								filter->gpuTextureWidth,
-								filter->gpuTextureHeight,
-								fullWidth, fullHeight
-							);
-							gpuInferenceSuccess = true;
+								preprocessedCopy, preprocessedCopy.srcWidth, preprocessedCopy.srcHeight);
+							dmlSucceeded = true;
+							dmlFrame = preprocessedCopy;  // capture crop info before preprocessedCopy goes out of scope
 						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference failed: %s, falling back to CPU", e.what());
-							gpuInferenceSuccess = false;
+							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
 						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference unknown error, falling back to CPU");
-							gpuInferenceSuccess = false;
+							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference unknown error, falling back to CPU");
 						}
 					}
-#endif
-					if (!gpuInferenceSuccess) {
-						newDetections = filter->yoloModel->inference(inferenceFrame);
-					}
+				}
+				if (dmlSucceeded) {
+					filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
+					// DML ??? det.x/y ??????? (srcWidth x srcHeight) ???????? CPU ?????
+					// ? dmlPreprocessedFrame ??? crop ?????? cropX/Y/Width/Height?
+					// ?????? crop->full ????????????????
+					cropX = dmlFrame.cropX;
+					cropY = dmlFrame.cropY;
+					cropWidth = dmlFrame.srcWidth;
+					cropHeight = dmlFrame.srcHeight;
+					fullWidth = dmlFrame.fullWidth;
+					fullHeight = dmlFrame.fullHeight;
+				} else if (dmlAttempted) {
+					filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+					newDetections = filter->yoloModel->inference(inferenceFrame);
 				} else {
 					newDetections = filter->yoloModel->inference(inferenceFrame);
 				}
@@ -4947,9 +4937,6 @@ void *yolo_detector_filter_create(obs_data_t *settings, obs_source_t *source)
 #ifdef _WIN32
 		// GPU纹理推理初始化
 		instance->useGpuTextureInference = false;
-		instance->cachedD3D11Texture = nullptr;
-		instance->gpuTextureWidth = 0;
-		instance->gpuTextureHeight = 0;
 #endif
 		
 #endif
@@ -5145,7 +5132,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				bgrFrame,
 				obs_source_get_base_width(tf->source),
 				obs_source_get_base_height(tf->source),
-				tf->cropOffsetX, tf->cropOffsetY
+				0, 0
 			);
 			if (picked) {
 				CrosshairDetectorConfig& chCfg = tf->crosshairConfig;
@@ -5199,19 +5186,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			// fovCenterX/Y=0.5, fovRadiusNorm=1.0 让detect覆盖整个裁切帧
 			std::vector<Detection> crosshairDets = tf->crosshairDetector.detect(
 				bgrFrame,
-				tf->crosshairFullFrameW, tf->crosshairFullFrameH,
-				tf->crosshairCropOffsetX, tf->crosshairCropOffsetY,
+				bgrFrame.cols, bgrFrame.rows,
+				0, 0,
 				0.5f, 0.5f, 1.0f
 			);
 
-			// 保存调试掩码
-			if (tf->crosshairConfig.showDebugMask) {
-				cv::Mat debugMask = tf->crosshairDetector.getDebugMask();
-				if (!debugMask.empty()) {
-					std::lock_guard<std::mutex> lock(tf->crosshairDebugMutex);
-					tf->crosshairDebugMask = debugMask.clone();
-				}
-			}
 
 			// 准星检测结果：提取准星位置作为瞄准起点
 			// detect返回的centerX/centerY是基于bgrFrame(裁切帧)的归一化坐标
@@ -5222,6 +5201,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				int cropPxX = static_cast<int>(chDet.centerX * bgrFrame.cols);
 				int cropPxY = static_cast<int>(chDet.centerY * bgrFrame.rows);
 				// 映射到完整帧像素坐标
+				// bgrFrame ???????? crosshairCropOffsetX/Y ????????
 				tf->crosshairPixelX = static_cast<float>(cropPxX + tf->crosshairCropOffsetX);
 				tf->crosshairPixelY = static_cast<float>(cropPxY + tf->crosshairCropOffsetY);
 				tf->crosshairDetected = true;
@@ -5619,31 +5599,9 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 			gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 			if (tex) {
-#if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
-				// GPU纹理推理路径（CUDA 或 DML）
-				if (tf->useGpuTextureInference && tf->yoloModel) {
-					bool canUseGpuTexture = false;
-#ifdef HAVE_CUDA
-					canUseGpuTexture = canUseGpuTexture || tf->yoloModel->isGpuTextureSupported();
-#endif
-#ifdef HAVE_ONNXRUNTIME_DML_EP
-					canUseGpuTexture = canUseGpuTexture || tf->yoloModel->isDmlTextureSupported();
-#endif
-					if (canUseGpuTexture) {
-						void* d3d11Texture = gs_texture_get_obj(tex);
-						if (d3d11Texture) {
-							ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
-							d3dTex->AddRef();
-							
-							if (tf->cachedD3D11Texture) {
-								tf->cachedD3D11Texture->Release();
-							}
-							tf->cachedD3D11Texture = d3dTex;
-							tf->gpuTextureWidth = width;
-							tf->gpuTextureHeight = height;
-						}
-					}
-				}
+#if defined(HAVE_ONNXRUNTIME_DML_EP)
+			// GPU???????DML???BGRA?DmlPreprocessor?DmlPreprocessedFrame?
+			// ??????stagesurface map??????
 #endif
 				
 				if (!tf->stagesurface || 
@@ -5755,10 +5713,48 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 							tf->crosshairFrameBuf = std::move(bgrCrop);
 							tf->crosshairCropOffsetX = x0;
 							tf->crosshairCropOffsetY = y0;
-							tf->crosshairFullFrameW = temp.cols;
-							tf->crosshairFullFrameH = temp.rows;
 						}
 						
+								// === DML ?? BGRA->DmlPreprocessor->float CHW buffer ===
+								#ifdef HAVE_ONNXRUNTIME_DML_EP
+								if (tf->useGpuTextureInference && tf->yoloModel && tf->yoloModel->isDmlTextureSupported()) {
+									int dstW = (tf->inputResolution > 0) ? tf->inputResolution : 640;
+									int dstH = dstW;
+									// ??? CPU ?? ???? crop ?? (useRegion ????)??DML ?????? crop ??? BGRA??
+									int dmlCropX = 0, dmlCropY = 0;
+									int dmlCropW = static_cast<int>(width);
+									int dmlCropH = static_cast<int>(height);
+									if (tf->useRegion) {
+										dmlCropX = std::max(0, tf->regionX);
+										dmlCropY = std::max(0, tf->regionY);
+										dmlCropW = std::min(tf->regionWidth, static_cast<int>(width) - dmlCropX);
+										dmlCropH = std::min(tf->regionHeight, static_cast<int>(height) - dmlCropY);
+										if (dmlCropW <= 0 || dmlCropH <= 0) {
+											dmlCropX = 0; dmlCropY = 0;
+											dmlCropW = static_cast<int>(width);
+											dmlCropH = static_cast<int>(height);
+										}
+									}
+									const uint8_t* srcPtr = video_data + dmlCropY * static_cast<int>(linesize) + dmlCropX * 4;
+									DmlPreprocessedFrame tmpFrame;
+									if (tf->dmlPreprocessor.preprocessFromBgra(
+										srcPtr, dmlCropW, dmlCropH,
+										static_cast<int>(linesize), dstW, dstH, tmpFrame)) {
+										tmpFrame.srcWidth = dmlCropW;
+										tmpFrame.srcHeight = dmlCropH;
+										tmpFrame.cropX = dmlCropX;
+										tmpFrame.cropY = dmlCropY;
+										tmpFrame.fullWidth = static_cast<int>(width);
+										tmpFrame.fullHeight = static_cast<int>(height);
+										tmpFrame.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+											std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+										{
+											std::lock_guard<std::mutex> dmlLock(tf->dmlPreprocessedFrameMutex);
+											tf->dmlPreprocessedFrame = std::move(tmpFrame);
+										}
+									}
+								}
+								#endif
 						gs_stagesurface_unmap(tf->stagesurface);
 					}
 				}

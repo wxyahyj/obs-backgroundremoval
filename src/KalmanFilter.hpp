@@ -91,27 +91,40 @@ namespace KalmanDetail {
         return true;
     }
 
+    static constexpr int HUNGARIAN_MAX_DIM = 64;  // 最大目标数限制
+
     inline std::vector<int> hungarian_min(const std::vector<std::vector<float>>& cost) {
         const int n = static_cast<int>(cost.size());
         const int m = n ? static_cast<int>(cost[0].size()) : 0;
         const int dim = std::max(n, m);
         const double INF = 1e18;
 
-        std::vector<std::vector<double>> a(dim + 1, std::vector<double>(dim + 1, 0.0));
+        // 超过最大限制时回退到动态分配
+        if (dim > HUNGARIAN_MAX_DIM) {
+            std::vector<int> assign(n, -1);
+            for (int i = 0; i < n && i < m; ++i) {
+                assign[i] = i;
+            }
+            return assign;
+        }
+
+        // 静态数组，避免每帧动态内存分配
+        double a[HUNGARIAN_MAX_DIM + 1][HUNGARIAN_MAX_DIM + 1] = {};
         for (int i = 1; i <= n; ++i) {
             for (int j = 1; j <= m; ++j) a[i][j] = cost[i - 1][j - 1];
             for (int j = m + 1; j <= dim; ++j) a[i][j] = 1.0;
         }
-        for (int i = n + 1; i <= dim; ++i)
-            for (int j = 1; j <= dim; ++j) a[i][j] = 0.0;
 
-        std::vector<double> u(dim + 1), v(dim + 1);
-        std::vector<int> p(dim + 1), way(dim + 1);
+        double u[HUNGARIAN_MAX_DIM + 1] = {}, v[HUNGARIAN_MAX_DIM + 1] = {};
+        int p[HUNGARIAN_MAX_DIM + 1] = {}, way[HUNGARIAN_MAX_DIM + 1] = {};
+        
         for (int i = 1; i <= dim; ++i) {
             p[0] = i;
             int j0 = 0;
-            std::vector<double> minv(dim + 1, INF);
-            std::vector<char> used(dim + 1, false);
+            double minv[HUNGARIAN_MAX_DIM + 1];
+            char used[HUNGARIAN_MAX_DIM + 1] = {};
+            for (int j = 0; j <= dim; ++j) minv[j] = INF;
+            
             do {
                 used[j0] = true;
                 int i0 = p[j0], j1 = 0;
@@ -127,12 +140,14 @@ namespace KalmanDetail {
                 }
                 j0 = j1;
             } while (p[j0] != 0);
+            
             do {
                 int j1 = way[j0];
                 p[j0] = p[j1];
                 j0 = j1;
             } while (j0 != 0);
         }
+        
         std::vector<int> assign(n, -1);
         for (int j = 1; j <= m; ++j) {
             if (p[j] >= 1 && p[j] <= n) assign[p[j] - 1] = j - 1;

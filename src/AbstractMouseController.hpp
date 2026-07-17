@@ -27,7 +27,8 @@ public:
     
     float update(float measurement) {
         float P_pred = P_ + Q_;
-        float K = P_pred / (P_pred + R_);
+        float denom = P_pred + R_;
+        float K = (denom > 1e-10f) ? P_pred / denom : 0.0f;
         float innov = measurement - x_;
         x_ = x_ + K * innov;
         P_ = (1.0f - K) * P_pred;
@@ -158,6 +159,19 @@ protected:
     // 准星位置（瞄准起点），-1表示使用画面中心
     float aimOriginX_ = -1.0f;
     float aimOriginY_ = -1.0f;
+
+    // 原 static 局部变量（改为成员变量支持多实例）
+    bool wasHotkeyPressed_ = false;
+    int targetFrameCount_ = 0;
+    float lastCenterX_ = 0.0f;
+    float lastCenterY_ = 0.0f;
+    float maxCenterDelta_ = 0.0f;
+    int neuralLogCount_ = 0;
+    int frameCount_ = 0;
+    int moveFrameCount_ = 0;
+    int deadZoneFrameCount_ = 0;
+    int logCounter_ = 0;
+    int externalLogCounter_ = 0;
 
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;

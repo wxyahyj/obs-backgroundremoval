@@ -963,7 +963,8 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv11(
 std::vector<int> ModelYOLO::performNMS(
     const std::vector<cv::Rect2f>& boxes,
     const std::vector<float>& scores,
-    float nmsThreshold
+    float nmsThreshold,
+    const std::vector<int>& classIds
 ) {
     std::vector<int> indices(scores.size());
     std::iota(indices.begin(), indices.end(), 0);
@@ -990,7 +991,7 @@ std::vector<int> ModelYOLO::performNMS(
                 continue;
             }
 
-            float iou = calculateIoU(boxes[idx], boxes[idx2]);
+            float iou = this->calculateIoU(boxes[idx], boxes[idx2]);
 
             if (iou > nmsThreshold) {
                 suppressed[idx2] = true;
@@ -1100,12 +1101,12 @@ bool ModelYOLO::initializeGpuMemory() {
         // 创建GPU内存信息
         if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
-            gpuMemInfo_ = new Ort::MemoryInfo(
+            gpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
                 Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault)
             );
             
             // 创建CUDA分配器
-            gpuAllocator_ = new Ort::Allocator(*session_, *gpuMemInfo_);
+            gpuAllocator_ = std::make_unique<Ort::Allocator>(*session_, *gpuMemInfo_);
             
             // 预分配GPU输入张量
             std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
@@ -1131,7 +1132,7 @@ bool ModelYOLO::initializeGpuMemory() {
         } else if (currentDevice_ == "dml") {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
             // DirectML使用CPU内存作为暂存，但IOBinding仍然有效
-            gpuMemInfo_ = new Ort::MemoryInfo(
+            gpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
                 Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)
             );
             
@@ -1153,12 +1154,12 @@ bool ModelYOLO::initializeGpuMemory() {
 
 void ModelYOLO::releaseGpuMemory() {
     if (gpuAllocator_) {
-        delete gpuAllocator_;
+        gpuAllocator_.reset();
         gpuAllocator_ = nullptr;
     }
     
     if (gpuMemInfo_) {
-        delete gpuMemInfo_;
+        gpuMemInfo_.reset();
         gpuMemInfo_ = nullptr;
     }
     
@@ -1236,11 +1237,11 @@ bool ModelYOLO::initializeDmlPreprocessor() {
     try {
         // DmlPreprocessor不再需要传入D3D11设备
         // 它会从输入纹理动态获取OBS的D3D11设备
-        dmlPreprocessor_ = new DmlPreprocessor();
+        dmlPreprocessor_ = std::make_unique<DmlPreprocessor>();
         if (!dmlPreprocessor_->initialize()) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize DML preprocessor");
-            delete dmlPreprocessor_;
-            dmlPreprocessor_ = nullptr;
+            dmlPreprocessor_.reset();
+
             return false;
         }
         
@@ -1251,8 +1252,8 @@ bool ModelYOLO::initializeDmlPreprocessor() {
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] DML preprocessor init exception: %s", e.what());
         if (dmlPreprocessor_) {
-            delete dmlPreprocessor_;
-            dmlPreprocessor_ = nullptr;
+            dmlPreprocessor_.reset();
+
         }
         return false;
     }
@@ -1266,8 +1267,8 @@ void ModelYOLO::releaseDmlInterop() {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
     if (dmlPreprocessor_) {
         dmlPreprocessor_->release();
-        delete dmlPreprocessor_;
-        dmlPreprocessor_ = nullptr;
+            dmlPreprocessor_.reset();
+
     }
     
     dmlInteropInitialized_ = false;
@@ -1506,90 +1507,65 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int w
 #endif
 }
 
-std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, int width, int height,
+std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedFrame& preprocessedFrame,
                                                           int originalWidth, int originalHeight,
                                                           InferenceLatency* outLatency) {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
     auto totalStartTime = std::chrono::high_resolution_clock::now();
     InferenceLatency latency;
     latency.isGpuPath = true;
+    latency.preprocessMs = 0.0;  // preprocessing already done on render thread
     
     if (!session_) {
         obs_log(LOG_ERROR, "[ModelYOLO] DML inference: session not initialized");
         return {};
     }
     
-    ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
-    if (!d3dTex) {
-        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid texture");
+    if (!preprocessedFrame.valid()) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid preprocessed frame");
+        return {};
+    }
+    
+    if (preprocessedFrame.width != inputWidth_ || preprocessedFrame.height != inputHeight_) {
+        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: preprocessed frame size mismatch "
+                "(got %dx%d, expected %dx%d)",
+                preprocessedFrame.width, preprocessedFrame.height,
+                inputWidth_, inputHeight_);
         return {};
     }
     
     std::vector<Detection> detections;
     
     try {
-        auto preprocessStartTime = std::chrono::high_resolution_clock::now();
-        
-        // 确保输入缓冲区大小正确
-        size_t requiredSize = 3 * inputHeight_ * inputWidth_;
-        if (inputBuffer_.size() < requiredSize) {
-            inputBuffer_.resize(requiredSize);
-            inputBufferSize_ = requiredSize * sizeof(float);
-        }
-        
-        // 使用 DML 预处理器从纹理预处理
-        bool preprocessSuccess = false;
-        if (dmlPreprocessor_ && dmlPreprocessor_->isInitialized()) {
-            DmlPreprocessParams params;
-            preprocessSuccess = dmlPreprocessor_->preprocessFromTexture(
-                d3dTex,
-                inputBuffer_.data(),
-                inputWidth_,
-                inputHeight_,
-                &params
-            );
-            
-            if (preprocessSuccess) {
-                // 计算 letterbox 参数用于后处理
-                // params 包含 scale, padX, padY
-            }
-        }
-        
-        auto preprocessEndTime = std::chrono::high_resolution_clock::now();
-        latency.preprocessMs = std::chrono::duration<double, std::milli>(preprocessEndTime - preprocessStartTime).count();
-        
-        if (!preprocessSuccess) {
-            obs_log(LOG_WARNING, "[ModelYOLO] DML preprocessing failed, falling back to CPU");
-            return {};
-        }
-        
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         
-        // 创建输入张量
         std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
         Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
             OrtArenaAllocator, OrtMemTypeDefault
         );
         
         Ort::Value inputTensor;
+        size_t dataSize = preprocessedFrame.data.size();
+        
         if (isFp16Model_) {
-            // FP16模型：使用Ort::Float16_t转换FP32到FP16
-            inputBufferFp16_.resize(inputBufferSize_);
-            for (size_t i = 0; i < inputBufferSize_; ++i) {
-                inputBufferFp16_[i] = Ort::Float16_t(inputBuffer_[i]);
+            inputBufferFp16_.resize(dataSize);
+            for (size_t i = 0; i < dataSize; ++i) {
+                inputBufferFp16_[i] = Ort::Float16_t(preprocessedFrame.data[i]);
             }
             inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
                 memoryInfo,
                 inputBufferFp16_.data(),
-                inputBufferSize_,
+                dataSize,
                 inputShape.data(),
                 inputShape.size()
             );
         } else {
+            inputBuffer_.resize(dataSize);
+            std::memcpy(inputBuffer_.data(), preprocessedFrame.data.data(), dataSize * sizeof(float));
             inputTensor = Ort::Value::CreateTensor<float>(
                 memoryInfo,
                 inputBuffer_.data(),
-                inputBufferSize_,
+                dataSize,
                 inputShape.data(),
                 inputShape.size()
             );
@@ -1626,7 +1602,6 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
             return {};
         }
         
-        // 获取输出数据
         float* outputData = nullptr;
         std::vector<float> fp32OutputBuffer;
         
@@ -1662,34 +1637,29 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
         
         auto postprocessStartTime = std::chrono::high_resolution_clock::now();
         
-        // 计算 letterbox 参数
-        LetterboxInfo letterboxInfo = calculateLetterboxParams(width, height, inputWidth_, inputHeight_);
+        LetterboxInfo letterboxInfo = calculateLetterboxParams(
+            preprocessedFrame.srcWidth, preprocessedFrame.srcHeight,
+            inputWidth_, inputHeight_);
         
         int numBoxes = 0;
         if (version_ == Version::YOLOv5) {
             numBoxes = static_cast<int>(outputShape[1]);
             detections = postprocessYOLOv5(
-                outputData,
-                numBoxes,
-                numClasses_,
+                outputData, numBoxes, numClasses_,
                 letterboxInfo,
                 cv::Size(originalWidth, originalHeight)
             );
         } else if (version_ == Version::YOLOv8) {
             numBoxes = static_cast<int>(outputShape[2]);
             detections = postprocessYOLOv8(
-                outputData,
-                numBoxes,
-                numClasses_,
+                outputData, numBoxes, numClasses_,
                 letterboxInfo,
                 cv::Size(originalWidth, originalHeight)
             );
         } else if (version_ == Version::YOLOv11) {
             numBoxes = static_cast<int>(outputShape[2]);
             detections = postprocessYOLOv11(
-                outputData,
-                numBoxes,
-                numClasses_,
+                outputData, numBoxes, numClasses_,
                 letterboxInfo,
                 cv::Size(originalWidth, originalHeight)
             );
@@ -1701,15 +1671,15 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
         auto totalEndTime = std::chrono::high_resolution_clock::now();
         latency.totalMs = std::chrono::duration<double, std::milli>(totalEndTime - totalStartTime).count();
         
-        // 记录延迟统计
         latencyStats_.addSample(latency);
         
         if (outLatency) {
             *outLatency = latency;
         }
         
-        obs_log(LOG_INFO, "[ModelYOLO] DML texture inference: %zu detections, total %.2fms (preprocess %.2fms, inference %.2fms, postprocess %.2fms)",
-                detections.size(), latency.totalMs, latency.preprocessMs, latency.inferenceMs, latency.postprocessMs);
+        obs_log(LOG_INFO, "[ModelYOLO] DML texture inference: %zu detections, total %.2fms "
+                "(preprocess 0ms (render-thread), inference %.2fms, postprocess %.2fms)",
+                detections.size(), latency.totalMs, latency.inferenceMs, latency.postprocessMs);
         
         return detections;
         
@@ -1721,9 +1691,7 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(void* d3d11Texture, in
         return {};
     }
 #else
-    (void)d3d11Texture;
-    (void)width;
-    (void)height;
+    (void)preprocessedFrame;
     (void)originalWidth;
     (void)originalHeight;
     (void)outLatency;

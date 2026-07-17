@@ -141,7 +141,7 @@ public:
     bool isGpuTextureSupported() const { return cudaInteropInitialized_; }
     
     // DML纹理直接推理
-    std::vector<Detection> inferenceFromTextureDml(void* d3d11Texture, int width, int height,
+    std::vector<Detection> inferenceFromTextureDml(const DmlPreprocessedFrame& preprocessedFrame,
                                                     int originalWidth, int originalHeight,
                                                     InferenceLatency* outLatency = nullptr);
     bool isDmlTextureSupported() const { return dmlInteropInitialized_; }
@@ -162,6 +162,7 @@ public:
     int getInputHeight() const { return inputHeight_; }
     int getNumClasses() const { return numClasses_; }
     const std::vector<std::string>& getClassNames() const { return classNames_; }
+    DmlPreprocessor* getDmlPreprocessor() const { return dmlPreprocessor_.get(); }
 
 private:
     struct LetterboxInfo {
@@ -202,7 +203,8 @@ private:
     std::vector<int> performNMS(
         const std::vector<cv::Rect2f>& boxes,
         const std::vector<float>& scores,
-        float nmsThreshold
+        float nmsThreshold,
+        const std::vector<int>& classIds = {}
     );
 
     float calculateIoU(const cv::Rect2f& a, const cv::Rect2f& b);
@@ -264,10 +266,10 @@ private:
     // === 阶段1：GPU持久内存 ===
     bool useGpuMemory_;
     std::string currentDevice_;
-    Ort::Allocator* gpuAllocator_;
+    std::unique_ptr<Ort::Allocator> gpuAllocator_;
     Ort::Value gpuInputTensor_;
     Ort::Value gpuOutputTensor_;
-    Ort::MemoryInfo* gpuMemInfo_;
+    std::unique_ptr<Ort::MemoryInfo> gpuMemInfo_;
     
     // === 阶段2：CUDA纹理共享 ===
     bool cudaInteropInitialized_;
@@ -277,7 +279,7 @@ private:
     
     // === DML纹理共享 ===
     bool dmlInteropInitialized_;
-    class DmlPreprocessor* dmlPreprocessor_;
+    std::unique_ptr<DmlPreprocessor> dmlPreprocessor_;
     
     // === 延迟统计 ===
     LatencyStats latencyStats_;

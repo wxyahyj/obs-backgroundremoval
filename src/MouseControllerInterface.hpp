@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <chrono>
 #include "models/Detection.h"
 
 enum class ControllerType {
@@ -18,43 +19,46 @@ enum class AlgorithmType {
 
 // PID数据回调函数类型
 struct PidDebugData {
-    // === 基础数据（原有） ===
-    float errorX;
-    float errorY;
-    float outputX;
-    float outputY;
-    float targetX;
-    float targetY;
-    float targetVelocityX;  // 目标X速度（像素/帧）
-    float targetVelocityY;  // 目标Y速度（像素/帧）
-    float currentKp;        // 当前使用的Kp
-    float currentKi;        // 当前使用的Ki
-    float currentKd;        // 当前使用的Kd
+    // === 基础数据 ===
+    float errorX = 0;
+    float errorY = 0;
+    float outputX = 0;
+    float outputY = 0;
+    float targetX = 0;
+    float targetY = 0;
+    float targetVelocityX = 0;
+    float targetVelocityY = 0;
+    float currentKp = 0;
+    float currentKi = 0;
+    float currentKd = 0;
 
-    // === 新增：P/I/D 分项输出 ===
-    float pTermX = 0;       // X轴 P项贡献
-    float pTermY = 0;       // Y轴 P项贡献
-    float iTermX = 0;       // X轴 I项贡献
-    float iTermY = 0;       // Y轴 I项贡献
-    float dTermX = 0;       // X轴 D项贡献
-    float dTermY = 0;       // Y轴 D项贡献
+    // === P/I/D 分项输出 ===
+    float pTermX = 0;
+    float pTermY = 0;
+    float iTermX = 0;
+    float iTermY = 0;
+    float dTermX = 0;
+    float dTermY = 0;
 
-    // === 新增：积分健康状态 ===
-    float integralAbsX = 0;         // 积分绝对值 X
-    float integralAbsY = 0;         // 积分绝对值 Y
-    float integralLimitX = 1.0f;    // X积分限幅值
-    float integralLimitY = 1.0f;    // Y积分限幅值
-    float integralRatioX = 0;       // X积分占用率 (0~1)
-    float integralRatioY = 0;       // Y积分占用率 (0~1)
+    // === 积分健康状态 ===
+    float integralAbsX = 0;
+    float integralAbsY = 0;
+    float integralLimitX = 1.0f;
+    float integralLimitY = 1.0f;
+    float integralRatioX = 0;
+    float integralRatioY = 0;
 
-    // === 新增：控制模式自动诊断 ===
-    int controlMode = 0;            // 0=IDLE(无目标) 1=TRACKING 2=LOCKED(锁定) 3=I_SATURATION(饱和告警) 4=OSCILLATING(振荡) 5=PREDICTING(预测主导)
-    int algorithmType = 0;          // 0=AdvancedPID 1=StandardPID 2=ChrisPID
+    // === 控制模式自动诊断 ===
+    int controlMode = 0;   // 0=IDLE 1=TRACKING 2=LOCKED 3=I_SATURATION 4=OSCILLATING 5=PREDICTING
+    int algorithmType = 0; // 0=AdvancedPID 1=ExternalPID 5=NeuralPath
 
-    // === 新增：额外诊断信息 ===
-    bool isFiring = false;          // 是否正在射击（压枪状态）
-    float smoothingFactorX = 0;     // 当前X平滑系数
-    float smoothingFactorY = 0;     // 当前Y平滑系数
+    // === 额外诊断信息 ===
+    bool isFiring = false;
+    float smoothingFactorX = 0;
+    float smoothingFactorY = 0;
+
+    // === 时间戳（用于历史记录） ===
+    std::chrono::steady_clock::time_point timestamp;
 };
 using PidDataCallback = std::function<void(const PidDebugData&)>;
 

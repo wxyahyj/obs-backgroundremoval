@@ -1,17 +1,12 @@
-#ifndef DML_PREPROCESSOR_H
+﻿#ifndef DML_PREPROCESSOR_H
 #define DML_PREPROCESSOR_H
 
 #ifdef _WIN32
 #define NOMINMAX
 #endif
 
-#include <d3d11.h>
-#include <d3d12.h>
-#include <dxgi1_6.h>
-#include <wrl/client.h>
+#include <cstdint>
 #include <vector>
-
-using Microsoft::WRL::ComPtr;
 
 struct DmlPreprocessParams {
     int srcWidth;
@@ -23,55 +18,57 @@ struct DmlPreprocessParams {
     int padY;
 };
 
+// Preprocessed frame ready for ONNX Runtime DML EP inference.
+// Owns a float buffer (CHW layout, normalized) that the inference thread
+// wraps directly with Ort::Value::CreateTensor.
+struct DmlPreprocessedFrame {
+    std::vector<float> data;   // CHW, NCHW with N=1
+    int width = 0;
+    int height = 0;
+    int channels = 3;
+    int srcWidth = 0;   // crop region pixel width before letterbox
+    int srcHeight = 0;  // crop region pixel height before letterbox
+    int cropX = 0;      // crop region top-left X in the full frame
+    int cropY = 0;      // crop region top-left Y in the full frame
+    int fullWidth = 0;  // full frame width (for restoring normalized coords)
+    int fullHeight = 0; // full frame height (for restoring normalized coords)
+    int64_t timestamp = 0;
+
+    bool valid() const { return !data.empty() && width > 0 && height > 0; }
+    void reset() { data.clear(); width = height = channels = 0; srcWidth = srcHeight = 0;
+                   cropX = cropY = fullWidth = fullHeight = 0; timestamp = 0; }
+};
+
 class DmlPreprocessor {
 public:
     DmlPreprocessor();
     ~DmlPreprocessor();
-    
-    // 初始化预处理器（不再需要传入D3D11设备，会从纹理动态获取）
+
     bool initialize();
     void release();
-    
-    bool preprocessFromTexture(
-        ID3D11Texture2D* srcTexture,
-        float* dstBuffer,
+
+    // CPU-side letterbox + normalize from raw BGRA pixels.
+    // Callable from the render thread (uses no D3D11 immediate context).
+    bool preprocessFromBgra(
+        const uint8_t* bgraData,
+        int srcWidth,
+        int srcHeight,
+        int srcStrideBytes,
         int dstWidth,
         int dstHeight,
+        DmlPreprocessedFrame& outFrame,
         DmlPreprocessParams* outParams = nullptr
     );
-    
+
     bool isInitialized() const { return initialized_; }
-    
+
     static DmlPreprocessParams calculateParams(
         int srcWidth, int srcHeight,
         int dstWidth, int dstHeight
     );
-    
+
 private:
-    bool createD3D12Device();
-    bool copyAndPreprocess(
-        ID3D11Texture2D* srcTexture,
-        float* dstBuffer,
-        const DmlPreprocessParams& params
-    );
-    
     bool initialized_;
-    
-    // D3D12设备用于未来的GPU加速预处理（可选）
-    ComPtr<ID3D12Device> d3d12Device_;
-    ComPtr<ID3D12CommandQueue> commandQueue_;
-    ComPtr<ID3D12CommandAllocator> commandAllocator_;
-    ComPtr<ID3D12GraphicsCommandList> commandList_;
-    ComPtr<ID3D12Fence> fence_;
-    UINT64 fenceValue_;
-    HANDLE fenceEvent_;
-    
-    // 复用staging texture（每次从纹理获取OBS设备）
-    ComPtr<ID3D11Texture2D> cachedStagingTexture_;
-    D3D11_TEXTURE2D_DESC cachedStagingDesc_;
-    
-    std::vector<unsigned char> cpuBuffer_;
-    std::vector<float> preprocessedBuffer_;
 };
 
 #endif

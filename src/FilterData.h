@@ -8,13 +8,7 @@
 
 #include "models/Model.h"
 
-/**
-  * @brief The filter_data struct
-  *
-  * This struct is used to store the base data needed for ORT filters.
-  *
-*/
-struct filter_data : public std::enable_shared_from_this<filter_data> {
+struct filter_data {
 	std::string useGPU;
 	uint32_t numThreads;
 	std::string modelSelection;

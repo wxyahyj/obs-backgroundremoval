@@ -237,7 +237,7 @@ std::vector<Detection> TargetTracker::updateWithHungarian(const std::vector<Dete
             auto now = std::chrono::steady_clock::now();
             for (auto it = lostTargets_.begin(); it != lostTargets_.end(); ) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->lostTime).count();
-                if (elapsed > config_.maxReidentifyFrames * 33) {
+                if (elapsed > 1000) {  // 超过1秒未重新识别则清除
                     it = lostTargets_.erase(it);
                     continue;
                 }
@@ -256,13 +256,12 @@ std::vector<Detection> TargetTracker::updateWithHungarian(const std::vector<Dete
                         trackedDetections.push_back(newDet);
                         detectionMatched[i] = true;
                         it = lostTargets_.erase(it);
-                        break;
+                        goto nextLostTarget;
                     }
                 }
-                
-                if (it != lostTargets_.end()) {
-                    ++it;
-                }
+
+                ++it;
+                nextLostTarget: ;
             }
         }
     }

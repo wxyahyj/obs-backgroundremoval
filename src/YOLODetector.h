@@ -46,12 +46,6 @@ public:
     void shutdown();
 
     std::vector<Detection> inference(const cv::Mat& frame);
-    
-#ifdef _WIN32
-#if defined(HAVE_CUDA) || defined(HAVE_ONNXRUNTIME_DML_EP)
-    std::vector<Detection> inferenceFromTexture(void* texture, int width, int height, int fullWidth, int fullHeight);
-#endif
-#endif
 
     void updateConfig(const Config& config);
     Config getConfig() const { return config_; }
