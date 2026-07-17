@@ -548,28 +548,30 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(extKiDeadbandProp, "误差变化超过此值时重置状态");
 
 	// aim 控制器参数组（增量式PID+运动预测+柏林噪声）
-	obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", OBS_GROUP_NORMAL, nullptr);
-	obs_property_t *aimKpProp = obs_properties_add_float_slider(props, "aim_kp", "比例增益 Kp", 0.0, 3.0, 0.01);
+	// 使用子容器，组可见时子属性自动跟随
+	obs_properties *aimProps = obs_properties_create();
+	obs_property_t *aimKpProp = obs_properties_add_float_slider(aimProps, "aim_kp", "比例增益 Kp", 0.0, 3.0, 0.01);
 	obs_property_set_long_description(aimKpProp, "aim 控制器比例增益，响应速度");
-	obs_property_t *aimKiProp = obs_properties_add_float_slider(props, "aim_ki", "积分增益 Ki", 0.0, 0.5, 0.001);
+	obs_property_t *aimKiProp = obs_properties_add_float_slider(aimProps, "aim_ki", "积分增益 Ki", 0.0, 0.5, 0.001);
 	obs_property_set_long_description(aimKiProp, "aim 控制器积分增益，消除稳态误差");
-	obs_property_t *aimKdProp = obs_properties_add_float_slider(props, "aim_kd", "微分增益 Kd", 0.0, 0.2, 0.001);
+	obs_property_t *aimKdProp = obs_properties_add_float_slider(aimProps, "aim_kd", "微分增益 Kd", 0.0, 0.2, 0.001);
 	obs_property_set_long_description(aimKdProp, "aim 控制器微分增益，抑制超调");
-	obs_property_t *aimNoiseEnabledProp = obs_properties_add_bool(props, "aim_noise_enabled", "启用人类化抖动");
+	obs_property_t *aimNoiseEnabledProp = obs_properties_add_bool(aimProps, "aim_noise_enabled", "启用人类化抖动");
 	obs_property_set_long_description(aimNoiseEnabledProp, "启用柏林噪声模拟人类操作的自然抖动");
 	obs_property_set_modified_callback(aimNoiseEnabledProp, onPageChanged);
-	obs_property_t *aimNoiseAmpProp = obs_properties_add_float_slider(props, "aim_noise_amplitude", "噪声幅度", 0.0, 20.0, 0.1);
+	obs_property_t *aimNoiseAmpProp = obs_properties_add_float_slider(aimProps, "aim_noise_amplitude", "噪声幅度", 0.0, 20.0, 0.1);
 	obs_property_set_long_description(aimNoiseAmpProp, "柏林噪声幅度（像素），仅启用抖动时生效");
-	obs_property_t *aimPredWeightXProp = obs_properties_add_float_slider(props, "aim_prediction_weight_x", "X轴预测权重", 0.0, 1.0, 0.01);
+	obs_property_t *aimPredWeightXProp = obs_properties_add_float_slider(aimProps, "aim_prediction_weight_x", "X轴预测权重", 0.0, 1.0, 0.01);
 	obs_property_set_long_description(aimPredWeightXProp, "aim 控制器自带运动预测器的X轴权重");
-	obs_property_t *aimPredWeightYProp = obs_properties_add_float_slider(props, "aim_prediction_weight_y", "Y轴预测权重", 0.0, 1.0, 0.01);
+	obs_property_t *aimPredWeightYProp = obs_properties_add_float_slider(aimProps, "aim_prediction_weight_y", "Y轴预测权重", 0.0, 1.0, 0.01);
 	obs_property_set_long_description(aimPredWeightYProp, "aim 控制器自带运动预测器的Y轴权重");
-	obs_property_t *aimRampTimeProp = obs_properties_add_float_slider(props, "aim_ramp_time", "渐入时间(秒)", 0.0, 2.0, 0.01);
+	obs_property_t *aimRampTimeProp = obs_properties_add_float_slider(aimProps, "aim_ramp_time", "渐入时间(秒)", 0.0, 2.0, 0.01);
 	obs_property_set_long_description(aimRampTimeProp, "从初始缩放到满输出的过渡时间");
-	obs_property_t *aimInitScaleProp = obs_properties_add_float_slider(props, "aim_init_scale", "初始缩放", 0.0, 1.0, 0.01);
+	obs_property_t *aimInitScaleProp = obs_properties_add_float_slider(aimProps, "aim_init_scale", "初始缩放", 0.0, 1.0, 0.01);
 	obs_property_set_long_description(aimInitScaleProp, "锁定瞬间的输出缩放比例，避免大幅移动");
-	obs_property_t *aimOutputMaxProp = obs_properties_add_float_slider(props, "aim_output_max", "最大输出", 1.0, 500.0, 1.0);
+	obs_property_t *aimOutputMaxProp = obs_properties_add_float_slider(aimProps, "aim_output_max", "最大输出", 1.0, 500.0, 1.0);
 	obs_property_set_long_description(aimOutputMaxProp, "aim 控制器单帧最大输出幅度");
+	obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", OBS_GROUP_NORMAL, aimProps);
 
 	// ========== 页面7: 准星检测 ==========
 #ifdef _WIN32
@@ -913,19 +915,11 @@ bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data
 	obs_property_set_visible(obs_properties_get(props, "external_ki_deadband"), page == 3 && algorithm == 1);
 
 	// aim 控制器参数只在 algorithm == 2 时显示
+	// 子属性在子容器中，组可见时自动跟随；仅 aim_noise_amplitude 需根据开关单独控制
 	bool aimVisible = (page == 3 && algorithm == 2);
 	bool aimNoiseVisible = aimVisible && obs_data_get_bool(settings, "aim_noise_enabled");
 	obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_kp"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_ki"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_kd"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_noise_enabled"), aimVisible);
 	obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_x"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_y"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_ramp_time"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_init_scale"), aimVisible);
-	obs_property_set_visible(obs_properties_get(props, "aim_output_max"), aimVisible);
 
 	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
@@ -1072,20 +1066,12 @@ bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t
 	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 1);
 
 	// aim 控制器参数只在 algorithm == 2 时显示
+	// 子属性在子容器中，组可见时自动跟随；仅 aim_noise_amplitude 需根据开关单独控制
 	{
 		bool aimVis = (page == 3 && algorithm == 2);
 		bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
 		obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_kp"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_ki"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_kd"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_noise_enabled"), aimVis);
 		obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_x"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_prediction_weight_y"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_ramp_time"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_init_scale"), aimVis);
-		obs_property_set_visible(obs_properties_get(props, "aim_output_max"), aimVis);
 	}
 
 	// 测试连接按钮只在基础页面显示

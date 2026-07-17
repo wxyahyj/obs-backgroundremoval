@@ -886,21 +886,21 @@ void AbstractMouseController::tick()
         aimController_.set_output_limits(-config.aimOutputMax, config.aimOutputMax);
 
         // 噪声幅度：开关关闭时强制为0
-        double noiseAmp = config.aimNoiseEnabled ? (double)config.aimNoiseAmplitude : 0.0;
+        double noiseAmp = config.aimNoiseEnabled ? static_cast<double>(config.aimNoiseAmplitude) : 0.0;
 
         // 调用 aim 控制器（使用 aim 自带的运动预测器，不依赖现有 predictor）
         auto result = aimController_.update(
-            (double)errorX,
-            (double)errorY,
-            (double)config.aimPredictionWeightX,
-            (double)config.aimPredictionWeightY,
-            (double)config.aimInitScale,
-            (double)config.aimRampTime,
-            (double)config.aimOutputMax,
+            static_cast<double>(errorX),
+            static_cast<double>(errorY),
+            static_cast<double>(config.aimPredictionWeightX),
+            static_cast<double>(config.aimPredictionWeightY),
+            static_cast<double>(config.aimInitScale),
+            static_cast<double>(config.aimRampTime),
+            static_cast<double>(config.aimOutputMax),
             noiseAmp);
 
-        moveX = (float)result.move_x;
-        moveY = (float)result.move_y;
+        moveX = static_cast<float>(result.move_x);
+        moveY = static_cast<float>(result.move_y);
 
         if (pidDataCallback_) {
             PidDebugData data;
@@ -915,8 +915,14 @@ void AbstractMouseController::tick()
             data.currentKp = config.aimKp;
             data.currentKi = config.aimKi;
             data.currentKd = config.aimKd;
-            data.algorithmType = 5;  // 5=AimController（与 NeuralPath 区分）
+            data.algorithmType = 6;  // 6=AimController（避开 NeuralPath=5）
             data.isFiring = isFiring;
+            // AimController 专用调试字段
+            data.aimPredictedX = static_cast<float>(result.predicted_x);
+            data.aimPredictedY = static_cast<float>(result.predicted_y);
+            data.aimFusedX = static_cast<float>(result.fused_x);
+            data.aimFusedY = static_cast<float>(result.fused_y);
+            data.aimCurveLen = static_cast<float>(result.curve_len);
             pidDataCallback_(data);
         }
 

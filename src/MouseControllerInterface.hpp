@@ -52,12 +52,19 @@ struct PidDebugData {
 
     // === 控制模式自动诊断 ===
     int controlMode = 0;   // 0=IDLE 1=TRACKING 2=LOCKED 3=I_SATURATION 4=OSCILLATING 5=PREDICTING
-    int algorithmType = 0; // 0=AdvancedPID 1=ExternalPID 5=NeuralPath
+    int algorithmType = 0; // 0=AdvancedPID 1=ExternalPID 5=NeuralPath 6=AimController
 
     // === 额外诊断信息 ===
     bool isFiring = false;
     float smoothingFactorX = 0;
     float smoothingFactorY = 0;
+
+    // === AimController 专用调试字段 ===
+    float aimPredictedX = 0;   // 运动预测的 X 轴偏移
+    float aimPredictedY = 0;   // 运动预测的 Y 轴偏移
+    float aimFusedX = 0;       // 融合后的 X 轴误差（原始+预测+曲线）
+    float aimFusedY = 0;       // 融合后的 Y 轴误差
+    float aimCurveLen = 0;     // 融合误差向量长度
 
     // === 时间戳（用于历史记录） ===
     std::chrono::steady_clock::time_point timestamp;
