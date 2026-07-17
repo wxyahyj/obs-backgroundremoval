@@ -821,14 +821,12 @@ void AbstractMouseController::tick()
         previousErrorX = errorX;
         previousErrorY = errorY;
     } else if (config.algorithmType == AlgorithmType::ExternalPID) {
-        // 外部PID库（pid_x64.lib）
+        // 外部PID（逆向重构自 pid.obj / pid_x64.lib，已剔除许可证验证）
         if (!externalPidInitialized_) {
-            externalPidX.setName("ExternalPID_X");
-            externalPidY.setName("ExternalPID_Y");
             externalPidX.init(config.externalKpX, config.externalKiX, config.externalKdX, config.externalPredictX, config.externalRateX);
             externalPidY.init(config.externalKpY, config.externalKiY, config.externalKdY, config.externalPredictY, config.externalRateY);
-            externalPidX.setBase(config.externalKiMode, config.externalKpLimit, config.externalKiLimit, config.externalKdLimit, config.externalOutputLimit, config.externalKiRate, config.externalKiDeadband);
-            externalPidY.setBase(config.externalKiMode, config.externalKpLimit, config.externalKiLimit, config.externalKdLimit, config.externalOutputLimit, config.externalKiRate, config.externalKiDeadband);
+            externalPidX.set_base(static_cast<int>(config.externalKiMode), config.externalKpLimit, config.externalKiLimit, config.externalKdLimit, config.externalOutputLimit, config.externalKiRate, config.externalKiDeadband);
+            externalPidY.set_base(static_cast<int>(config.externalKiMode), config.externalKpLimit, config.externalKiLimit, config.externalKdLimit, config.externalOutputLimit, config.externalKiRate, config.externalKiDeadband);
             externalPidInitialized_ = true;
         }
 

@@ -226,9 +226,7 @@ endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc OpenCV::opencv_imgcodecs nlohmann_json::nlohmann_json Eigen3::Eigen)
 
-# ExternalPID实现源文件
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/libs/pid")
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/libs/pid/pid_impl.cpp")
+# ExternalPID 实现已切换到逆向重构的 src/mpid.cpp（移除 libs/pid 依赖）
 
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)

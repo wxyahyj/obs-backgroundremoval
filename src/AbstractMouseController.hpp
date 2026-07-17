@@ -14,9 +14,12 @@
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
 #include "curve.hpp"
-#include "../libs/pid/pid.h"
+#include "mpid.hpp"
 #include "utils/GhostTracker.hpp"
 #include "aim_controller.hpp"
+
+// 切换到逆向重构的 PidController（来自 mpid.hpp 的 mist::reconstructed 命名空间）
+using mist::reconstructed::PidController;
 
 // 简单1D卡尔曼滤波器（专业PID风格，成员变量公开）
 class SimpleKalmanFilter {
