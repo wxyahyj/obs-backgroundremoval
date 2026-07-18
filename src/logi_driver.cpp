@@ -104,6 +104,11 @@ typedef struct _RAZER_REPORT {
 static const GUID GUID_DEVINTERFACE_HID_LOCAL =
     {0x4d1e55b2, 0xf16f, 0x11cf, {0x88, 0xcb, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30}};
 
+/* Razer RzCommon.sys 驱动设备接口 GUID(雷云3/4共用,逆向自 RzCommon.sys)
+ * 雷云4 的 KMDF 驱动不创建 RZCONTROL 符号链接,改用此 GUID 暴露设备接口 */
+static const GUID GUID_DEVINTERFACE_RAZER_RZCOMMON =
+    {0xe3be005d, 0xd130, 0x4910, {0x88, 0xff, 0x09, 0xae, 0x02, 0xf6, 0x80, 0xe9}};
+
 /* 驱动类型标识 */
 #define DRIVER_TYPE_NONE   0
 #define DRIVER_TYPE_LGS    1
@@ -378,6 +383,57 @@ static BOOL try_open_razer_device(void)
     return found;
 }
 
+/* 通过 RzCommon 设备接口 GUID 枚举雷云3/4 设备(优先尝试,最可靠)
+ * 雷云4 的 KMDF 驱动不创建 RZCONTROL 符号链接,必须用此方式发现 */
+static BOOL try_open_razer_via_interface_guid(void)
+{
+    HDEVINFO devInfo = SetupDiGetClassDevsW(
+        &GUID_DEVINTERFACE_RAZER_RZCOMMON, NULL, NULL,
+        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devInfo == INVALID_HANDLE_VALUE)
+        return FALSE;
+
+    SP_DEVICE_INTERFACE_DATA ifData;
+    ZeroMemory(&ifData, sizeof(ifData));
+    ifData.cbSize = sizeof(ifData);
+
+    BOOL found = FALSE;
+
+    for (DWORD index = 0;
+         SetupDiEnumDeviceInterfaces(devInfo, NULL, &GUID_DEVINTERFACE_RAZER_RZCOMMON, index, &ifData);
+         index++)
+    {
+        DWORD requiredSize = 0;
+        (void)SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, NULL, 0, &requiredSize, NULL);
+        if (requiredSize < sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W))
+            continue;
+
+        BYTE* buf = (BYTE*)HeapAlloc(GetProcessHeap(), 0, requiredSize);
+        if (!buf)
+            continue;
+
+        SP_DEVICE_INTERFACE_DETAIL_DATA_W* detail =
+            (SP_DEVICE_INTERFACE_DETAIL_DATA_W*)buf;
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+        if (SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, detail, requiredSize, NULL, NULL)) {
+            /* 优先用 0 访问模式尝试(雷蛇驱动允许),失败再用读写模式 */
+            if (try_open_razer_candidate(detail->DevicePath, 0) ||
+                try_open_razer_candidate(detail->DevicePath, GENERIC_READ | GENERIC_WRITE))
+            {
+                found = TRUE;
+                HeapFree(GetProcessHeap(), 0, buf);
+                break;
+            }
+        }
+
+        HeapFree(GetProcessHeap(), 0, buf);
+    }
+
+    SetupDiDestroyDeviceInfoList(devInfo);
+    return found;
+}
+
 static BOOL try_open_razer_hid_interface(void)
 {
     HDEVINFO devInfo = SetupDiGetClassDevsW(
@@ -644,9 +700,12 @@ int device_open(void)
         }
     }
 
-    /* 尝试Razer */
+    /* 尝试Razer:优先用 RzCommon 设备接口 GUID(雷云3/4 通用,最可靠),
+     * 其次 RZCONTROL 符号链接(雷云3 老路径),最后 HID 接口兜底 */
     if (g_forced_type == DRIVER_TYPE_NONE || g_forced_type == DRIVER_TYPE_RAZER) {
-        if (try_open_razer_device() || try_open_razer_hid_interface()) {
+        if (try_open_razer_via_interface_guid() ||
+            try_open_razer_device() ||
+            try_open_razer_hid_interface()) {
             LeaveCriticalSection(&g_mutex);
             return 1;
         }
