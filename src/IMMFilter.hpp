@@ -120,10 +120,16 @@ inline void IMMFilter::predictCV(float dt)
     float Q[CX][CX] = {};
     float dt2 = dt * dt;
     float dt3 = dt2 * dt;
-    Q[0][0] = Qpos * dt3 / 3; Q[0][1] = Qpos * dt2 / 2;
-    Q[1][0] = Qpos * dt2 / 2; Q[1][1] = Qpos * dt;
-    Q[2][2] = Qpos * dt3 / 3; Q[2][3] = Qpos * dt2 / 2;
-    Q[3][2] = Qpos * dt2 / 2; Q[3][3] = Qpos * dt;
+    float dt4 = dt2 * dt2;
+    float qv = Qvel;
+    Q[0][0] = Qpos * dt3 / 3 + qv * dt4 / 4;
+    Q[0][1] = qv * dt3 / 2;
+    Q[1][0] = qv * dt3 / 2;
+    Q[1][1] = Qpos * dt + qv * dt2;
+    Q[2][2] = Qpos * dt3 / 3 + qv * dt4 / 4;
+    Q[2][3] = qv * dt3 / 2;
+    Q[3][2] = qv * dt3 / 2;
+    Q[3][3] = Qpos * dt + qv * dt2;
 
     float xPred[CX];
     float Pp[CX][CX];
@@ -149,18 +155,29 @@ inline void IMMFilter::predictCV(float dt)
 
 inline void IMMFilter::updateCV(float mx, float my)
 {
-    float meas[2] = {mx, my};
-    float Hx = 1, Hy = 0;
+    float innovX = mx - xCV_[0];
+    float innovY = my - xCV_[2];
     float Sx = PxCV_[0][0] + cfg_.measurementNoiseX;
-    float Kx = PxCV_[0][0] / std::max(Sx, TINY);
     float Sy = PxCV_[2][2] + cfg_.measurementNoiseY;
-    float Ky = PxCV_[2][2] / std::max(Sy, TINY);
-    xCV_[0] += Kx * (meas[0] - xCV_[0]);
-    xCV_[1] += (PxCV_[1][0] / std::max(Sx, TINY)) * (meas[0] - xCV_[0]);
-    xCV_[2] += Ky * (meas[1] - xCV_[2]);
-    xCV_[3] += (PxCV_[3][2] / std::max(Sy, TINY)) * (meas[1] - xCV_[2]);
-    PxCV_[0][0] = (1 - Kx) * PxCV_[0][0];
-    PxCV_[2][2] = (1 - Ky) * PxCV_[2][2];
+    float Kx[4] = {};
+    Kx[0] = PxCV_[0][0] / std::max(Sx, TINY);
+    Kx[1] = PxCV_[1][0] / std::max(Sx, TINY);
+    Kx[2] = PxCV_[2][0] / std::max(Sx, TINY);
+    Kx[3] = PxCV_[3][0] / std::max(Sx, TINY);
+    float Ky[4] = {};
+    Ky[0] = PxCV_[0][2] / std::max(Sy, TINY);
+    Ky[1] = PxCV_[1][2] / std::max(Sy, TINY);
+    Ky[2] = PxCV_[2][2] / std::max(Sy, TINY);
+    Ky[3] = PxCV_[3][2] / std::max(Sy, TINY);
+    xCV_[0] += Kx[0] * innovX + Ky[0] * innovY;
+    xCV_[1] += Kx[1] * innovX + Ky[1] * innovY;
+    xCV_[2] += Kx[2] * innovX + Ky[2] * innovY;
+    xCV_[3] += Kx[3] * innovX + Ky[3] * innovY;
+    for (size_t i = 0; i < CX; i++) {
+        for (size_t j = 0; j < CX; j++) {
+            PxCV_[i][j] -= Kx[i] * PxCV_[0][j] + Ky[i] * PxCV_[2][j];
+        }
+    }
 }
 
 inline void IMMFilter::predictCA(float dt)
@@ -177,11 +194,18 @@ inline void IMMFilter::predictCA(float dt)
 
     float Qacc = cfg_.processNoiseAcc;
     float Q[CAX][CAX] = {};
+    float dt2 = dt * dt;
+    float dt3 = dt2 * dt;
+    float dt4 = dt2 * dt2;
+    float dt5 = dt3 * dt2;
     for (size_t d = 0; d < 2; d++) {
-        size_t i0 = d * 3;
-        for (size_t i = 0; i < 3; i++)
-            for (size_t j = 0; j < 3; j++)
-                Q[i0 + i][i0 + j] = Qacc * (i + j >= 2 ? 0.01f : 0.05f);
+        size_t b = d * 3;
+        Q[b][b]     = Qacc * dt5 / 20;
+        Q[b][b+1]   = Qacc * dt4 / 8;  Q[b+1][b]   = Qacc * dt4 / 8;
+        Q[b][b+2]   = Qacc * dt3 / 6;  Q[b+2][b]   = Qacc * dt3 / 6;
+        Q[b+1][b+1] = Qacc * dt3 / 3;
+        Q[b+1][b+2] = Qacc * dt2 / 2;  Q[b+2][b+1] = Qacc * dt2 / 2;
+        Q[b+2][b+2] = Qacc * dt;
     }
 
     float xPred[CAX] = {};
@@ -205,21 +229,35 @@ inline void IMMFilter::predictCA(float dt)
 
 inline void IMMFilter::updateCA(float mx, float my)
 {
-    float meas[2] = {mx, my};
+    float innovX = mx - xCA_[0];
+    float innovY = my - xCA_[3];
     float Sx = PxCA_[0][0] + cfg_.measurementNoiseX;
-    float Kx = PxCA_[0][0] / std::max(Sx, TINY);
     float Sy = PxCA_[3][3] + cfg_.measurementNoiseY;
-    float Ky = PxCA_[3][3] / std::max(Sy, TINY);
-    float innovX = meas[0] - xCA_[0];
-    float innovY = meas[1] - xCA_[3];
-    xCA_[0] += Kx * innovX;
-    xCA_[1] += (PxCA_[1][0] / std::max(Sx, TINY)) * innovX;
-    xCA_[2] += (PxCA_[2][0] / std::max(Sx, TINY)) * innovX;
-    xCA_[3] += Ky * innovY;
-    xCA_[4] += (PxCA_[4][3] / std::max(Sy, TINY)) * innovY;
-    xCA_[5] += (PxCA_[5][3] / std::max(Sy, TINY)) * innovY;
-    PxCA_[0][0] = (1 - Kx) * PxCA_[0][0];
-    PxCA_[3][3] = (1 - Ky) * PxCA_[3][3];
+    float Kx[6] = {};
+    Kx[0] = PxCA_[0][0] / std::max(Sx, TINY);
+    Kx[1] = PxCA_[1][0] / std::max(Sx, TINY);
+    Kx[2] = PxCA_[2][0] / std::max(Sx, TINY);
+    Kx[3] = PxCA_[3][0] / std::max(Sx, TINY);
+    Kx[4] = PxCA_[4][0] / std::max(Sx, TINY);
+    Kx[5] = PxCA_[5][0] / std::max(Sx, TINY);
+    float Ky[6] = {};
+    Ky[0] = PxCA_[0][3] / std::max(Sy, TINY);
+    Ky[1] = PxCA_[1][3] / std::max(Sy, TINY);
+    Ky[2] = PxCA_[2][3] / std::max(Sy, TINY);
+    Ky[3] = PxCA_[3][3] / std::max(Sy, TINY);
+    Ky[4] = PxCA_[4][3] / std::max(Sy, TINY);
+    Ky[5] = PxCA_[5][3] / std::max(Sy, TINY);
+    xCA_[0] += Kx[0] * innovX + Ky[0] * innovY;
+    xCA_[1] += Kx[1] * innovX + Ky[1] * innovY;
+    xCA_[2] += Kx[2] * innovX + Ky[2] * innovY;
+    xCA_[3] += Kx[3] * innovX + Ky[3] * innovY;
+    xCA_[4] += Kx[4] * innovX + Ky[4] * innovY;
+    xCA_[5] += Kx[5] * innovX + Ky[5] * innovY;
+    for (size_t i = 0; i < CAX; i++) {
+        for (size_t j = 0; j < CAX; j++) {
+            PxCA_[i][j] -= Kx[i] * PxCA_[0][j] + Ky[i] * PxCA_[3][j];
+        }
+    }
 }
 
 inline void IMMFilter::predictCT(float dt)
@@ -265,41 +303,65 @@ inline void IMMFilter::predictCT(float dt)
 
 inline void IMMFilter::updateCT(float mx, float my)
 {
-    float meas[2] = {mx, my};
+    float innovX = mx - xCT_[0];
+    float innovY = my - xCT_[2];
     float Sx = PxCT_[0][0] + cfg_.measurementNoiseX;
-    float Kx = PxCT_[0][0] / std::max(Sx, TINY);
     float Sy = PxCT_[2][2] + cfg_.measurementNoiseY;
-    float Ky = PxCT_[2][2] / std::max(Sy, TINY);
-    float innovX = meas[0] - xCT_[0];
-    float innovY = meas[1] - xCT_[2];
-    xCT_[0] += Kx * innovX;
-    xCT_[1] += (PxCT_[1][0] / std::max(Sx, TINY)) * innovX;
-    xCT_[2] += Ky * innovY;
-    xCT_[3] += (PxCT_[3][2] / std::max(Sy, TINY)) * innovY;
-    PxCT_[0][0] = (1 - Kx) * PxCT_[0][0];
-    PxCT_[2][2] = (1 - Ky) * PxCT_[2][2];
+    float Kx[5] = {};
+    Kx[0] = PxCT_[0][0] / std::max(Sx, TINY);
+    Kx[1] = PxCT_[1][0] / std::max(Sx, TINY);
+    Kx[2] = PxCT_[2][0] / std::max(Sx, TINY);
+    Kx[3] = PxCT_[3][0] / std::max(Sx, TINY);
+    Kx[4] = PxCT_[4][0] / std::max(Sx, TINY);
+    float Ky[5] = {};
+    Ky[0] = PxCT_[0][2] / std::max(Sy, TINY);
+    Ky[1] = PxCT_[1][2] / std::max(Sy, TINY);
+    Ky[2] = PxCT_[2][2] / std::max(Sy, TINY);
+    Ky[3] = PxCT_[3][2] / std::max(Sy, TINY);
+    Ky[4] = PxCT_[4][2] / std::max(Sy, TINY);
+    xCT_[0] += Kx[0] * innovX + Ky[0] * innovY;
+    xCT_[1] += Kx[1] * innovX + Ky[1] * innovY;
+    xCT_[2] += Kx[2] * innovX + Ky[2] * innovY;
+    xCT_[3] += Kx[3] * innovX + Ky[3] * innovY;
+    xCT_[4] += Kx[4] * innovX + Ky[4] * innovY;
+    for (size_t i = 0; i < CTX; i++) {
+        for (size_t j = 0; j < CTX; j++) {
+            PxCT_[i][j] -= Kx[i] * PxCT_[0][j] + Ky[i] * PxCT_[2][j];
+        }
+    }
 }
 
 inline void IMMFilter::interact(float dt)
 {
+    (void)dt;
+    float probs[3] = {probCV_, probCA_, probCT_};
+    float c[3] = {};
+    for (size_t j = 0; j < NUM_MODELS; j++) {
+        c[j] = transMatrix_[0][j] * probs[0] + transMatrix_[1][j] * probs[1] + transMatrix_[2][j] * probs[2];
+    }
     float mixProb[3][3] = {};
-    for (size_t j = 0; j < NUM_MODELS; j++) {
-        float sum = 0;
-        float probs[3] = {probCV_, probCA_, probCT_};
-        for (size_t i = 0; i < NUM_MODELS; i++)
-            sum += transMatrix_[i][j] * probs[i];
-        for (size_t i = 0; i < NUM_MODELS; i++)
-            mixProb[i][j] = (sum > TINY) ? transMatrix_[i][j] * probs[i] / sum : 0;
-        if (j == 0) mixProb[0][j] = (sum > TINY) ? transMatrix_[0][0] * probCV_ / sum : 0;
-    }
+    for (size_t i = 0; i < NUM_MODELS; i++)
+        for (size_t j = 0; j < NUM_MODELS; j++)
+            mixProb[i][j] = (c[j] > TINY) ? transMatrix_[i][j] * probs[i] / c[j] : (i == j ? 1.0f : 0.0f);
 
-    float xMixed[3][4] = {};
-    for (size_t j = 0; j < NUM_MODELS; j++) {
-        for (size_t k = 0; k < CX; k++) {
-            xMixed[j][k] = 0;
-            if (j == MODEL_CV) xMixed[j][k] = mixProb[0][j] * xCV_[k];
-        }
-    }
+    float xCV0 = xCV_[0], xCV1 = xCV_[1], xCV2 = xCV_[2], xCV3 = xCV_[3];
+    float xCA0 = xCA_[0], xCA1 = xCA_[1], xCA3 = xCA_[3], xCA4 = xCA_[4];
+    float xCT0 = xCT_[0], xCT1 = xCT_[1], xCT2 = xCT_[2], xCT3 = xCT_[3];
+
+    xCV_[0] = mixProb[0][0]*xCV0 + mixProb[1][0]*xCA0 + mixProb[2][0]*xCT0;
+    xCV_[1] = mixProb[0][0]*xCV1 + mixProb[1][0]*xCA1 + mixProb[2][0]*xCT1;
+    xCV_[2] = mixProb[0][0]*xCV2 + mixProb[1][0]*xCA3 + mixProb[2][0]*xCT2;
+    xCV_[3] = mixProb[0][0]*xCV3 + mixProb[1][0]*xCA4 + mixProb[2][0]*xCT3;
+
+    xCA_[0] = mixProb[0][1]*xCV0 + mixProb[1][1]*xCA0 + mixProb[2][1]*xCT0;
+    xCA_[1] = mixProb[0][1]*xCV1 + mixProb[1][1]*xCA1 + mixProb[2][1]*xCT1;
+    xCA_[3] = mixProb[0][1]*xCV2 + mixProb[1][1]*xCA3 + mixProb[2][1]*xCT2;
+    xCA_[4] = mixProb[0][1]*xCV3 + mixProb[1][1]*xCA4 + mixProb[2][1]*xCT3;
+
+    xCT_[0] = mixProb[0][2]*xCV0 + mixProb[1][2]*xCA0 + mixProb[2][2]*xCT0;
+    xCT_[1] = mixProb[0][2]*xCV1 + mixProb[1][2]*xCA1 + mixProb[2][2]*xCT1;
+    xCT_[2] = mixProb[0][2]*xCV2 + mixProb[1][2]*xCA3 + mixProb[2][2]*xCT2;
+    xCT_[3] = mixProb[0][2]*xCV3 + mixProb[1][2]*xCA4 + mixProb[2][2]*xCT3;
 }
 
 inline void IMMFilter::updateModelProbabilities(float mx, float my)
@@ -336,11 +398,12 @@ inline void IMMFilter::combine()
     xCombined[1] = probCV_ * xCV_[1] + probCA_ * xCA_[1] + probCT_ * xCT_[1];
     xCombined[2] = probCV_ * xCV_[2] + probCA_ * xCA_[3] + probCT_ * xCT_[2];
     xCombined[3] = probCV_ * xCV_[3] + probCA_ * xCA_[4] + probCT_ * xCT_[3];
-    for (size_t i = 0; i < CX; i++) {
-        xCV_[i] = xCombined[i];
-        xCA_[i < 3 ? i : i + 1] = xCombined[i];
-        if (i < CTX-1) xCT_[i] = xCombined[i];
-    }
+    xCV_[0] = xCombined[0]; xCV_[1] = xCombined[1];
+    xCV_[2] = xCombined[2]; xCV_[3] = xCombined[3];
+    xCA_[0] = xCombined[0]; xCA_[1] = xCombined[1];
+    xCA_[3] = xCombined[2]; xCA_[4] = xCombined[3];
+    xCT_[0] = xCombined[0]; xCT_[1] = xCombined[1];
+    xCT_[2] = xCombined[2]; xCT_[3] = xCombined[3];
 }
 
 inline void IMMFilter::predict(float dt)
