@@ -4,6 +4,10 @@
 #include <cmath>
 #include <cstring>
 
+#if defined(__AVX2__) || defined(_MSC_VER)
+#include <immintrin.h>
+#endif
+
 DmlPreprocessor::DmlPreprocessor()
     : initialized_(false)
 {
@@ -18,7 +22,6 @@ bool DmlPreprocessor::initialize()
 {
     if (initialized_) return true;
     initialized_ = true;
-    // Initialized successfully
     return true;
 }
 
@@ -61,9 +64,14 @@ bool DmlPreprocessor::preprocessFromBgra(
         srcWidth, srcHeight, dstWidth, dstHeight);
     if (outParams) *outParams = params;
 
-    const int channels = 3; // RGB
-    const int totalPixels = dstWidth * dstHeight * channels;
-    outFrame.data.resize(totalPixels);
+    const int channels = 3;
+    const int planeSize = dstWidth * dstHeight;
+    const int totalPixels = planeSize * channels;
+    // 复用容量；pad 填 114/255 与 letterbox 路径一致
+    if (static_cast<int>(outFrame.data.capacity()) < totalPixels) {
+        outFrame.data.reserve(static_cast<size_t>(totalPixels));
+    }
+    outFrame.data.assign(static_cast<size_t>(totalPixels), 114.0f / 255.0f);
     outFrame.width = dstWidth;
     outFrame.height = dstHeight;
     outFrame.channels = channels;
@@ -72,33 +80,32 @@ bool DmlPreprocessor::preprocessFromBgra(
 
     const int newWidth = static_cast<int>(srcWidth * params.scale);
     const int newHeight = static_cast<int>(srcHeight * params.scale);
+    const float invScale = (params.scale > 1e-8f) ? (1.0f / params.scale) : 0.0f;
+    const float inv255 = 1.0f / 255.0f;
 
-    // Nearest-neighbour resize + BGRA->RGB + pad, written as CHW.
-    for (int dy = 0; dy < dstHeight; ++dy) {
-        for (int dx = 0; dx < dstWidth; ++dx) {
-            int sx = dx - params.padX;
-            int sy = dy - params.padY;
+    float* rPlane = outFrame.data.data();
+    float* gPlane = outFrame.data.data() + planeSize;
+    float* bPlane = outFrame.data.data() + 2 * planeSize;
 
-            float r = 0.0f, g = 0.0f, b = 0.0f;
+    // 只扫有效内容区，pad 已是 0
+    const int y0 = std::max(0, params.padY);
+    const int y1 = std::min(dstHeight, params.padY + newHeight);
+    const int x0 = std::max(0, params.padX);
+    const int x1 = std::min(dstWidth, params.padX + newWidth);
 
-            if (sx >= 0 && sx < newWidth && sy >= 0 && sy < newHeight) {
-                int srcX = static_cast<int>(sx / params.scale);
-                int srcY = static_cast<int>(sy / params.scale);
-                srcX = std::clamp(srcX, 0, srcWidth - 1);
-                srcY = std::clamp(srcY, 0, srcHeight - 1);
-
-                const uint8_t* row = bgraData + srcY * srcStrideBytes;
-                const uint8_t* pixel = row + srcX * 4;
-                b = pixel[0] / 255.0f;
-                g = pixel[1] / 255.0f;
-                r = pixel[2] / 255.0f;
-            }
-            // else: pad region stays 0.0f (black padding)
-
-            const int planeSize = dstWidth * dstHeight;
-            outFrame.data[dy * dstWidth + dx] = r;
-            outFrame.data[planeSize + dy * dstWidth + dx] = g;
-            outFrame.data[2 * planeSize + dy * dstWidth + dx] = b;
+    for (int dy = y0; dy < y1; ++dy) {
+        const int sy = static_cast<int>((dy - params.padY) * invScale);
+        const int srcY = std::clamp(sy, 0, srcHeight - 1);
+        const uint8_t* row = bgraData + srcY * srcStrideBytes;
+        const int rowBase = dy * dstWidth;
+        for (int dx = x0; dx < x1; ++dx) {
+            const int sx = static_cast<int>((dx - params.padX) * invScale);
+            const int srcX = std::clamp(sx, 0, srcWidth - 1);
+            const uint8_t* pixel = row + srcX * 4;
+            const int idx = rowBase + dx;
+            bPlane[idx] = pixel[0] * inv255;
+            gPlane[idx] = pixel[1] * inv255;
+            rPlane[idx] = pixel[2] * inv255;
         }
     }
 

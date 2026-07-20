@@ -259,12 +259,19 @@ private:
     std::vector<float> inputBuffer_;
     std::vector<float> outputBuffer_;
     std::vector<Ort::Float16_t> inputBufferFp16_;  // FP16输入缓冲区
+    std::vector<float> outputFp32Scratch_;         // FP16 输出解码缓冲
+    std::vector<int64_t> inputShapeCache_;          // {1,3,H,W}
+    std::unique_ptr<Ort::MemoryInfo> cpuMemInfo_;   // 持久 CPU MemoryInfo
     bool useIOBinding_;
     bool isFp16Model_;  // 是否为FP16模型
     
     // 预分配letterbox缓冲区
     cv::Mat letterboxBuffer_;
     cv::Mat resizedBuffer_;
+    int letterboxLastNewW_ = -1;
+    int letterboxLastNewH_ = -1;
+    int letterboxLastPadX_ = -1;
+    int letterboxLastPadY_ = -1;
     
     // === 阶段1：GPU持久内存 ===
     bool useGpuMemory_;
