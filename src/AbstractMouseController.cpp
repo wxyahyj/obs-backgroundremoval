@@ -256,7 +256,7 @@ void AbstractMouseController::setInferenceTimeMs(float ms)
     std::lock_guard<std::mutex> lock(mutex);
     // 仅在变化超过1ms时记录日志，避免刷屏
     if (std::abs(ms - avgInferenceTimeMs_) > 1.0f) {
-        obs_log(LOG_INFO, "[%s] Smith诊断: avgInferenceTimeMs 更新 %.2f -> %.2f ms",
+        obs_log(LOG_DEBUG, "[%s] Smith诊断: avgInferenceTimeMs 更新 %.2f -> %.2f ms",
                 getLogPrefix(), avgInferenceTimeMs_, ms);
     }
     avgInferenceTimeMs_ = ms;
@@ -657,16 +657,17 @@ void AbstractMouseController::tick()
         bool jumpDetectedX = std::abs(deltaErrorX) > JUMP_THRESHOLD;
         
         if (jumpDetectedX) {
-            adaptivePGainX = 0.0f;
-            adaptiveIGainX = 0.0f;
-            integralX = 0.0f;
-            lastOutputX = 0.0f;
-            kf2X.Q_ = 0.0f;
-            kf2X.R_ = 0.0f;
-            kf3X_x = 0.0f;
-            kf3X_P = 0.0f;
-            pidPreviousErrorX = 0.0f;
-            deltaErrorX = errorX_work;
+            // 衰减而非清零：避免整帧瘫痪
+            adaptivePGainX *= 0.35f;
+            adaptiveIGainX *= 0.35f;
+            integralX *= 0.25f;
+            lastOutputX *= 0.25f;
+            kf2X.Q_ = KF2_Q;
+            kf2X.R_ = KF2_R;
+            kf3X_x *= 0.25f;
+            kf3X_P = 1.0f;
+            pidPreviousErrorX = errorX_work;
+            deltaErrorX = 0.0f;
         }
         
         // Step 3: 自适应积分增益（近距 I 大、远距 I 小 → 近锁定、远少过冲）
@@ -697,7 +698,7 @@ void AbstractMouseController::tick()
         }
         
         // Step 5: 微分计算 + kf2 卡尔曼
-        float DX = round1(deltaErrorX + lastOutputX);
+        float DX = round1(deltaErrorX); // D on error，不加输出反馈
         kf2X.Q_ = KF2_Q;
         kf2X.R_ = KF2_R;
         float kf2OutX = kf2X.update(DX);
@@ -705,7 +706,7 @@ void AbstractMouseController::tick()
         
         // Step 6: 精细调整
         if (absErrorX < 1.0f && std::abs(deltaErrorX) > 0.5f) {
-            DX += round1(0.5f * lastOutputX + deltaErrorX);
+            DX += round1(0.25f * deltaErrorX);
         }
         
         // Step 7: kf3 卡尔曼滤波
@@ -728,10 +729,12 @@ void AbstractMouseController::tick()
             DX = atan2Clamp(DX, config.maxPixelMove, config.maxPixelMove);
         }
         
-        // Step 9: 积分项（带限幅防止饱和）
-        integralX += errorX_work * config.pidI * adaptiveIGainX * config.integralRate;
-        // 应用积分限幅
+        // Step 9: 条件积分 + 限幅（抗饱和）
         float iLimit = (config.integralLimit > 0.0f) ? config.integralLimit : 1000.0f;
+        float iIncX = errorX_work * config.pidI * adaptiveIGainX * config.integralRate;
+        bool satX = (config.maxPixelMove > 0.0f && std::abs(lastOutputX) >= config.maxPixelMove * 0.95f
+                     && lastOutputX * errorX_work > 0.0f);
+        if (!satX) integralX += iIncX; else integralX += 0.15f * iIncX;
         integralX = std::clamp(integralX, -iLimit, iLimit);
         float iOutX = integralX;
         
@@ -787,16 +790,16 @@ void AbstractMouseController::tick()
         bool jumpDetectedY = std::abs(deltaErrorY) > JUMP_THRESHOLD;
         
         if (jumpDetectedY) {
-            adaptivePGainY = 0.0f;
-            adaptiveIGainY = 0.0f;
-            integralY = 0.0f;
-            lastOutputY = 0.0f;
-            kf2Y.Q_ = 0.0f;
-            kf2Y.R_ = 0.0f;
-            kf3Y_x = 0.0f;
-            kf3Y_P = 0.0f;
-            pidPreviousErrorY = 0.0f;
-            deltaErrorY = errorY_work;
+            adaptivePGainY *= 0.35f;
+            adaptiveIGainY *= 0.35f;
+            integralY *= 0.25f;
+            lastOutputY *= 0.25f;
+            kf2Y.Q_ = KF2_Q;
+            kf2Y.R_ = KF2_R;
+            kf3Y_x *= 0.25f;
+            kf3Y_P = 1.0f;
+            pidPreviousErrorY = errorY_work;
+            deltaErrorY = 0.0f;
         }
         
         {
@@ -806,31 +809,32 @@ void AbstractMouseController::tick()
                 adaptiveIGainY += (ratio - adaptiveIGainY) * INTEGRAL_GAIN_RATE;
             } else {
                 ratio = INTEGRAL_GAIN_THRESHOLD / absErrorY;
-                adaptiveIGainY += (ratio * adaptiveIGainY - adaptiveIGainY) * LARGE_ERROR_RATE;
+                adaptiveIGainY += (ratio - adaptiveIGainY) * LARGE_ERROR_RATE;
             }
             adaptiveIGainY = std::clamp(adaptiveIGainY, 0.0f, 1.0f);
         }
         
+        // 远强近弱 P（与 X 一致）
         {
-            float ratio;
-            if (absErrorY < KP_GAIN_THRESHOLD) {
-                ratio = 1.0f - (absErrorY / KP_GAIN_THRESHOLD);
-                adaptivePGainY += (ratio - adaptivePGainY) * config.adaptivePGainRate;
+            float targetP;
+            if (absErrorY >= KP_GAIN_THRESHOLD) {
+                targetP = 1.0f;
             } else {
-                ratio = KP_GAIN_THRESHOLD / absErrorY;
-                adaptivePGainY += (ratio * adaptivePGainY - adaptivePGainY) * LARGE_ERROR_RATE;
+                float t = absErrorY / KP_GAIN_THRESHOLD;
+                targetP = 0.35f + 0.65f * t;
             }
-            adaptivePGainY = std::clamp(adaptivePGainY, 0.0f, 1.0f);
+            adaptivePGainY += (targetP - adaptivePGainY) * config.adaptivePGainRate;
+            adaptivePGainY = std::clamp(adaptivePGainY, 0.2f, 1.0f);
         }
         
-        float DY = round1(deltaErrorY + lastOutputY);
+        float DY = round1(deltaErrorY); // D on error
         kf2Y.Q_ = KF2_Q;
         kf2Y.R_ = KF2_R;
         float kf2OutY = kf2Y.update(DY);
         DY = round1(kf2OutY);
         
         if (absErrorY < 1.0f && std::abs(deltaErrorY) > 0.5f) {
-            DY += round1(0.5f * lastOutputY + deltaErrorY);
+            DY += round1(0.25f * deltaErrorY);
         }
         
         {
@@ -850,9 +854,11 @@ void AbstractMouseController::tick()
         if (config.maxPixelMove > 0.0f) {
             DY = atan2Clamp(DY, config.maxPixelMove, config.maxPixelMove);
         }
-     // Step 9: 积分项（带限幅防止饱和）
-        integralY += errorY_work * config.pidI * adaptiveIGainY * config.integralRate;
-        // 应用积分限幅
+        // Step 9: 条件积分 + 限幅
+        float iIncY = errorY_work * config.pidI * adaptiveIGainY * config.integralRate;
+        bool satY = (config.maxPixelMove > 0.0f && std::abs(lastOutputY) >= config.maxPixelMove * 0.95f
+                     && lastOutputY * errorY_work > 0.0f);
+        if (!satY) integralY += iIncY; else integralY += 0.15f * iIncY;
         integralY = std::clamp(integralY, -iLimit, iLimit);
         float iOutY = integralY;
         

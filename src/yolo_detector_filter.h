@@ -50,7 +50,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	yolo_detector_filter(yolo_detector_filter&&) = default;
 	yolo_detector_filter& operator=(yolo_detector_filter&&) = default;
 
-	std::unique_ptr<ModelYOLO> yoloModel;
+	std::shared_ptr<ModelYOLO> yoloModel;
 	std::mutex yoloModelMutex;
 	ModelYOLO::Version modelVersion;
 

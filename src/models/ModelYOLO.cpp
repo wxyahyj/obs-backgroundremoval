@@ -33,10 +33,43 @@
 #include <immintrin.h>
 #endif
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
+static bool cpuSupportsF16C()
+{
+	static int cached = -1;
+	if (cached >= 0) return cached != 0;
+	int info[4] = {};
+#if defined(_MSC_VER)
+	__cpuidex(info, 1, 0);
+#else
+	cached = 0; return false;
+#endif
+	// ECX bit 29 = F16C
+	cached = ((info[2] & (1 << 29)) != 0) ? 1 : 0;
+	return cached != 0;
+}
+
 static void convertFloatBufferToHalf(const float* src, Ort::Float16_t* dst, size_t n)
 {
-	// 用 ORT 构造器，避免 F16C 指令 / 手写 bits 布局风险
-	for (size_t i = 0; i < n; ++i) {
+	size_t i = 0;
+#if defined(_MSC_VER)
+	if (cpuSupportsF16C()) {
+		for (; i + 8 <= n; i += 8) {
+			__m256 v = _mm256_loadu_ps(src + i);
+			__m128i h = _mm256_cvtps_ph(v, 0);
+			_mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i), h);
+		}
+		for (; i + 4 <= n; i += 4) {
+			__m128 v = _mm_loadu_ps(src + i);
+			__m128i h = _mm_cvtps_ph(v, 0);
+			_mm_storel_epi64(reinterpret_cast<__m128i*>(dst + i), h);
+		}
+	}
+#endif
+	for (; i < n; ++i) {
 		dst[i] = Ort::Float16_t(src[i]);
 	}
 }
@@ -638,23 +671,29 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
             return {};
         }
         
-        std::vector<Ort::Value> inputTensors;
-        inputTensors.push_back(std::move(inputTensor));
-
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
-        
         Ort::RunOptions runOptions;
-        
         std::vector<Ort::Value> outputTensors;
         try {
-            outputTensors = session_->Run(
-                runOptions,
-                inputNamesChar_.data(),
-                inputTensors.data(),
-                inputTensors.size(),
-                outputNamesChar_.data(),
-                outputNamesChar_.size()
-            );
+            if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()) {
+                ioBinding_->ClearBoundInputs();
+                ioBinding_->ClearBoundOutputs();
+                ioBinding_->BindInput(inputNamesChar_[0], inputTensor);
+                ioBinding_->BindOutput(outputNamesChar_[0], *cpuMemInfo_);
+                session_->Run(runOptions, *ioBinding_);
+                outputTensors = ioBinding_->GetOutputValues();
+            } else {
+                std::vector<Ort::Value> inputTensors;
+                inputTensors.push_back(std::move(inputTensor));
+                outputTensors = session_->Run(
+                    runOptions,
+                    inputNamesChar_.data(),
+                    inputTensors.data(),
+                    inputTensors.size(),
+                    outputNamesChar_.data(),
+                    outputNamesChar_.size()
+                );
+            }
         } catch (const Ort::Exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] ONNX Runtime exception during Run: %s", e.what());
             return {};
@@ -1600,18 +1639,27 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
             );
         }
         
-        std::vector<Ort::Value> inputTensors;
-        inputTensors.push_back(std::move(inputTensor));
-        
         Ort::RunOptions runOptions;
-        std::vector<Ort::Value> outputTensors = session_->Run(
-            runOptions,
-            inputNamesChar_.data(),
-            inputTensors.data(),
-            inputTensors.size(),
-            outputNamesChar_.data(),
-            outputNamesChar_.size()
-        );
+        std::vector<Ort::Value> outputTensors;
+        if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()) {
+            ioBinding_->ClearBoundInputs();
+            ioBinding_->ClearBoundOutputs();
+            ioBinding_->BindInput(inputNamesChar_[0], inputTensor);
+            ioBinding_->BindOutput(outputNamesChar_[0], *cpuMemInfo_);
+            session_->Run(runOptions, *ioBinding_);
+            outputTensors = ioBinding_->GetOutputValues();
+        } else {
+            std::vector<Ort::Value> inputTensors;
+            inputTensors.push_back(std::move(inputTensor));
+            outputTensors = session_->Run(
+                runOptions,
+                inputNamesChar_.data(),
+                inputTensors.data(),
+                inputTensors.size(),
+                outputNamesChar_.data(),
+                outputNamesChar_.size()
+            );
+        }
         
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();

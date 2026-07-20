@@ -8,11 +8,14 @@
 
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
+#include <memory>
+#include <vector>
+#include <thread>
+#include <chrono>
 
 #include <plugin-support.h>
 #include "obs-utils/obs-utils.h"
 #include "consts.h"
-
 
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
@@ -132,53 +135,53 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			cropHeight = fullHeight;
 		}
 
-		// 执行推理
+		// 执行推理：短锁取 shared_ptr，推理不持 yoloModelMutex
 		std::vector<Detection> newDetections;
+		std::shared_ptr<ModelYOLO> modelSnap;
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
-			if (filter->yoloModel) {
+			modelSnap = filter->yoloModel;
+		}
+		if (modelSnap) {
 #ifdef _WIN32
 #ifdef HAVE_ONNXRUNTIME_DML_EP
-				// DML GPU direct: consume preprocessed float buffer from render thread
-				bool dmlAttempted = false;
-				bool dmlSucceeded = false;
-				if (filter->useGpuTextureInference && filter->yoloModel->isDmlTextureSupported()) {
-					DmlPreprocessedFrame preprocessedCopy;
-					{
-						std::lock_guard<std::mutex> dmlLock(filter->dmlPreprocessedFrameMutex);
-						if (filter->dmlPreprocessedFrame.valid()) {
-							preprocessedCopy = filter->dmlPreprocessedFrame;
-						}
-					}
-					if (preprocessedCopy.valid()) {
-						dmlAttempted = true;
-						try {
-							newDetections = filter->yoloModel->inferenceFromTextureDml(
-								preprocessedCopy, fullWidth, fullHeight);
-							dmlSucceeded = true;
-						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference failed: %s", e.what());
-						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference unknown error");
-						}
+			bool dmlAttempted = false;
+			bool dmlSucceeded = false;
+			if (filter->useGpuTextureInference && modelSnap->isDmlTextureSupported()) {
+				DmlPreprocessedFrame preprocessedCopy;
+				{
+					std::lock_guard<std::mutex> dmlLock(filter->dmlPreprocessedFrameMutex);
+					if (filter->dmlPreprocessedFrame.valid()) {
+						preprocessedCopy = filter->dmlPreprocessedFrame;
 					}
 				}
-				if (dmlSucceeded) {
-					filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
-				} else if (dmlAttempted) {
-					filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
-					newDetections = filter->yoloModel->inference(inferenceFrame);
-				} else {
-					newDetections = filter->yoloModel->inference(inferenceFrame);
+				if (preprocessedCopy.valid()) {
+					dmlAttempted = true;
+					try {
+						newDetections = modelSnap->inferenceFromTextureDml(
+							preprocessedCopy, fullWidth, fullHeight);
+						dmlSucceeded = true;
+					} catch (const std::exception& e) {
+						obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference failed: %s", e.what());
+					} catch (...) {
+						obs_log(LOG_WARNING, "[YOLO Filter] DML texture inference unknown error");
+					}
 				}
+			}
+			if (dmlSucceeded) {
+				filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
+			} else if (dmlAttempted) {
+				filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+				newDetections = modelSnap->inference(inferenceFrame);
+			} else {
+				newDetections = modelSnap->inference(inferenceFrame);
+			}
 #else
-				newDetections = filter->yoloModel->inference(inferenceFrame);
+			newDetections = modelSnap->inference(inferenceFrame);
 #endif
 #else
-				newDetections = filter->yoloModel->inference(inferenceFrame);
+			newDetections = modelSnap->inference(inferenceFrame);
 #endif
-		}
-
 		}
 		// 记录推理时间
 		auto endTime = std::chrono::high_resolution_clock::now();
@@ -280,7 +283,13 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				} else {
 					int n = static_cast<int>(newDetections.size());
 					int m = static_cast<int>(trackedTargets.size());
-					std::vector<std::vector<float>> costMatrix(n, std::vector<float>(m, 1.0f));
+					static thread_local std::vector<std::vector<float>> costMatrix;
+					// 严格 n 行，容量复用（目标数通常很小）
+					if ((int)costMatrix.size() != n) costMatrix.resize(n);
+					for (int i = 0; i < n; ++i) {
+						if ((int)costMatrix[i].size() != m) costMatrix[i].assign(m, 1.0f);
+						else std::fill(costMatrix[i].begin(), costMatrix[i].end(), 1.0f);
+					}
 
 					for (int i = 0; i < n; ++i) {
 						const auto& det = newDetections[i];

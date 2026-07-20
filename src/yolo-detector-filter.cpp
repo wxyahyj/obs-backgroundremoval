@@ -64,7 +64,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	yolo_detector_filter(yolo_detector_filter&&) = default;
 	yolo_detector_filter& operator=(yolo_detector_filter&&) = default;
 	
-	std::unique_ptr<ModelYOLO> yoloModel;
+	std::shared_ptr<ModelYOLO> yoloModel;
 	std::mutex yoloModelMutex;
 	ModelYOLO::Version modelVersion;
 
@@ -2489,7 +2489,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			try {
 				obs_log(LOG_INFO, "[YOLO Filter] Loading new model: %s", tf->modelPath.c_str());
 				
-				std::unique_ptr<ModelYOLO> newYoloModel = std::make_unique<ModelYOLO>(tf->modelVersion);
+				std::shared_ptr<ModelYOLO> newYoloModel = std::make_shared<ModelYOLO>(tf->modelVersion);
 				
 				newYoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
 				
