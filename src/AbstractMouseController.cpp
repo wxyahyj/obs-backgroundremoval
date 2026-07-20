@@ -619,22 +619,28 @@ void AbstractMouseController::tick()
         float predictedErrorX = errorX;
         float predictedErrorY = errorY;
 
-        // IMM：只补速度外推，PID 仍用原始 error（避免滤波位置拖慢响应）
+        // IMM：只补速度外推；与 Smith 同开时压预测权重
+        float predWX = config.predictionWeightX;
+        float predWY = config.predictionWeightY;
+        if (smithActive && config.immFilterEnabled) {
+            predWX *= 0.5f;
+            predWY *= 0.5f;
+        }
         if (config.immFilterEnabled) {
             immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
             float immDeltaX = 0.0f, immDeltaY = 0.0f;
             immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
-            predictedErrorX = errorX + config.predictionWeightX * immDeltaX;
-            predictedErrorY = errorY + config.predictionWeightY * immDeltaY;
+            predictedErrorX = errorX + predWX * immDeltaX;
+            predictedErrorY = errorY + predWY * immDeltaY;
         }
         // 导数预测器（备选，IMM未启用时使用）
         else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            predictedErrorX = errorX + config.predictionWeightX * derivPredictedX;
-            predictedErrorY = errorY + config.predictionWeightY * derivPredictedY;
+            predictedErrorX = errorX + predWX * derivPredictedX;
+            predictedErrorY = errorY + predWY * derivPredictedY;
         }
         
         // ========== X轴处理 ==========
@@ -663,7 +669,7 @@ void AbstractMouseController::tick()
             deltaErrorX = errorX_work;
         }
         
-        // Step 3: 自适应积分增益
+        // Step 3: 自适应积分增益（近距 I 大、远距 I 小 → 近锁定、远少过冲）
         {
             float ratio;
             if (absErrorX < INTEGRAL_GAIN_THRESHOLD) {
@@ -671,22 +677,23 @@ void AbstractMouseController::tick()
                 adaptiveIGainX += (ratio - adaptiveIGainX) * INTEGRAL_GAIN_RATE;
             } else {
                 ratio = INTEGRAL_GAIN_THRESHOLD / absErrorX;
-                adaptiveIGainX += (ratio * adaptiveIGainX - adaptiveIGainX) * LARGE_ERROR_RATE;
+                adaptiveIGainX += (ratio - adaptiveIGainX) * LARGE_ERROR_RATE;
             }
             adaptiveIGainX = std::clamp(adaptiveIGainX, 0.0f, 1.0f);
         }
         
-        // Step 4: 自适应比例增益
+        // Step 4: 自适应比例增益（远强近弱：大误差 P→1 快拉，小误差 P 降防抖）
         {
-            float ratio;
-            if (absErrorX < KP_GAIN_THRESHOLD) {
-                ratio = 1.0f - (absErrorX / KP_GAIN_THRESHOLD);
-                adaptivePGainX += (ratio - adaptivePGainX) * config.adaptivePGainRate;
+            float targetP;
+            if (absErrorX >= KP_GAIN_THRESHOLD) {
+                targetP = 1.0f;
             } else {
-                ratio = KP_GAIN_THRESHOLD / absErrorX;
-                adaptivePGainX += (ratio * adaptivePGainX - adaptivePGainX) * LARGE_ERROR_RATE;
+                // 误差 0 → 0.35，误差到阈值 → 1.0
+                float t = absErrorX / KP_GAIN_THRESHOLD;
+                targetP = 0.35f + 0.65f * t;
             }
-            adaptivePGainX = std::clamp(adaptivePGainX, 0.0f, 1.0f);
+            adaptivePGainX += (targetP - adaptivePGainX) * config.adaptivePGainRate;
+            adaptivePGainX = std::clamp(adaptivePGainX, 0.2f, 1.0f);
         }
         
         // Step 5: 微分计算 + kf2 卡尔曼
@@ -937,10 +944,9 @@ void AbstractMouseController::tick()
             pidDataCallback_(data);
         }
 
-        pidPreviousErrorX = errorX;
-        pidPreviousErrorY = errorY;
-        previousErrorX = errorX;
-        previousErrorY = errorY;
+        // previousError 已在轴处理里写成 error*_work；禁止再用 raw 覆盖（会污染 D 项）
+        previousErrorX = pidPreviousErrorX;
+        previousErrorY = pidPreviousErrorY;
     } else if (config.algorithmType == AlgorithmType::ExternalPID) {
         // 外部PID（逆向重构自 pid.obj / pid_x64.lib，已剔除许可证验证）
         if (!externalPidInitialized_) {
@@ -955,6 +961,7 @@ void AbstractMouseController::tick()
         float externalErrorY = errorY;
 
         // Smith预估器补偿
+        // Smith 先补偿；预测只加性叠加，禁止用 raw error 覆盖 Smith
         if (config.smithPredictorEnabled) {
             auto [smithCX, smithCY] = smithPredictor.correct(
                 lastOutputX, lastOutputY, externalErrorX, externalErrorY, deltaTime);
@@ -962,20 +969,27 @@ void AbstractMouseController::tick()
             externalErrorY = smithCY;
         }
 
+        float predWXExt = config.predictionWeightX;
+        float predWYExt = config.predictionWeightY;
+        if (config.smithPredictorEnabled && config.immFilterEnabled) {
+            predWXExt *= 0.5f;
+            predWYExt *= 0.5f;
+        }
+
         if (config.immFilterEnabled) {
             immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
             float immDeltaX = 0.0f, immDeltaY = 0.0f;
             immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
-            externalErrorX = errorX + config.predictionWeightX * immDeltaX;
-            externalErrorY = errorY + config.predictionWeightY * immDeltaY;
+            externalErrorX += predWXExt * immDeltaX;
+            externalErrorY += predWYExt * immDeltaY;
         }
         else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            externalErrorX += config.predictionWeightX * derivPredictedX;
-            externalErrorY += config.predictionWeightY * derivPredictedY;
+            externalErrorX += predWXExt * derivPredictedX;
+            externalErrorY += predWYExt * derivPredictedY;
         }
 
         moveX = static_cast<float>(externalPidX.update(externalErrorX));
@@ -1141,30 +1155,37 @@ void AbstractMouseController::tick()
         float adaptiveErrorX = errorX;
         float adaptiveErrorY = errorY;
 
-        // Smith预估器补偿
+        // Smith 先补偿；预测只加性叠加
+        bool smithOn = false;
         if (config.smithPredictorEnabled) {
             auto [smithCX, smithCY] = smithPredictor.correct(
                 lastOutputX, lastOutputY, adaptiveErrorX, adaptiveErrorY, deltaTime);
             adaptiveErrorX = smithCX;
             adaptiveErrorY = smithCY;
+            smithOn = true;
         }
 
-        // IMM：只补速度外推，PID 仍用原始 error
+        float predWX = config.predictionWeightX;
+        float predWY = config.predictionWeightY;
+        if (smithOn && config.immFilterEnabled) {
+            predWX *= 0.5f;
+            predWY *= 0.5f;
+        }
+
         if (config.immFilterEnabled) {
             immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
             float immDeltaX = 0.0f, immDeltaY = 0.0f;
             immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
-            adaptiveErrorX = errorX + config.predictionWeightX * immDeltaX;
-            adaptiveErrorY = errorY + config.predictionWeightY * immDeltaY;
+            adaptiveErrorX += predWX * immDeltaX;
+            adaptiveErrorY += predWY * immDeltaY;
         }
-        // 导数预测器（备选）
         else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            adaptiveErrorX += config.predictionWeightX * derivPredictedX;
-            adaptiveErrorY += config.predictionWeightY * derivPredictedY;
+            adaptiveErrorX += predWX * derivPredictedX;
+            adaptiveErrorY += predWY * derivPredictedY;
         }
 
         moveX = adaptivePidX_.update(adaptiveErrorX);

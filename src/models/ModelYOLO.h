@@ -245,6 +245,9 @@ private:
     std::unique_ptr<Ort::IoBinding> ioBinding_;
     std::vector<Ort::AllocatedStringPtr> inputNames_;
     std::vector<Ort::AllocatedStringPtr> outputNames_;
+    // Run 热路径复用，避免每帧建 vector<const char*>
+    std::vector<const char*> inputNamesChar_;
+    std::vector<const char*> outputNamesChar_;
     std::vector<std::vector<int64_t>> inputDims_;
     std::vector<std::vector<int64_t>> outputDims_;
     std::vector<std::vector<float>> outputTensorValues_;

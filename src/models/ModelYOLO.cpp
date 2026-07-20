@@ -587,16 +587,6 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         
         std::vector<Ort::Value> inputTensors;
         inputTensors.push_back(std::move(inputTensor));
-        
-        std::vector<const char*> inputNamesChar;
-        for (const auto& name : inputNames_) {
-            inputNamesChar.push_back(name.get());
-        }
-        
-        std::vector<const char*> outputNamesChar;
-        for (const auto& name : outputNames_) {
-            outputNamesChar.push_back(name.get());
-        }
 
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         
@@ -606,11 +596,11 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         try {
             outputTensors = session_->Run(
                 runOptions,
-                inputNamesChar.data(),
+                inputNamesChar_.data(),
                 inputTensors.data(),
                 inputTensors.size(),
-                outputNamesChar.data(),
-                outputNamesChar.size()
+                outputNamesChar_.data(),
+                outputNamesChar_.size()
             );
         } catch (const Ort::Exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] ONNX Runtime exception during Run: %s", e.what());
@@ -1574,24 +1564,14 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
         std::vector<Ort::Value> inputTensors;
         inputTensors.push_back(std::move(inputTensor));
         
-        std::vector<const char*> inputNamesChar;
-        for (const auto& name : inputNames_) {
-            inputNamesChar.push_back(name.get());
-        }
-        
-        std::vector<const char*> outputNamesChar;
-        for (const auto& name : outputNames_) {
-            outputNamesChar.push_back(name.get());
-        }
-        
         Ort::RunOptions runOptions;
         std::vector<Ort::Value> outputTensors = session_->Run(
             runOptions,
-            inputNamesChar.data(),
+            inputNamesChar_.data(),
             inputTensors.data(),
             inputTensors.size(),
-            outputNamesChar.data(),
-            outputNamesChar.size()
+            outputNamesChar_.data(),
+            outputNamesChar_.size()
         );
         
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
