@@ -315,10 +315,11 @@ private:
 
 class KalmanP {
 public:
+    // r_std 默认 2：更信检测，减框滞后；原 5 过平滑导致框拖尾+手感肉
     void init(int GENERATE = 2, int TERMINATE = 5,
-        float vx_noise = 1.0f, float vy_noise = 1.0f,
-        float w_noise = 0.01f, float h_noise = 0.01f,
-        float r_std = 5.0f)
+        float vx_noise = 2.0f, float vy_noise = 2.0f,
+        float w_noise = 0.05f, float h_noise = 0.05f,
+        float r_std = 2.0f)
     {
         generate_set_ = GENERATE;
         terminate_set_ = TERMINATE;

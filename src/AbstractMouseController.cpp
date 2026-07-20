@@ -604,11 +604,14 @@ void AbstractMouseController::tick()
         float predictedErrorX = errorX;
         float predictedErrorY = errorY;
 
-        // IMM交互多模型预测（优先，替代DerivativePredictor）
+        // IMM：只补速度外推，PID 仍用原始 error（避免滤波位置拖慢响应）
         if (config.immFilterEnabled) {
-            immFilter.predict(deltaTime);
+            immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
-            immFilter.getPrediction(deltaTime, predictedErrorX, predictedErrorY);
+            float immDeltaX = 0.0f, immDeltaY = 0.0f;
+            immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
+            predictedErrorX = errorX + config.predictionWeightX * immDeltaX;
+            predictedErrorY = errorY + config.predictionWeightY * immDeltaY;
         }
         // 导数预测器（备选，IMM未启用时使用）
         else if (config.useDerivativePredictor) {
@@ -948,9 +951,12 @@ void AbstractMouseController::tick()
         }
 
         if (config.immFilterEnabled) {
-            immFilter.predict(deltaTime);
+            immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
-            immFilter.getPrediction(deltaTime, externalErrorX, externalErrorY);
+            float immDeltaX = 0.0f, immDeltaY = 0.0f;
+            immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
+            externalErrorX = errorX + config.predictionWeightX * immDeltaX;
+            externalErrorY = errorY + config.predictionWeightY * immDeltaY;
         }
         else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
@@ -1133,14 +1139,14 @@ void AbstractMouseController::tick()
             adaptiveErrorY = smithCY;
         }
 
-        // IMM交互多模型预测（优先）
+        // IMM：只补速度外推，PID 仍用原始 error
         if (config.immFilterEnabled) {
             immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
-            float immPredX = errorX, immPredY = errorY;
-            immFilter.getPrediction(deltaTime, immPredX, immPredY);
-            adaptiveErrorX = errorX + config.predictionWeightX * (immPredX - errorX);
-            adaptiveErrorY = errorY + config.predictionWeightY * (immPredY - errorY);
+            float immDeltaX = 0.0f, immDeltaY = 0.0f;
+            immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
+            adaptiveErrorX = errorX + config.predictionWeightX * immDeltaX;
+            adaptiveErrorY = errorY + config.predictionWeightY * immDeltaY;
         }
         // 导数预测器（备选）
         else if (config.useDerivativePredictor) {

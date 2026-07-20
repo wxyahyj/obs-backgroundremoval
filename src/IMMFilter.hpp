@@ -30,9 +30,9 @@ public:
 	void predict(float dt, float uMoveX = 0.0f, float uMoveY = 0.0f);
 	void update(float measuredErrorX, float measuredErrorY);
 
-	// 当前滤波后误差 + 目标运动外推（不含自己再移动）
+	// getPrediction 只返回速度外推增量 delta，不含滤波位置
 	void getState(float& estX, float& estY, float& velX, float& velY) const;
-	void getPrediction(float predictDt, float& predErrorX, float& predErrorY) const;
+	void getPrediction(float predictDt, float& deltaX, float& deltaY) const;
 
 private:
 	Config cfg_;
@@ -515,15 +515,26 @@ inline void IMMFilter::getState(float& estX, float& estY, float& velX, float& ve
 	velY = xCV_[3];
 }
 
-inline void IMMFilter::getPrediction(float predictDt, float& predErrorX, float& predErrorY) const
+// 只返回目标运动外推增量（与 DerivativePredictor 同语义），不含滤波位置。
+// 调用方应: error_work = rawError + weight * delta
+// 这样 PID 仍吃原始误差，IMM 只补提前量，避免“滤误差”导致发肉。
+inline void IMMFilter::getPrediction(float predictDt, float& deltaX, float& deltaY) const
 {
-	// 滤波后的当前误差 + 目标速度/加速度外推（不含鼠标再移动）
 	float h = std::max(0.0f, predictDt);
 	float h2 = h * h;
+	float vx = xCV_[1];
+	float vy = xCV_[3];
 	float ax = xCA_[2];
 	float ay = xCA_[5];
-	predErrorX = xCV_[0] + xCV_[1] * h + 0.5f * ax * h2;
-	predErrorY = xCV_[2] + xCV_[3] * h + 0.5f * ay * h2;
+	// 速度限幅：防止噪声把提前量拉爆
+	const float maxVel = 8000.0f;
+	vx = std::max(-maxVel, std::min(maxVel, vx));
+	vy = std::max(-maxVel, std::min(maxVel, vy));
+	const float maxAcc = 50000.0f;
+	ax = std::max(-maxAcc, std::min(maxAcc, ax));
+	ay = std::max(-maxAcc, std::min(maxAcc, ay));
+	deltaX = vx * h + 0.5f * ax * h2;
+	deltaY = vy * h + 0.5f * ay * h2;
 }
 
 #endif
