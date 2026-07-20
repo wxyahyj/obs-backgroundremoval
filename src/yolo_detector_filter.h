@@ -267,6 +267,31 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float predictionWeightX = 0.3f, predictionWeightY = 0.1f;
 		float velocitySmoothFactor = 0.0f, accelerationSmoothFactor = 0.0f;
 		float maxPredictionTime = 0.1f;
+		// Smith预估器
+		bool smithPredictorEnabled = false;
+		float smithModelGain = 1.0f;
+		float smithModelTau = 0.02f;
+		bool smithAutoTau = true;
+
+		// SlewRate控制器（限速平滑趋近）
+		bool slewRateEnabled = false;
+		float slewRateOutputGain = 0.25f;
+		float slewRateResponseSmoothing = 0.0008f;
+		float slewRateApproachDamping = 5.0f;
+		float slewRateUpdateIntervalMs = 5.0f;
+		float slewRateNormalizationScale = 5.0f;
+
+		// 自适应PID控制器（位置式+自适应积分增益+积分死区+双重抗饱和）
+		float adaptivePidKp = 1.0f;
+		float adaptivePidKi = 0.1f;
+		float adaptivePidKd = 0.05f;
+		float adaptivePidDeadZone = 0.3f;
+		float adaptivePidIntegralLimit = 100.0f;
+		float adaptivePidIntegralDeadzone = 1.0f;
+		float adaptivePidIntegralGainThreshold = 50.0f;
+		float adaptivePidIntegralGainRate = 0.015f;
+		float adaptivePidOutputLimit = 10.0f;
+
 		bool continuousAimEnabled = false;
 		bool autoRecoilControlEnabled = false;
 		float recoilStrength = 5.0f;

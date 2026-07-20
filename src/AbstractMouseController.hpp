@@ -13,6 +13,9 @@
 #include <cmath>
 #include "MouseControllerInterface.hpp"
 #include "DerivativePredictor.hpp"
+#include "SmithPredictor.hpp"
+#include "SlewRateController.hpp"
+#include "AdaptivePIDController.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
 #include "utils/GhostTracker.hpp"
@@ -114,6 +117,11 @@ protected:
     
     DerivativePredictor predictor;
     
+    SmithPredictor smithPredictor;
+
+    // avgInferenceTimeMs  推理延迟(毫秒)，Smith 自动 tau 使用
+    float avgInferenceTimeMs_;
+
     // GhostTracker曲线轨迹生成器
     GhostTracker ghostTracker;
 
@@ -123,6 +131,15 @@ protected:
 
     // aim 控制器（增量式PID+运动预测+柏林噪声，完整版）
     aim::AimController aimController_;
+
+    // SlewRate控制器（限速平滑趋近）
+    slewrate::SlewControllerRuntime slewRuntime_;
+    bool slewRateInitialized_ = false;
+
+    // 自适应PID控制器（位置式+自适应积分增益）
+    AdaptivePIDController adaptivePidX_;
+    AdaptivePIDController adaptivePidY_;
+
     AlgorithmType lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;  // 上次应用的算法类型，用于检测算法切换
 
     std::chrono::steady_clock::time_point lastTickTime;
@@ -216,6 +233,7 @@ public:
     std::string getCurrentWeapon() const override;
     void setPidDataCallback(PidDataCallback callback) override;
     void setAimOrigin(float x, float y) override;
+    void setInferenceTimeMs(float ms) override;
 };
 
 #endif

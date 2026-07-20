@@ -7,6 +7,10 @@ std::unique_ptr<MouseControllerInterface> MouseControllerFactory::createControll
     switch (type) {
         case ControllerType::MAKCU:
             return std::make_unique<MAKCUMouseController>(makcuPort, makcuBaudRate);
+        case ControllerType::GvInput:
+            return std::make_unique<GvInputMouseController>();
+        case ControllerType::TencInput:
+            return std::make_unique<TencInputMouseController>();
         case ControllerType::LogiDriver:
             return std::make_unique<LogiDriverMouseController>(logiDriverType);
         case ControllerType::WindowsAPI:

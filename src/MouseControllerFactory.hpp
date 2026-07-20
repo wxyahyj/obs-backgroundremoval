@@ -8,6 +8,7 @@
 #include "MouseController.hpp"
 #include "MAKCUMouseController.hpp"
 #include "LogiDriverMouseController.hpp"
+#include "GvInputMouseController.hpp"
 
 class MouseControllerFactory {
 public:

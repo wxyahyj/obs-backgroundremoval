@@ -229,7 +229,8 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_list_add_int(controllerTypeList, "Windows API", 0);
 		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
 		obs_property_list_add_int(controllerTypeList, "罗技/雷蛇驱动", 2);
-		obs_property_set_long_description(controllerTypeList, "鼠标控制方式：WindowsAPI使用系统API，MAKCU使用串口设备，罗技/雷蛇驱动使用内核级驱动");
+		obs_property_list_add_int(controllerTypeList, "UU remote GvInput", 3);
+        obs_property_set_long_description(controllerTypeList, "mouse control: WindowsAPI=system API, MAKCU=serial, Logi/Razer=kernel driver, GvInput=Netease WHQL HID");
 		obs_property_set_modified_callback(controllerTypeList, onConfigChanged);
 
 		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
@@ -406,6 +407,110 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		
 		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 		obs_properties_add_group(props, propName, "导数预测器", OBS_GROUP_CHECKABLE, derivPredProps);
+	}
+	
+	// Smith预估器分组（可折叠）
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+		obs_properties_t *smithProps = obs_properties_create();
+
+		snprintf(propName, sizeof(propName), "smith_enabled_%d", i);
+		obs_property_t *smithEnabledProp = obs_properties_add_bool(smithProps, propName, "Smith预估器(纯滞后补偿)");
+		obs_property_set_long_description(smithEnabledProp, "用过程模型从反馈回路剔除YOLO推理延迟，使PID可用更高增益而不振荡");
+
+		snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
+		obs_property_t *smithGainProp = obs_properties_add_float_slider(smithProps, propName, "模型增益K", 0.1f, 5.0f, 0.1f);
+		obs_property_set_long_description(smithGainProp, "被控对象静态增益，默认1.0即可");
+
+		snprintf(propName, sizeof(propName), "smith_model_tau_%d", i);
+		obs_property_t *smithTauProp = obs_properties_add_float_slider(smithProps, propName, "预估纯滞后τ(秒)", 0.005f, 0.2f, 0.005f);
+		obs_property_set_long_description(smithTauProp, "手动指定纯滞后时间。若开启自动τ则忽略此值");
+
+		snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
+		obs_property_t *smithAutoTauProp = obs_properties_add_bool(smithProps, propName, "自动τ(使用实测推理延迟)");
+		obs_property_set_long_description(smithAutoTauProp, "自动用 avgInferenceTimeMs 作为纯滞后τ，推荐开启");
+
+		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+		obs_properties_add_group(props, propName, "Smith预估器", OBS_GROUP_CHECKABLE, smithProps);
+	}
+
+	// SlewRate控制器分组（限速平滑趋近+阻尼制动）
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+
+		snprintf(propName, sizeof(propName), "slew_rate_group_%d", i);
+		obs_properties_t *slewRateProps = obs_properties_create();
+
+		snprintf(propName, sizeof(propName), "slew_rate_output_gain_%d", i);
+		obs_property_t *slewGainProp = obs_properties_add_float_slider(slewRateProps, propName, "输出增益", 0.0f, 3.0f, 0.01f);
+		obs_property_set_long_description(slewGainProp, "基础输出增益系数，默认0.25");
+
+		snprintf(propName, sizeof(propName), "slew_rate_response_smoothing_%d", i);
+		obs_property_t *slewSmoothProp = obs_properties_add_float_slider(slewRateProps, propName, "响应平滑系数", 0.0f, 0.01f, 0.0001f);
+		obs_property_set_long_description(slewSmoothProp, "趋近项低通平滑系数，小值=更平滑，默认0.0008");
+
+		snprintf(propName, sizeof(propName), "slew_rate_approach_damping_%d", i);
+		obs_property_t *slewDampProp = obs_properties_add_float_slider(slewRateProps, propName, "趋近阻尼", 0.0f, 20.0f, 0.1f);
+		obs_property_set_long_description(slewDampProp, "误差持续缩小时的阻尼强度，抑制超调，默认5.0");
+
+		snprintf(propName, sizeof(propName), "slew_rate_update_interval_ms_%d", i);
+		obs_property_t *slewIntervalProp = obs_properties_add_float_slider(slewRateProps, propName, "更新间隔(ms)", 1.0f, 50.0f, 0.5f);
+		obs_property_set_long_description(slewIntervalProp, "控制器内部更新间隔，默认5.0ms");
+
+		snprintf(propName, sizeof(propName), "slew_rate_normalization_scale_%d", i);
+		obs_property_t *slewNormProp = obs_properties_add_float_slider(slewRateProps, propName, "归一化缩放", 1.0f, 30.0f, 0.5f);
+		obs_property_set_long_description(slewNormProp, "对误差进行归一化的缩放系数，默认5.0");
+
+		snprintf(propName, sizeof(propName), "slew_rate_group_%d", i);
+		obs_properties_add_group(props, propName, "SlewRate控制器(限速平滑趋近)", OBS_GROUP_CHECKABLE, slewRateProps);
+	}
+
+	// 自适应PID控制器分组（位置式+自适应积分增益+积分死区+双重抗饱和）
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_group_%d", i);
+		obs_properties_t *adaptivePidProps = obs_properties_create();
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_kp_%d", i);
+		obs_property_t *adaptKpProp = obs_properties_add_float_slider(adaptivePidProps, propName, "比例增益 Kp", 0.0f, 5.0f, 0.01f);
+		obs_property_set_long_description(adaptKpProp, "位置式PID比例系数，默认1.0");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_ki_%d", i);
+		obs_property_t *adaptKiProp = obs_properties_add_float_slider(adaptivePidProps, propName, "积分增益 Ki", 0.0f, 1.0f, 0.001f);
+		obs_property_set_long_description(adaptKiProp, "积分系数，消除稳态误差，默认0.1");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_kd_%d", i);
+		obs_property_t *adaptKdProp = obs_properties_add_float_slider(adaptivePidProps, propName, "微分增益 Kd", 0.0f, 1.0f, 0.001f);
+		obs_property_set_long_description(adaptKdProp, "微分系数，抑制超调，默认0.05");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_dead_zone_%d", i);
+		obs_property_t *adaptDzProp = obs_properties_add_float_slider(adaptivePidProps, propName, "输入死区", 0.0f, 10.0f, 0.01f);
+		obs_property_set_long_description(adaptDzProp, "误差小于此值时置零，避免微小抖动，默认0.3");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_limit_%d", i);
+		obs_property_t *adaptILimitProp = obs_properties_add_float_slider(adaptivePidProps, propName, "积分限幅", 1.0f, 500.0f, 1.0f);
+		obs_property_set_long_description(adaptILimitProp, "积分累积限幅，防止积分饱和，默认100.0");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_deadzone_%d", i);
+		obs_property_t *adaptIDzProp = obs_properties_add_float_slider(adaptivePidProps, propName, "积分死区", 0.0f, 10.0f, 0.01f);
+		obs_property_set_long_description(adaptIDzProp, "积分累积小于此值时忽略积分项，默认1.0");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_gain_threshold_%d", i);
+		obs_property_t *adaptIGainThrProp = obs_properties_add_float_slider(adaptivePidProps, propName, "积分自适应阈值", 1.0f, 200.0f, 1.0f);
+		obs_property_set_long_description(adaptIGainThrProp, "误差小于此值时积分增强，大于时衰减，默认50.0");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_gain_rate_%d", i);
+		obs_property_t *adaptIGainRateProp = obs_properties_add_float_slider(adaptivePidProps, propName, "积分自适应速率", 0.001f, 0.1f, 0.001f);
+		obs_property_set_long_description(adaptIGainRateProp, "积分增益自适应调整速率，默认0.015");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_output_limit_%d", i);
+		obs_property_t *adaptOutLimitProp = obs_properties_add_float_slider(adaptivePidProps, propName, "输出限幅", 1.0f, 200.0f, 1.0f);
+		obs_property_set_long_description(adaptOutLimitProp, "单帧输出最大值，默认10.0");
+
+		snprintf(propName, sizeof(propName), "adaptive_pid_group_%d", i);
+		obs_properties_add_group(props, propName, "自适应PID控制器(位置式+自适应积分)", OBS_GROUP_CHECKABLE, adaptivePidProps);
 	}
 
 	// 贝塞尔曲线移动分组
@@ -727,6 +832,95 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #endif
 
 	UNUSED_PARAMETER(data);
+
+	// 初始化默认页面可见性：page==0时只显示page 0和1的控件
+	// OBS加载属性窗口时不自动触发onPageChanged，手动初始化
+	
+	// 隐藏页面2-7的全局控件
+	obs_property_t *p;
+	
+	// 动态FOV (page 1)
+	p = obs_properties_get(props, "fov2_group"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "dynamic_fov_game_hfov"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "dynamic_fov_transition_time"); if (p) obs_property_set_visible(p, false);
+	
+	// page 2-7 配置选择器
+	p = obs_properties_get(props, "mouse_config_select"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "algorthm_type_global"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "test_makcu_connection"); if (p) obs_property_set_visible(p, false);
+	
+	// page 3 PID全局
+	p = obs_properties_get(props, "dynamic_pid_group"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "external_pid_group"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "aim_controller_group"); if (p) obs_property_set_visible(p, false);
+	
+	// page 5 追踪
+	p = obs_properties_get(props, "tracking_group"); if (p) obs_property_set_visible(p, false);
+	
+	// page 7 准星
+	p = obs_properties_get(props, "crosshair_group"); if (p) obs_property_set_visible(p, false);
+	p = obs_properties_get(props, "crosshair_enabled"); if (p) obs_property_set_visible(p, false);
+	
+	// page 8 配置管理全局（如果存在）
+	p = obs_properties_get(props, "config_management_group"); if (p) obs_property_set_visible(p, false);
+
+	// 隐藏所有5组配置下的分组（它们在page 2-7中按需显示）
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+		// 自动扳机
+		snprintf(propName, sizeof(propName), "auto_trigger_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		// 后坐力控制
+		snprintf(propName, sizeof(propName), "recoil_control_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		// 导数预测器
+		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		// Smith预估器
+		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		// 贝塞尔曲线
+		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		// 曲线轨迹
+		snprintf(propName, sizeof(propName), "curve_trajectory_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		
+		// ====== 配置级PID & 热键 ======
+		snprintf(propName, sizeof(propName), "global_mouse_enabled_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "global_hotkey_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "global_target_lock_hotkey_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		
+		// PID基础 (Kp/Ki/Kd + 高级)
+		snprintf(propName, sizeof(propName), "global_kp_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "global_ki_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "global_kd_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		
+		// 鼠标高级参数
+		snprintf(propName, sizeof(propName), "intensity_mode_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "intensity_value_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "smooth_factor_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "anti_shake_threshold_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "mouse_method_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "logi_device_selector_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "razer_device_selector_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "gvinput_config_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+	}
+
 	return props;
 }
 
@@ -836,6 +1030,15 @@ static void setPredictorPropertiesVisible(obs_properties_t *props, int configInd
 	// 导数预测器分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// Smith预估器分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "smith_predictor_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// SlewRate控制器分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "slew_rate_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// 自适应PID控制器分组（CHECKABLE，勾选即启用）
+	snprintf(propName, sizeof(propName), "adaptive_pid_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 // 设置鼠标控制-扳机页面的控件可见性
@@ -878,6 +1081,7 @@ bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data
 
 		bool showMakcu = (ctrlType == 1);     // MAKCU
 		bool showLogi = (ctrlType == 2);      // LogiDriver
+		// showGvInput = (ctrlType == 3);    // GvInput has no exclusive fields to hide
 
 		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
 		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
@@ -1409,6 +1613,49 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 0.1);
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
+		// Smith预估器默认值
+		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "smith_model_tau_%d", i);
+		obs_data_set_default_double(settings, propName, 0.02);
+		snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
+		obs_data_set_default_bool(settings, propName, true);
+		// SlewRate控制器默认值
+		snprintf(propName, sizeof(propName), "slew_rate_group_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "slew_rate_output_gain_%d", i);
+		obs_data_set_default_double(settings, propName, 0.25);
+		snprintf(propName, sizeof(propName), "slew_rate_response_smoothing_%d", i);
+		obs_data_set_default_double(settings, propName, 0.0008);
+		snprintf(propName, sizeof(propName), "slew_rate_approach_damping_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "slew_rate_update_interval_ms_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "slew_rate_normalization_scale_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		// 自适应PID控制器默认值
+		snprintf(propName, sizeof(propName), "adaptive_pid_group_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "adaptive_pid_kp_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "adaptive_pid_ki_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
+		snprintf(propName, sizeof(propName), "adaptive_pid_kd_%d", i);
+		obs_data_set_default_double(settings, propName, 0.05);
+		snprintf(propName, sizeof(propName), "adaptive_pid_dead_zone_%d", i);
+		obs_data_set_default_double(settings, propName, 0.3);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_limit_%d", i);
+		obs_data_set_default_double(settings, propName, 100.0);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_deadzone_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_gain_threshold_%d", i);
+		obs_data_set_default_double(settings, propName, 50.0);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_gain_rate_%d", i);
+		obs_data_set_default_double(settings, propName, 0.015);
+		snprintf(propName, sizeof(propName), "adaptive_pid_output_limit_%d", i);
+		obs_data_set_default_double(settings, propName, 10.0);
 		// 贝塞尔曲线移动参数默认值
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
@@ -1955,6 +2202,47 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		tf->mouseConfigs[i].maxPredictionTime = (float)obs_data_get_double(settings, propName);
+		// Smith预估器参数
+		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+		tf->mouseConfigs[i].smithPredictorEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
+		tf->mouseConfigs[i].smithModelGain = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "smith_model_tau_%d", i);
+		tf->mouseConfigs[i].smithModelTau = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
+		tf->mouseConfigs[i].smithAutoTau = obs_data_get_bool(settings, propName);
+		// SlewRate控制器参数
+		snprintf(propName, sizeof(propName), "slew_rate_group_%d", i);
+		tf->mouseConfigs[i].slewRateEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "slew_rate_output_gain_%d", i);
+		tf->mouseConfigs[i].slewRateOutputGain = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "slew_rate_response_smoothing_%d", i);
+		tf->mouseConfigs[i].slewRateResponseSmoothing = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "slew_rate_approach_damping_%d", i);
+		tf->mouseConfigs[i].slewRateApproachDamping = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "slew_rate_update_interval_ms_%d", i);
+		tf->mouseConfigs[i].slewRateUpdateIntervalMs = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "slew_rate_normalization_scale_%d", i);
+		tf->mouseConfigs[i].slewRateNormalizationScale = (float)obs_data_get_double(settings, propName);
+		// 自适应PID控制器参数
+		snprintf(propName, sizeof(propName), "adaptive_pid_kp_%d", i);
+		tf->mouseConfigs[i].adaptivePidKp = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_ki_%d", i);
+		tf->mouseConfigs[i].adaptivePidKi = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_kd_%d", i);
+		tf->mouseConfigs[i].adaptivePidKd = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_dead_zone_%d", i);
+		tf->mouseConfigs[i].adaptivePidDeadZone = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_limit_%d", i);
+		tf->mouseConfigs[i].adaptivePidIntegralLimit = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_deadzone_%d", i);
+		tf->mouseConfigs[i].adaptivePidIntegralDeadzone = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_gain_threshold_%d", i);
+		tf->mouseConfigs[i].adaptivePidIntegralGainThreshold = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_integral_gain_rate_%d", i);
+		tf->mouseConfigs[i].adaptivePidIntegralGainRate = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "adaptive_pid_output_limit_%d", i);
+		tf->mouseConfigs[i].adaptivePidOutputLimit = (float)obs_data_get_double(settings, propName);
 		// 贝塞尔曲线移动参数
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);

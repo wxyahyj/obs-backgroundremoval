@@ -74,6 +74,7 @@ AbstractMouseController::AbstractMouseController()
     , lastNeuralTargetX_(0.0f)
     , lastNeuralTargetY_(0.0f)
     , externalPidInitialized_(false)
+    , avgInferenceTimeMs_(0.0f)
 {
     startPos = { 0, 0 };
     targetPos = { 0, 0 };
@@ -134,6 +135,52 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
+    // Smith预估器配置同步
+    {
+        SmithPredictor::Config smithCfg;
+        smithCfg.enabled = config.smithPredictorEnabled;
+        smithCfg.modelGainK = config.smithModelGain;
+        smithCfg.modelTimeConstT = config.smithModelTau > 0.0f ? config.smithModelTau : 0.05f;
+        // 自动tau：实测推理延迟×2（覆盖渲染+显示+鼠标延迟）+ 最小30ms地板值
+        if (config.smithAutoTau) {
+            float baseTau = avgInferenceTimeMs_ > 0.0f
+                ? avgInferenceTimeMs_ / 1000.0f * 2.0f   // 2倍安全系数
+                : 0.060f;                                 // 未推理时默认60ms
+            smithCfg.delayTau = std::max(baseTau, 0.030f); // 最小30ms地板
+        } else {
+            smithCfg.delayTau = config.smithModelTau;
+        }
+        // 仅在enabled状态或关键参数变化时记录日志，避免刷屏
+        static SmithPredictor::Config lastLoggedCfg = {};
+        bool cfgChanged = (smithCfg.enabled != lastLoggedCfg.enabled)
+                       || (smithCfg.modelGainK != lastLoggedCfg.modelGainK)
+                       || (smithCfg.modelTimeConstT != lastLoggedCfg.modelTimeConstT)
+                       || (std::abs(smithCfg.delayTau - lastLoggedCfg.delayTau) > 0.001f);
+        if (smithCfg.enabled && cfgChanged) {
+            obs_log(LOG_INFO, "[%s] Smith诊断: enabled=%d K=%.2f T=%.4fs tau=%.4fs autoTau=%d avgInferMs=%.2f",
+                    getLogPrefix(), smithCfg.enabled, smithCfg.modelGainK, smithCfg.modelTimeConstT,
+                    smithCfg.delayTau, config.smithAutoTau, avgInferenceTimeMs_);
+            lastLoggedCfg = smithCfg;
+        }
+        smithPredictor.setConfig(smithCfg);
+    }
+
+    // 自适应PID控制器配置同步
+    {
+        AdaptivePIDController::Config adaptiveCfg;
+        adaptiveCfg.kp = config.adaptivePidKp;
+        adaptiveCfg.ki = config.adaptivePidKi;
+        adaptiveCfg.kd = config.adaptivePidKd;
+        adaptiveCfg.deadZone = config.adaptivePidDeadZone;
+        adaptiveCfg.integralLimit = config.adaptivePidIntegralLimit;
+        adaptiveCfg.integralDeadzone = config.adaptivePidIntegralDeadzone;
+        adaptiveCfg.integralGainThreshold = config.adaptivePidIntegralGainThreshold;
+        adaptiveCfg.integralGainRate = config.adaptivePidIntegralGainRate;
+        adaptiveCfg.outputLimit = config.adaptivePidOutputLimit;
+        adaptivePidX_.configure(adaptiveCfg);
+        adaptivePidY_.configure(adaptiveCfg);
+    }
+    
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
                 getLogPrefix(), config.enableMouseControl, config.autoTriggerEnabled, 
@@ -188,6 +235,17 @@ void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detec
     config.inferenceFrameHeight = frameHeight;
     config.cropOffsetX = cropX;
     config.cropOffsetY = cropY;
+}
+
+void AbstractMouseController::setInferenceTimeMs(float ms)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    // 仅在变化超过1ms时记录日志，避免刷屏
+    if (std::abs(ms - avgInferenceTimeMs_) > 1.0f) {
+        obs_log(LOG_INFO, "[%s] Smith诊断: avgInferenceTimeMs 更新 %.2f -> %.2f ms",
+                getLogPrefix(), avgInferenceTimeMs_, ms);
+    }
+    avgInferenceTimeMs_ = ms;
 }
 
 void AbstractMouseController::tick()
@@ -502,6 +560,32 @@ void AbstractMouseController::tick()
         // 动态P增益（根据距离）
         float baseP = calculateDynamicP(distance) * getCurrentPGain();
         
+        // Smith预估器：在PID输入前补偿纯滞后
+        bool smithActive = false;
+        if (config.smithPredictorEnabled) {
+            float rawErrorX = errorX, rawErrorY = errorY;
+            auto [smithCorrectedX, smithCorrectedY] = smithPredictor.correct(
+                lastOutputX, lastOutputY, errorX, errorY, deltaTime);
+            errorX = smithCorrectedX;
+            errorY = smithCorrectedY;
+            smithActive = true;
+            // 周期性诊断日志：每60帧输出一次
+            static int smithDiagFrame = 0;
+            if (++smithDiagFrame >= 60) {
+                smithDiagFrame = 0;
+                float corrX = smithPredictor.getModelStateX() - smithPredictor.getModelStateDelayedX();
+                float corrY = smithPredictor.getModelStateY() - smithPredictor.getModelStateDelayedY();
+                size_t dSteps = smithPredictor.getDelaySteps(deltaTime);
+                obs_log(LOG_INFO, "[%s] Smith诊断[AdvPID]: rawErr=(%.2f,%.2f) corrErr=(%.2f,%.2f) 修正量=(%.3f,%.3f) modelState=(%.2f,%.2f) modelDelayed=(%.2f,%.2f) delaySteps=%zu bufCount=%zu lastOut=(%.2f,%.2f) dt=%.4f",
+                        getLogPrefix(), rawErrorX, rawErrorY, smithCorrectedX, smithCorrectedY,
+                        corrX, corrY,
+                        smithPredictor.getModelStateX(), smithPredictor.getModelStateY(),
+                        smithPredictor.getModelStateDelayedX(), smithPredictor.getModelStateDelayedY(),
+                        dSteps, smithPredictor.getDelayBufCount(),
+                        lastOutputX, lastOutputY, deltaTime);
+            }
+        }
+
         // 导数预测器：在PID计算前预测目标位置
         float predictedErrorX = errorX;
         float predictedErrorY = errorY;
@@ -833,6 +917,14 @@ void AbstractMouseController::tick()
         float externalErrorX = errorX;
         float externalErrorY = errorY;
 
+        // Smith预估器补偿
+        if (config.smithPredictorEnabled) {
+            auto [smithCX, smithCY] = smithPredictor.correct(
+                lastOutputX, lastOutputY, externalErrorX, externalErrorY, deltaTime);
+            externalErrorX = smithCX;
+            externalErrorY = smithCY;
+        }
+
         if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
@@ -872,6 +964,8 @@ void AbstractMouseController::tick()
 
         previousErrorX = errorX;
         previousErrorY = errorY;
+        lastOutputX = moveX;
+        lastOutputY = moveY;
     } else if (config.algorithmType == AlgorithmType::AimController) {
         // aim 控制器（增量式PID+运动预测+柏林噪声，完整版）
         // 算法切换时重置 aim 控制器状态，避免沿用旧算法的状态
@@ -886,10 +980,20 @@ void AbstractMouseController::tick()
         // 噪声幅度：开关关闭时强制为0
         double noiseAmp = config.aimNoiseEnabled ? static_cast<double>(config.aimNoiseAmplitude) : 0.0;
 
+        // Smith预估器补偿 aim 输入
+        float aimErrorX = errorX;
+        float aimErrorY = errorY;
+        if (config.smithPredictorEnabled) {
+            auto [smithCX, smithCY] = smithPredictor.correct(
+                lastOutputX, lastOutputY, aimErrorX, aimErrorY, deltaTime);
+            aimErrorX = smithCX;
+            aimErrorY = smithCY;
+        }
+
         // 调用 aim 控制器（使用 aim 自带的运动预测器，不依赖现有 predictor）
         auto result = aimController_.update(
-            static_cast<double>(errorX),
-            static_cast<double>(errorY),
+            static_cast<double>(aimErrorX),
+            static_cast<double>(aimErrorY),
             static_cast<double>(config.aimPredictionWeightX),
             static_cast<double>(config.aimPredictionWeightY),
             static_cast<double>(config.aimInitScale),
@@ -926,8 +1030,118 @@ void AbstractMouseController::tick()
 
         previousErrorX = errorX;
         previousErrorY = errorY;
+        lastOutputX = moveX;
+        lastOutputY = moveY;
+    } else if (config.algorithmType == AlgorithmType::SlewRate) {
+        // SlewRate控制器（限速平滑趋近）
+        // 算法切换时重置运行状态
+        if (lastAppliedAlgorithm_ != AlgorithmType::SlewRate) {
+            slewRuntime_ = slewrate::SlewControllerRuntime{};
+            slewRateInitialized_ = true;
+            lastAppliedAlgorithm_ = AlgorithmType::SlewRate;
+        }
+
+        // 从配置构建参数
+        slewrate::SlewControllerParameters srParams;
+        srParams.outputGain = config.slewRateOutputGain;
+        srParams.responseSmoothing = config.slewRateResponseSmoothing;
+        srParams.approachDamping = config.slewRateApproachDamping;
+        srParams.updateIntervalMs = config.slewRateUpdateIntervalMs;
+        srParams.normalizationScale = config.slewRateNormalizationScale;
+
+        // 可选启用（如果提供了禁用开关）
+        bool useSlewRate = config.slewRateEnabled;
+        if (!useSlewRate) {
+            // 禁用时 fallback 到基础比例输出
+            moveX = errorX * srParams.outputGain;
+            moveY = errorY * srParams.outputGain;
+            if (std::fabs(moveX) < 0.000001f) moveX = 0.0f;
+            if (std::fabs(moveY) < 0.000001f) moveY = 0.0f;
+        } else {
+            slewrate::SlewAimOutput srOutput = slewrate::updateControllerCore(
+                slewRuntime_, errorX, errorY, deltaTime, srParams, true, false);
+            moveX = srOutput.dx;
+            moveY = srOutput.dy;
+        }
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = srParams.outputGain;
+            data.currentKi = 0.0f;
+            data.currentKd = 0.0f;
+            data.algorithmType = 7;  // 7=SlewRate
+            data.isFiring = isFiring;
+            pidDataCallback_(data);
+        }
+
+        previousErrorX = errorX;
+        previousErrorY = errorY;
+        lastOutputX = moveX;
+        lastOutputY = moveY;
+    } else if (config.algorithmType == AlgorithmType::AdaptivePID) {
+        // 自适应PID控制器（位置式PID+自适应积分增益+积分死区+双重抗饱和）
+        // 算法切换时重置状态
+        if (lastAppliedAlgorithm_ != AlgorithmType::AdaptivePID) {
+            adaptivePidX_.reset();
+            adaptivePidY_.reset();
+            lastAppliedAlgorithm_ = AlgorithmType::AdaptivePID;
+        }
+
+        float adaptiveErrorX = errorX;
+        float adaptiveErrorY = errorY;
+
+        // Smith预估器补偿
+        if (config.smithPredictorEnabled) {
+            auto [smithCX, smithCY] = smithPredictor.correct(
+                lastOutputX, lastOutputY, adaptiveErrorX, adaptiveErrorY, deltaTime);
+            adaptiveErrorX = smithCX;
+            adaptiveErrorY = smithCY;
+        }
+
+        // 导数预测器
+        if (config.useDerivativePredictor) {
+            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+            float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
+            adaptiveErrorX += config.predictionWeightX * derivPredictedX;
+            adaptiveErrorY += config.predictionWeightY * derivPredictedY;
+        }
+
+        moveX = adaptivePidX_.update(adaptiveErrorX);
+        moveY = adaptivePidY_.update(adaptiveErrorY);
+
+        if (pidDataCallback_) {
+            PidDebugData data;
+            data.errorX = errorX;
+            data.errorY = errorY;
+            data.outputX = moveX;
+            data.outputY = moveY;
+            data.targetX = targetPixelX;
+            data.targetY = targetPixelY;
+            data.targetVelocityX = targetVelocityX;
+            data.targetVelocityY = targetVelocityY;
+            data.currentKp = config.adaptivePidKp;
+            data.currentKi = config.adaptivePidKi;
+            data.currentKd = config.adaptivePidKd;
+            data.algorithmType = 8;  // 8=AdaptivePID
+            data.isFiring = isFiring;
+            pidDataCallback_(data);
+        }
+
+        previousErrorX = errorX;
+        previousErrorY = errorY;
+        lastOutputX = moveX;
+        lastOutputY = moveY;
     } else {
-        // 非 AimController 算法：更新 lastAppliedAlgorithm_ 以便下次切换检测
+        // 非上述算法：更新 lastAppliedAlgorithm_ 以便下次切换检测
         lastAppliedAlgorithm_ = config.algorithmType;
     }
 
@@ -1234,6 +1448,9 @@ void AbstractMouseController::resetPidState()
     lastOutputX = 0.0f;
     lastOutputY = 0.0f;
     predictor.reset();
+    smithPredictor.reset();
+    adaptivePidX_.reset();
+    adaptivePidY_.reset();
 }
 
 void AbstractMouseController::resetMotionState()
