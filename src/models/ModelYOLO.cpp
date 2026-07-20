@@ -33,40 +33,11 @@
 #include <immintrin.h>
 #endif
 
-static inline uint16_t floatToHalfBits(float f)
-{
-#if defined(__F16C__) || (defined(_MSC_VER) && defined(__AVX2__))
-	return static_cast<uint16_t>(_mm_cvtsi128_si32(_mm_cvtps_ph(_mm_set_ss(f), 0)));
-#else
-	union { float f; uint32_t u; } v{f};
-	uint32_t x = v.u;
-	uint32_t sign = (x >> 16) & 0x8000u;
-	int32_t exp = static_cast<int32_t>((x >> 23) & 0xFFu) - 127 + 15;
-	uint32_t mant = x & 0x7FFFFFu;
-	if (exp <= 0) {
-		if (exp < -10) return static_cast<uint16_t>(sign);
-		mant |= 0x800000u;
-		uint32_t t = mant >> (1 - exp + 13);
-		return static_cast<uint16_t>(sign | t);
-	}
-	if (exp >= 31) return static_cast<uint16_t>(sign | 0x7C00u);
-	return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exp) << 10) | (mant >> 13));
-#endif
-}
-
 static void convertFloatBufferToHalf(const float* src, Ort::Float16_t* dst, size_t n)
 {
-	size_t i = 0;
-#if defined(__F16C__) || (defined(_MSC_VER) && defined(__AVX2__))
-	for (; i + 8 <= n; i += 8) {
-		__m256 v = _mm256_loadu_ps(src + i);
-		__m128i h = _mm256_cvtps_ph(v, 0);
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i), h);
-	}
-#endif
-	for (; i < n; ++i) {
-		uint16_t bits = floatToHalfBits(src[i]);
-		std::memcpy(dst + i, &bits, sizeof(uint16_t));
+	// 用 ORT 构造器，避免 F16C 指令 / 手写 bits 布局风险
+	for (size_t i = 0; i < n; ++i) {
+		dst[i] = Ort::Float16_t(src[i]);
 	}
 }
 
@@ -76,6 +47,7 @@ static void convertHalfBufferToFloat(const Ort::Float16_t* src, float* dst, size
 		dst[i] = static_cast<float>(src[i]);
 	}
 }
+
 
 ModelYOLO::LetterboxInfo ModelYOLO::calculateLetterboxParams(int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
     LetterboxInfo info;
@@ -347,6 +319,18 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         
         populateInputOutputNames(session_, inputNames_, outputNames_);
         populateInputOutputShapes(session_, inputDims_, outputDims_);
+        inputNamesChar_.clear();
+        outputNamesChar_.clear();
+        inputNamesChar_.reserve(inputNames_.size());
+        outputNamesChar_.reserve(outputNames_.size());
+        for (const auto& name : inputNames_)
+            inputNamesChar_.push_back(name.get());
+        for (const auto& name : outputNames_)
+            outputNamesChar_.push_back(name.get());
+        if (inputNamesChar_.empty() || outputNamesChar_.empty()) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Empty IO names after session create");
+            throw std::runtime_error("Empty IO names");
+        }
         
         // 检测模型是否为FP16
         isFp16Model_ = false;
@@ -595,6 +579,17 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     if (!session_) {
         obs_log(LOG_ERROR, "[ModelYOLO] Session is null, cannot run inference");
         return {};
+    }
+
+    if (inputNamesChar_.empty() || outputNamesChar_.empty()) {
+        inputNamesChar_.clear();
+        outputNamesChar_.clear();
+        for (const auto& name : inputNames_) inputNamesChar_.push_back(name.get());
+        for (const auto& name : outputNames_) outputNamesChar_.push_back(name.get());
+        if (inputNamesChar_.empty() || outputNamesChar_.empty()) {
+            obs_log(LOG_ERROR, "[ModelYOLO] doInference: empty IO names");
+            return {};
+        }
     }
     
     try {
@@ -1592,10 +1587,13 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
                 inputShapeCache_.size()
             );
         } else {
-            // 直接绑预处理缓冲，避免 memcpy
+            // 拷到成员缓冲，生命周期覆盖整个 Run
+            if (inputBuffer_.size() < dataSize)
+                inputBuffer_.resize(dataSize);
+            std::memcpy(inputBuffer_.data(), preprocessedFrame.data.data(), dataSize * sizeof(float));
             inputTensor = Ort::Value::CreateTensor<float>(
                 *cpuMemInfo_,
-                const_cast<float*>(preprocessedFrame.data.data()),
+                inputBuffer_.data(),
                 dataSize,
                 inputShapeCache_.data(),
                 inputShapeCache_.size()

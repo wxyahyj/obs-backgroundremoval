@@ -108,20 +108,24 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		auto startTime = std::chrono::high_resolution_clock::now();
 		auto inferenceStartTime = startTime;
 
-		// 如果需要裁切，提取裁切区域
-		// 裁切：连续 ROI 直接用；非连续才 copyTo 线程局部缓冲
+		// preprocessInput 按连续内存平铺索引：非连续帧必须 copyTo
 		cv::Mat inferenceFrame;
+		static thread_local cv::Mat cropBuf;
 		if (cropX > 0 || cropY > 0 || cropWidth < fullWidth || cropHeight < fullHeight) {
 			cv::Mat roi = frame(cv::Rect(cropX, cropY, cropWidth, cropHeight));
 			if (roi.isContinuous()) {
 				inferenceFrame = roi;
 			} else {
-				static thread_local cv::Mat cropBuf;
 				roi.copyTo(cropBuf);
 				inferenceFrame = cropBuf;
 			}
 		} else {
-			inferenceFrame = frame;
+			if (frame.isContinuous()) {
+				inferenceFrame = frame;
+			} else {
+				frame.copyTo(cropBuf);
+				inferenceFrame = cropBuf;
+			}
 			cropX = 0;
 			cropY = 0;
 			cropWidth = fullWidth;
