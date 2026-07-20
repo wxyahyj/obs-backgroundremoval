@@ -359,21 +359,36 @@ public:
         std::vector<std::vector<float>> cost(state_list5.size(),
             std::vector<float>(meas_list.size(), 1.0f));
 
+        // Bar-Shalom 门控：类别硬门 + IoU 权重提高 + 距离门限（SORT/ByteTrack 风格）
+        constexpr float kMatchCostMax = 0.55f;
         for (size_t i = 0; i < state_list5.size(); ++i) {
             for (size_t j = 0; j < meas_list.size(); ++j) {
+                // 类别硬门：不同 class 禁止关联
+                if (static_cast<int>(state_list5[i][0] + 0.5f) != static_cast<int>(meas_list[j][0] + 0.5f)) {
+                    cost[i][j] = 1e6f;
+                    continue;
+                }
                 float iou = KalmanDetail::iou_from_meas(state_list5[i].data(), meas_list[j].data());
                 float cost_iou = 1.0f - iou;
                 float dx = state_list5[i][1] - meas_list[j][1];
                 float dy = state_list5[i][2] - meas_list[j][2];
-                float w_avg = (state_list5[i][3] + meas_list[j][3]) * 0.5f;
-                float h_avg = (state_list5[i][4] + meas_list[j][4]) * 0.5f;
-                float dist_norm_x = std::abs(dx) / (w_avg * 3.0f);
-                float dist_norm_y = std::abs(dy) / (h_avg * 3.0f);
+                float w_avg = std::max((state_list5[i][3] + meas_list[j][3]) * 0.5f, 1e-3f);
+                float h_avg = std::max((state_list5[i][4] + meas_list[j][4]) * 0.5f, 1e-3f);
+                // 中心距超过框对角线 * 1.5 直接拒配（门控）
+                float gate = std::sqrt(w_avg * w_avg + h_avg * h_avg) * 1.5f;
+                float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist > gate) {
+                    cost[i][j] = 1e6f;
+                    continue;
+                }
+                float dist_norm_x = std::abs(dx) / (w_avg * 2.0f);
+                float dist_norm_y = std::abs(dy) / (h_avg * 2.0f);
                 float cost_dist = std::min((dist_norm_x + dist_norm_y) * 0.5f, 1.0f);
                 float area_pred = state_list5[i][3] * state_list5[i][4];
                 float area_meas = meas_list[j][3] * meas_list[j][4];
-                float cost_shape = std::abs(area_pred - area_meas) / std::max(area_pred, area_meas);
-                cost[i][j] = 0.1f * cost_iou + 0.7f * cost_dist + 0.2f * cost_shape;
+                float cost_shape = std::abs(area_pred - area_meas) / std::max(std::max(area_pred, area_meas), 1e-3f);
+                // IoU 0.4 / 中心 0.45 / 形状 0.15（原 IoU 仅 0.1 易串 ID）
+                cost[i][j] = 0.40f * cost_iou + 0.45f * cost_dist + 0.15f * cost_shape;
             }
         }
 
@@ -383,8 +398,10 @@ public:
             int j = (i < assign.size() ? assign[i] : -1);
             bool matched = (j >= 0 && j < static_cast<int>(meas_list.size()));
             if (matched) {
-                if (cost[i][j] < 1.0f) {
+                if (cost[i][j] < kMatchCostMax) {
                     float z[5]; for (int k = 0; k < 5; ++k) z[k] = meas_list[j][k];
+                    // label 保持整数类别，不让 KF 把 class 当连续状态漂
+                    z[0] = static_cast<float>(static_cast<int>(z[0] + 0.5f));
                     tracks_[i]->set_prob(meas_prob[j]);
                     if (!tracks_[i]->update(z)) {
                         to_remove_.push_back(static_cast<int>(i));

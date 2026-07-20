@@ -34,6 +34,7 @@
 
 struct LostTarget {
 	int trackId;
+	int classId = -1;
 	float x, y, width, height;
 	float centerX, centerY;
 	int lostFrames;

@@ -112,6 +112,9 @@ protected:
     float lastOutputY;
     
     int lockedTrackId;
+    // 锁目标短暂丢失宽限（关联闪断/遮挡不立刻转火）
+    int lockMissCount_ = 0;
+    static constexpr int kMaxLockMissFrames = 8;
     
     std::chrono::steady_clock::time_point lastRecoilTime;
     bool isFiring;

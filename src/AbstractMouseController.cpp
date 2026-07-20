@@ -291,6 +291,7 @@ void AbstractMouseController::tick()
             integralGainX = 0.0f;
             integralGainY = 0.0f;
             lockedTrackId = -1;  // 重置目标锁定
+            lockMissCount_ = 0;
         }
         yUnlockActive = false;
         releaseAutoTrigger();
@@ -1292,7 +1293,13 @@ void AbstractMouseController::tick()
 Detection* AbstractMouseController::selectTarget()
 {
     if (currentDetections.empty()) {
+        // 空检测：宽限期内保留锁，避免一帧漏检就乱转火
+        if (lockedTrackId >= 0 && lockMissCount_ < kMaxLockMissFrames) {
+            lockMissCount_++;
+            return nullptr;
+        }
         lockedTrackId = -1;
+        lockMissCount_ = 0;
         pendingTargetTrackId = -1;
         currentTargetScore = 0.0f;
         pendingTargetScore = 0.0f;
@@ -1333,6 +1340,10 @@ Detection* AbstractMouseController::selectTarget()
         float distanceScore = 1.0f / (1.0f + distance * 0.01f);
         float confidenceScore = det.confidence;
         float score = 0.6f * distanceScore + 0.4f * confidenceScore;
+        // 锁粘性：当前锁 ID 加分，减少边界抖动切目标（Bar-Shalom 跟踪连续性思想）
+        if (det.trackId == lockedTrackId && lockedTrackId >= 0) {
+            score += 0.15f;
+        }
 
         if (score > bestScore) {
             bestScore = score;
@@ -1347,7 +1358,12 @@ Detection* AbstractMouseController::selectTarget()
 
     // 没有任何目标
     if (!bestTarget) {
+        if (lockedTrackId >= 0 && lockMissCount_ < kMaxLockMissFrames) {
+            lockMissCount_++;
+            return nullptr;
+        }
         lockedTrackId = -1;
+        lockMissCount_ = 0;
         pendingTargetTrackId = -1;
         currentTargetScore = 0.0f;
         pendingTargetScore = 0.0f;
@@ -1355,9 +1371,15 @@ Detection* AbstractMouseController::selectTarget()
         return nullptr;
     }
 
-    // 如果当前没有锁定目标，直接选择最佳目标
-    if (lockedTrackId < 0 || !currentTarget) {
+    // 锁 ID 本帧不在列表：宽限期内不立刻转 best，防 ID 闪断乱锁邻居
+    if (lockedTrackId >= 0 && !currentTarget) {
+        lockMissCount_++;
+        if (lockMissCount_ < kMaxLockMissFrames) {
+            return nullptr;
+        }
+        // 宽限耗尽，允许落锁到 best
         lockedTrackId = bestTarget->trackId;
+        lockMissCount_ = 0;
         pendingTargetTrackId = -1;
         currentTargetScore = bestScore;
         pendingTargetScore = 0.0f;
@@ -1368,6 +1390,23 @@ Detection* AbstractMouseController::selectTarget()
         currentTargetDistance = std::sqrt(dx * dx + dy * dy);
         return bestTarget;
     }
+
+    // 如果当前没有锁定目标，直接选择最佳目标
+    if (lockedTrackId < 0) {
+        lockedTrackId = bestTarget->trackId;
+        lockMissCount_ = 0;
+        pendingTargetTrackId = -1;
+        currentTargetScore = bestScore;
+        pendingTargetScore = 0.0f;
+        float pixelX = bestTarget->centerX * frameWidth;
+        float pixelY = bestTarget->centerY * frameHeight;
+        float dx = pixelX - fovCenterX;
+        float dy = pixelY - fovCenterY;
+        currentTargetDistance = std::sqrt(dx * dx + dy * dy);
+        return bestTarget;
+    }
+
+    lockMissCount_ = 0;
 
     // 当前有锁定目标，检查是否需要切换
     // 新目标必须比当前目标好一定容差才考虑切换

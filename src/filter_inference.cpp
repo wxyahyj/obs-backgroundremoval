@@ -281,6 +281,10 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						cv::Point2f detCenter(newDetections[i].centerX, newDetections[i].centerY);
 						
 						for (int j = 0; j < m; ++j) {
+							if (newDetections[i].classId != trackedTargets[j].classId) {
+								costMatrix[i][j] = 1e6f;
+								continue;
+							}
 							cv::Rect2f trackBox(
 								trackedTargets[j].x,
 								trackedTargets[j].y,
@@ -306,32 +310,28 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					for (int i = 0; i < n; ++i) {
 						int j = assignment[i];
 						if (j >= 0 && j < m && costMatrix[i][j] < (1.0f - filter->iouThreshold)) {
-							newDetections[i].trackId = trackedTargets[j].trackId;
-							newDetections[i].lostFrames = 0;
-							trackedDetections.push_back(newDetections[i]);
-							detectionMatched[i] = true;
-							trackMatched[j] = true;
+							// 类别硬门：不同 class 不关联
+							if (newDetections[i].classId == trackedTargets[j].classId) {
+								newDetections[i].trackId = trackedTargets[j].trackId;
+								newDetections[i].lostFrames = 0;
+								trackedDetections.push_back(newDetections[i]);
+								detectionMatched[i] = true;
+								trackMatched[j] = true;
+							}
 						}
 					}
-					
-					for (int i = 0; i < n; ++i) {
-						if (!detectionMatched[i]) {
-							newDetections[i].trackId = filter->nextTrackId++;
-							newDetections[i].lostFrames = 0;
-							trackedDetections.push_back(newDetections[i]);
-						}
-					}
-					
+
+					// 未匹配航迹：coast 或进 re-id 缓冲
 					for (int j = 0; j < m; ++j) {
 						if (!trackMatched[j]) {
 							trackedTargets[j].lostFrames++;
 							if (trackedTargets[j].lostFrames <= filter->maxLostFrames) {
 								trackedDetections.push_back(trackedTargets[j]);
 							} else {
-								// 目标丢失超过阈值，添加到重识别缓冲区
 								std::lock_guard<std::mutex> lostLock(filter->lostTargetsMutex);
 								LostTarget lost;
 								lost.trackId = trackedTargets[j].trackId;
+								lost.classId = trackedTargets[j].classId;
 								lost.x = trackedTargets[j].x;
 								lost.y = trackedTargets[j].y;
 								lost.width = trackedTargets[j].width;
@@ -340,8 +340,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 								lost.centerY = trackedTargets[j].centerY;
 								lost.lostFrames = 0;
 								lost.lostTime = std::chrono::steady_clock::now();
-								
-								// 检查是否已存在相同trackId，更新而非添加
 								bool found = false;
 								for (auto& existing : filter->lostTargets) {
 									if (existing.trackId == lost.trackId) {
@@ -356,41 +354,52 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							}
 						}
 					}
-					
-					// 尝试重识别丢失目标
+
+					// re-id 必须在赋新 ID 之前：先认回旧 ID，再给剩余检测新号
+					// （旧逻辑先 newId 再 re-id 会双推同一框 → 双 ID 闪烁）
 					{
 						std::lock_guard<std::mutex> lostLock(filter->lostTargetsMutex);
 						auto now = std::chrono::steady_clock::now();
 						for (auto it = filter->lostTargets.begin(); it != filter->lostTargets.end(); ) {
-							// 检查重识别时间是否超时
 							auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->lostTime).count();
-							if (elapsed > filter->maxReidentifyFrames * 33) {  // 约33ms每帧
+							if (elapsed > filter->maxReidentifyFrames * 33) {
 								it = filter->lostTargets.erase(it);
 								continue;
 							}
-							
-							// 尝试与未匹配的检测进行重识别
+
+							bool reidentified = false;
 							for (int i = 0; i < n; ++i) {
 								if (detectionMatched[i]) continue;
-								
+								if (it->classId >= 0 && newDetections[i].classId != it->classId) continue;
+
 								float dx = newDetections[i].centerX - it->centerX;
 								float dy = newDetections[i].centerY - it->centerY;
 								float centerDist = std::sqrt(dx * dx + dy * dy);
-								
-								// 中心点距离很近，认为是同一目标
-								if (centerDist < filter->reidentifyCenterThreshold) {
+								// 门控：中心距 + 半框尺度
+								float gate = std::max(filter->reidentifyCenterThreshold,
+									0.5f * std::max(it->width, it->height));
+								if (centerDist < gate) {
 									newDetections[i].trackId = it->trackId;
 									newDetections[i].lostFrames = 0;
 									trackedDetections.push_back(newDetections[i]);
 									detectionMatched[i] = true;
 									it = filter->lostTargets.erase(it);
+									reidentified = true;
 									break;
 								}
 							}
-							
-							if (it != filter->lostTargets.end()) {
+							if (!reidentified) {
 								++it;
 							}
+						}
+					}
+
+					// 仍未匹配的检测 → 新航迹
+					for (int i = 0; i < n; ++i) {
+						if (!detectionMatched[i]) {
+							newDetections[i].trackId = filter->nextTrackId++;
+							newDetections[i].lostFrames = 0;
+							trackedDetections.push_back(newDetections[i]);
 						}
 					}
 				}
