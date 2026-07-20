@@ -1135,9 +1135,12 @@ void AbstractMouseController::tick()
 
         // IMM交互多模型预测（优先）
         if (config.immFilterEnabled) {
-            immFilter.predict(deltaTime);
+            immFilter.predict(deltaTime, previousMoveX, previousMoveY);
             immFilter.update(errorX, errorY);
-            immFilter.getPrediction(deltaTime, adaptiveErrorX, adaptiveErrorY);
+            float immPredX = errorX, immPredY = errorY;
+            immFilter.getPrediction(deltaTime, immPredX, immPredY);
+            adaptiveErrorX = errorX + config.predictionWeightX * (immPredX - errorX);
+            adaptiveErrorY = errorY + config.predictionWeightY * (immPredY - errorY);
         }
         // 导数预测器（备选）
         else if (config.useDerivativePredictor) {
