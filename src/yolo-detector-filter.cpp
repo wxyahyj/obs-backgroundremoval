@@ -700,16 +700,15 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
 	obs_properties_add_text(props, "inference_status", obs_module_text("InferenceStatus"), OBS_TEXT_INFO);
 
-	// 6 页：目标 / 瞄准 / 控制 / 辅助 / 显示 / 高级
 	obs_property_t *pageList = obs_properties_add_list(props, "settings_page", "设置页面", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(pageList, "1 · 目标", 0);
-	obs_property_list_add_int(pageList, "2 · 瞄准", 1);
-	obs_property_list_add_int(pageList, "3 · 控制", 2);
-	obs_property_list_add_int(pageList, "4 · 辅助", 3);
-	obs_property_list_add_int(pageList, "5 · 显示", 4);
-	obs_property_list_add_int(pageList, "6 · 高级", 5);
-	obs_property_set_long_description(pageList,
-		"目标=模型检测区域 | 瞄准=输出设备与移动 | 控制=算法PID | 辅助=扳机压枪 | 显示=框与FOV | 高级=追踪预测准星");
+	obs_property_list_add_int(pageList, "模型与检测", 0);
+	obs_property_list_add_int(pageList, "视觉与区域", 1);
+	obs_property_list_add_int(pageList, "鼠标控制 - 基础", 2);
+	obs_property_list_add_int(pageList, "鼠标控制 - PID参数", 3);
+	obs_property_list_add_int(pageList, "鼠标控制 - 扳机", 4);
+	obs_property_list_add_int(pageList, "追踪与高级", 5);
+	obs_property_list_add_int(pageList, "预测与滤波", 6);
+	obs_property_list_add_int(pageList, "准星检测", 7);
 	obs_property_set_modified_callback(pageList, onPageChanged);
 
 	obs_properties_add_group(props, "model_group", obs_module_text("ModelConfiguration"), OBS_GROUP_NORMAL, nullptr);
@@ -897,7 +896,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_set_long_description(hotkeyList, "激活此配置的热键");
 
 		snprintf(propName, sizeof(propName), "controller_type_%d", i);
-		obs_property_t *controllerTypeList = obs_properties_add_list(props, propName, "输出设备", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_t *controllerTypeList = obs_properties_add_list(props, propName, "控制方式", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(controllerTypeList, "Windows API", 0);
 		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
 		obs_property_list_add_int(controllerTypeList, "罗技/雷蛇驱动", 2);
@@ -1240,13 +1239,12 @@ snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
 	// 页面6: PID参数 - 算法选择放在最上面
 	// 算法选择（全局）
 	obs_property_t *algorithmTypeList = obs_properties_add_list(props, "algorithm_type_global", "控制算法", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(algorithmTypeList, "高级 PID", 0);
-	obs_property_list_add_int(algorithmTypeList, "标准 PID (mpid)", 1);
-	obs_property_list_add_int(algorithmTypeList, "ChrisPID (aim)", 2);
-	obs_property_list_add_int(algorithmTypeList, "SlewRate", 3);
-	obs_property_list_add_int(algorithmTypeList, "自适应 PID", 4);
-	obs_property_set_long_description(algorithmTypeList,
-		"控制算法（不是输出设备）。高级PID=动态P；标准PID=mpid；ChrisPID=增量式+噪声；SlewRate=限速趋近；自适应=位置式积分");
+	obs_property_list_add_int(algorithmTypeList, "高级PID (动态P增益)", 0);
+	obs_property_list_add_int(algorithmTypeList, "专业PID (卡尔曼滤波)", 1);
+	obs_property_list_add_int(algorithmTypeList, "aim 控制器 (增量式PID+预测+噪声)", 2);
+	obs_property_list_add_int(algorithmTypeList, "SlewRate (限速平滑趋近)", 3);
+	obs_property_list_add_int(algorithmTypeList, "自适应PID (位置式+自适应积分)", 4);
+	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含动态P增益、预测等功能；专业PID内置卡尔曼滤波和自适应增益；aim 控制器集成增量式PID+运动预测+柏林噪声；SlewRate 使用限速平滑趋近+阻尼制动；自适应PID采用位置式PID+自适应积分增益+积分死区+双重抗饱和");
 	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
 	
 	// 专业PID参数组
@@ -1649,60 +1647,35 @@ static void setMouseTriggerPropertiesVisible(obs_properties_t *props, int config
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
-static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
-{
-	bool useKalman = obs_data_get_bool(settings, "use_kalman_tracker");
-	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), useKalman);
-	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), useKalman);
-	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), useKalman);
-	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_frames"), useKalman);
-	obs_property_set_visible(obs_properties_get(props, "show_kalman_trajectories"), useKalman);
-	UNUSED_PARAMETER(property);
-	return true;
-}
-
-static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
-{
-	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
-	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), useNeuralPath);
-	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), useNeuralPath);
-	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), useNeuralPath);
-	obs_property_set_visible(obs_properties_get(props, "neural_consume_per_frame"), useNeuralPath);
-	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), useNeuralPath);
-	UNUSED_PARAMETER(property);
-	return true;
-}
-
-static int normalizeSettingsPage(int page)
-{
-	if (page < 0) return 0;
-	if (page > 5) return 5;
-	return page;
-}
-
 static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
-	int page = normalizeSettingsPage((int)obs_data_get_int(settings, "settings_page"));
+	int page = (int)obs_data_get_int(settings, "settings_page");
 	int algorithm = (int)obs_data_get_int(settings, "algorithm_type_global");
 
 	for (int i = 0; i < 5; i++) {
 		bool isCurrentConfig = (i == currentConfig);
-		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 1);
-		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 2 && algorithm == 0);
-		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 3);
-		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 5);
-		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 5);
+		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
+		// 高级PID参数只在algorithm == 0时显示
+		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
+		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
+		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
+		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
 
+	// 根据控制器类型动态显示/隐藏专属字段
 	for (int i = 0; i < 5; i++) {
 		bool isCurrentConfig = (i == currentConfig);
-		if (!isCurrentConfig || page != 1) continue;
+		if (!isCurrentConfig || page != 2) continue;
+
 		char propName[64];
 		snprintf(propName, sizeof(propName), "controller_type_%d", i);
 		int ctrlType = (int)obs_data_get_int(settings, propName);
-		bool showMakcu = (ctrlType == 1);
-		bool showLogi = (ctrlType == 2);
+
+		bool showMakcu = (ctrlType == 1);     // MAKCU
+		bool showLogi = (ctrlType == 2);      // LogiDriver
+		// showGvInput = (ctrlType == 3);    // GvInput has no exclusive fields to hide
+
 		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
 		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
 		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
@@ -1711,176 +1684,333 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		obs_property_set_visible(obs_properties_get(props, propName), showLogi);
 	}
 
-	auto setAlg = [&](const char* name, bool vis) {
-		obs_property_t *pp = obs_properties_get(props, name);
-		if (pp) obs_property_set_visible(pp, vis);
-	};
+	// 动态PID参数只在algorithm == 3时显示
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
 
-	const bool dmlDyn = (page == 2 && algorithm == 3);
-	setAlg("dynamic_pid_group", dmlDyn);
-	setAlg("dynamic_kp", dmlDyn); setAlg("dynamic_ki", dmlDyn); setAlg("dynamic_kd", dmlDyn);
-	setAlg("dynamic_target_threshold", dmlDyn); setAlg("dynamic_speed_multiplier", dmlDyn);
-	setAlg("dynamic_min_coefficient", dmlDyn); setAlg("dynamic_max_coefficient", dmlDyn);
-	setAlg("dynamic_transition_sharpness", dmlDyn); setAlg("dynamic_transition_midpoint", dmlDyn);
-	setAlg("dynamic_min_data_points", dmlDyn); setAlg("dynamic_error_tolerance", dmlDyn);
-	setAlg("dynamic_smoothing_factor", dmlDyn);
+	// 专业PID参数只在algorithm == 1时显示
+	obs_property_set_visible(obs_properties_get(props, "external_pid_group"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_mode"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_output_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_rate"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_deadband"), page == 3 && algorithm == 1);
 
-	const bool ext = (page == 2 && algorithm == 1);
-	setAlg("external_pid_group", ext);
-	setAlg("external_kp_x", ext); setAlg("external_ki_x", ext); setAlg("external_kd_x", ext);
-	setAlg("external_kp_y", ext); setAlg("external_ki_y", ext); setAlg("external_kd_y", ext);
-	setAlg("external_predict_x", ext); setAlg("external_predict_y", ext);
-	setAlg("external_rate_x", ext); setAlg("external_rate_y", ext);
-	setAlg("external_ki_mode", ext); setAlg("external_kp_limit", ext);
-	setAlg("external_ki_limit", ext); setAlg("external_kd_limit", ext);
-	setAlg("external_output_limit", ext); setAlg("external_ki_rate", ext);
-	setAlg("external_ki_deadband", ext);
+	// aim 控制器参数只在 algorithm == 2 时显示
+	// 子属性在子容器中，组可见时自动跟随；仅 aim_noise_amplitude 需根据开关单独控制
+	{
+		bool aimVis = (page == 3 && algorithm == 2);
+		bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
+		obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVis);
+	}
+// SlewRate控制器参数只在 algorithm == 3 时显示
+		{
+			bool slewVis = (page == 3 && algorithm == 3);
+			obs_property_set_visible(obs_properties_get(props, "slew_rate_controller_group"), slewVis);
+		}
 
-	const bool aimVis = (page == 2 && algorithm == 2);
-	const bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
-	setAlg("aim_controller_group", aimVis);
-	setAlg("aim_noise_amplitude", aimNoiseVis);
+		// 自适应PID控制器参数只在 algorithm == 4 时显示
+		{
+			bool adaptiveVis = (page == 3 && algorithm == 4);
+			obs_property_set_visible(obs_properties_get(props, "adaptive_pid_controller_group"), adaptiveVis);
+		}
 
-	const bool adp = (page == 2 && algorithm == 4);
-	setAlg("adaptive_pid_group", adp);
-	setAlg("adaptive_kp", adp); setAlg("adaptive_ki", adp); setAlg("adaptive_kd", adp);
-	setAlg("adaptive_ki_min", adp); setAlg("adaptive_ki_max", adp);
-	setAlg("adaptive_ki_deadband", adp); setAlg("adaptive_output_limit", adp);
-	setAlg("adaptive_integral_limit", adp); setAlg("adaptive_max_pixel_move", adp);
+		obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
+	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
 
-	setAlg("mouse_config_select", page == 1 || page == 2 || page == 3 || page == 5);
-	setAlg("test_makcu_connection", page == 1);
+	return true;
+}
 
-	UNUSED_PARAMETER(property);
+static bool onKalmanTrackerChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	bool useKalman = obs_data_get_bool(settings, "use_kalman_tracker");
+	
+	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_frames"), useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_trajectories"), useKalman);
+	
+	return true;
+}
+
+static bool onNeuralPathChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
+	
+	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), useNeuralPath);
+	
 	return true;
 }
 
 static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
-	int rawPage = (int)obs_data_get_int(settings, "settings_page");
-	int page = normalizeSettingsPage(rawPage);
-	if (rawPage != page) obs_data_set_int(settings, "settings_page", page);
+	int page = (int)obs_data_get_int(settings, "settings_page");
 
-	auto setV = [&](const char* name, bool vis) {
-		obs_property_t *pp = obs_properties_get(props, name);
-		if (pp) obs_property_set_visible(pp, vis);
-	};
+	// 页面0: 模型与检测 - 显示模型组和检测组
+	obs_property_set_visible(obs_properties_get(props, "model_group"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "detection_group"), page == 0);
 
-	// 0 目标
-	setV("model_group", page == 0); setV("detection_group", page == 0);
-	setV("model_path", page == 0); setV("model_version", page == 0); setV("use_gpu", page == 0);
+	// 页面0: 模型与检测参数
+	obs_property_set_visible(obs_properties_get(props, "model_path"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "model_version"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "use_gpu"), page == 0);
 #ifdef _WIN32
-	setV("use_gpu_texture_inference", page == 0);
+	obs_property_set_visible(obs_properties_get(props, "use_gpu_texture_inference"), page == 0);
 #endif
-	setV("input_resolution", page == 0); setV("num_threads", page == 0);
-	setV("confidence_threshold", page == 0); setV("nms_threshold", page == 0);
-	setV("target_class", page == 0); setV("target_classes_text", page == 0);
-	setV("inference_interval_frames", page == 0);
-	setV("region_group", page == 0); setV("use_region", page == 0);
-	setV("region_x", page == 0); setV("region_y", page == 0);
-	setV("region_width", page == 0); setV("region_height", page == 0);
+	obs_property_set_visible(obs_properties_get(props, "input_resolution"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "num_threads"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "confidence_threshold"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "nms_threshold"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "target_class"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "target_classes_text"), page == 0);
+	obs_property_set_visible(obs_properties_get(props, "inference_interval_frames"), page == 0);
 
-	// 4 显示
-	setV("render_group", page == 4); setV("fov_group", page == 4); setV("fov2_group", page == 4);
-	setV("show_detection_results", page == 4); setV("bbox_line_width", page == 4);
-	setV("bbox_color", page == 4); setV("label_font_scale", page == 4);
-	setV("show_fov", page == 4); setV("fov_radius", page == 4);
-	setV("show_fov_circle", page == 4); setV("show_fov_cross", page == 4);
-	setV("fov_cross_line_scale", page == 4); setV("fov_cross_line_thickness", page == 4);
-	setV("fov_circle_thickness", page == 4); setV("fov_color", page == 4);
-	setV("use_dynamic_fov", page == 4); setV("show_fov2", page == 4);
-	setV("fov_radius2", page == 4); setV("fov_color2", page == 4);
-	setV("dynamic_fov_shrink_percent", page == 4); setV("dynamic_fov_transition_time", page == 4);
+	// 页面1: 视觉与区域 - 显示渲染组、区域组和FOV组
+	obs_property_set_visible(obs_properties_get(props, "render_group"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_group"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_group"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov2_group"), page == 1);
+
+	// 页面1: 视觉与区域参数
+	obs_property_set_visible(obs_properties_get(props, "show_detection_results"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "bbox_line_width"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "bbox_color"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "label_font_scale"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "use_region"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_x"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_y"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_width"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "region_height"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_radius"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov_circle"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov_cross"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_cross_line_scale"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_cross_line_thickness"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_circle_thickness"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_color"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "use_dynamic_fov"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "show_fov2"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_radius2"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "fov_color2"), page == 1);
+	
+	// 动态FOV参数只在FOV设置页面显示
+	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_shrink_percent"), page == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_fov_transition_time"), page == 1);
 
 #ifdef _WIN32
+	// 配置选择器在鼠标控制页面(2,3,4)和预测与滤波页面(6)显示
+	obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
+
+	// 根据当前页面和配置设置鼠标控制参数可见性
 	int currentConfig = (int)obs_data_get_int(settings, "mouse_config_select");
 	int algorithm = (int)obs_data_get_int(settings, "algorithm_type_global");
-	setV("mouse_config_select", page == 1 || page == 2 || page == 3 || page == 5);
-	setV("algorithm_type_global", page == 2);
-	setV("test_makcu_connection", page == 1);
-
 	for (int i = 0; i < 5; i++) {
 		bool isCurrentConfig = (i == currentConfig);
-		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 1);
-		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 2 && algorithm == 0);
-		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 3);
-		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 5);
-		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 5);
+		setMouseBasicPropertiesVisible(props, i, isCurrentConfig && page == 2);
+		// 高级PID参数只在algorithm == 0时显示
+		setMousePIDPropertiesVisible(props, i, isCurrentConfig && page == 3 && algorithm == 0);
+		setMouseTriggerPropertiesVisible(props, i, isCurrentConfig && page == 4);
+		setPredictorPropertiesVisible(props, i, isCurrentConfig && page == 6);
+		setBezierMovementPropertiesVisible(props, i, isCurrentConfig && page == 6);
 	}
+
+	// 根据控制器类型动态显示/隐藏专属字段
 	for (int i = 0; i < 5; i++) {
-		if (!(i == currentConfig && page == 1)) continue;
+		bool isCurrentConfig = (i == currentConfig);
+		if (!isCurrentConfig || page != 2) continue;
+
 		char propName[64];
 		snprintf(propName, sizeof(propName), "controller_type_%d", i);
 		int ctrlType = (int)obs_data_get_int(settings, propName);
-		bool showMakcu = (ctrlType == 1), showLogi = (ctrlType == 2);
+
+		bool showMakcu = (ctrlType == 1);     // MAKCU
+		bool showLogi = (ctrlType == 2);      // LogiDriver
+
 		snprintf(propName, sizeof(propName), "makcu_port_%d", i);
-		setV(propName, showMakcu);
+		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
 		snprintf(propName, sizeof(propName), "makcu_baud_rate_%d", i);
-		setV(propName, showMakcu);
+		obs_property_set_visible(obs_properties_get(props, propName), showMakcu);
 		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
-		setV(propName, showLogi);
+		obs_property_set_visible(obs_properties_get(props, propName), showLogi);
 	}
 
-	// 控制页算法组 — 复用 onConfigChanged 逻辑
-	onConfigChanged(props, property, settings);
+	// 动态PID参数只在algorithm == 3时显示
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
 
-	// 控制页：slew/smith/imm
-	setV("slew_rate_group", page == 2);
-	setV("slew_rate", page == 2); setV("slew_deadzone", page == 2);
-	setV("slew_damping_factor", page == 2); setV("slew_damping_zone", page == 2);
-	setV("slew_max_pixel_move", page == 2); setV("slew_output_gain", page == 2);
-	setV("smith_predictor_group", page == 2);
-	setV("enable_smith_predictor", page == 2); setV("smith_delay_ms", page == 2);
-	setV("smith_auto_delay", page == 2); setV("smith_delay_alpha", page == 2);
-	setV("imm_filter_group", page == 2);
-	setV("enable_imm_filter", page == 2); setV("imm_process_noise", page == 2);
-	setV("imm_measurement_noise", page == 2); setV("imm_transition_prob", page == 2);
+	// 专业PID参数只在algorithm == 1时显示
+	obs_property_set_visible(obs_properties_get(props, "external_pid_group"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_predict_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_x"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 1);
 
-	// 5 高级
-	setV("tracking_group", page == 5);
-	setV("iou_threshold", page == 5); setV("max_lost_frames", page == 5);
-	setV("target_switch_delay", page == 5); setV("target_switch_tolerance", page == 5);
+	// aim 控制器参数只在 algorithm == 2 时显示
+	// 子属性在子容器中，组可见时自动跟随；仅 aim_noise_amplitude 需根据开关单独控制
+	{
+		bool aimVis = (page == 3 && algorithm == 2);
+		bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
+		obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVis);
+		obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVis);
+	}
+	// SlewRate控制器参数只在 algorithm == 3 时显示
+	{
+		bool slewVis = (page == 3 && algorithm == 3);
+		obs_property_set_visible(obs_properties_get(props, "slew_rate_controller_group"), slewVis);
+	}
+
+	// 自适应PID控制器参数只在 algorithm == 4 时显示
+	{
+		bool adaptiveVis = (page == 3 && algorithm == 4);
+		obs_property_set_visible(obs_properties_get(props, "adaptive_pid_controller_group"), adaptiveVis);
+	}
+
+	// 测试连接按钮只在基础页面显示
+	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
+
+	// 页面5: 追踪与高级
+	obs_property_set_visible(obs_properties_get(props, "tracking_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "iou_threshold"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "max_lost_frames"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "target_switch_delay"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "target_switch_tolerance"), page == 5);
+	
+	// 卡尔曼追踪设置（页面5）
 	bool useKalman = obs_data_get_bool(settings, "use_kalman_tracker");
-	setV("use_kalman_tracker", page == 5);
-	setV("kalman_generate_threshold", page == 5 && useKalman);
-	setV("kalman_terminate_count", page == 5 && useKalman);
-	setV("show_kalman_predictions", page == 5 && useKalman);
-	setV("kalman_prediction_frames", page == 5 && useKalman);
-	setV("show_kalman_trajectories", page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "use_kalman_tracker"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "kalman_generate_threshold"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_terminate_count"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_predictions"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "kalman_prediction_frames"), page == 5 && useKalman);
+	obs_property_set_visible(obs_properties_get(props, "show_kalman_trajectories"), page == 5 && useKalman);
+	
+	// 神经网络轨迹生成器设置（页面5）
 	bool useNeuralPath = obs_data_get_bool(settings, "enable_neural_path");
-	setV("enable_neural_path", page == 5);
-	setV("neural_path_points", page == 5 && useNeuralPath);
-	setV("neural_mouse_step_size", page == 5 && useNeuralPath);
-	setV("neural_target_radius", page == 5 && useNeuralPath);
-	setV("neural_consume_per_frame", page == 5 && useNeuralPath);
-	setV("enable_neural_path_debug", page == 5 && useNeuralPath);
-	setV("tracking_weight_iou", page == 5); setV("tracking_weight_center", page == 5);
-	setV("tracking_weight_aspect", page == 5); setV("tracking_weight_area", page == 5);
-	setV("max_reidentify_frames", page == 5); setV("reidentify_center_threshold", page == 5);
-	setV("floating_window_group", page == 5); setV("show_floating_window", page == 5);
-	setV("floating_window_width", page == 5); setV("floating_window_height", page == 5);
-	setV("show_pid_debug_window", page == 5);
-	setV("config_management_group", page == 5); setV("save_config", page == 5); setV("load_config", page == 5);
-	setV("advanced_group", page == 5); setV("export_coordinates", page == 5); setV("coordinate_output_path", page == 5);
-	setV("predictor_group", page == 5); setV("bezier_movement_group", page == 5);
+	obs_property_set_visible(obs_properties_get(props, "enable_neural_path"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "neural_path_points"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_mouse_step_size"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_target_radius"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "neural_consume_per_frame"), page == 5 && useNeuralPath);
+	obs_property_set_visible(obs_properties_get(props, "enable_neural_path_debug"), page == 5 && useNeuralPath);
+	
+	// 多指标融合追踪权重（页面5）
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_iou"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_center"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_aspect"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "tracking_weight_area"), page == 5);
+	
+	// 重识别设置（页面5）
+	obs_property_set_visible(obs_properties_get(props, "max_reidentify_frames"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "reidentify_center_threshold"), page == 5);
+	
+	obs_property_set_visible(obs_properties_get(props, "floating_window_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "show_floating_window"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "floating_window_width"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "floating_window_height"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "show_pid_debug_window"), page == 5);
+    obs_property_set_visible(obs_properties_get(props, "config_management_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "save_config"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "load_config"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "advanced_group"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "export_coordinates"), page == 5);
+	obs_property_set_visible(obs_properties_get(props, "coordinate_output_path"), page == 5);
 
-	const char* cross[] = {
-		"crosshair_group","crosshair_enabled","crosshair_pick_color","crosshair_color_info",
-		"crosshair_manual_r","crosshair_manual_g","crosshair_manual_b","crosshair_apply_rgb",
-		"crosshair_h_min","crosshair_h_max","crosshair_s_min","crosshair_s_max","crosshair_v_min","crosshair_v_max",
-		"crosshair_h_tolerance","crosshair_s_tolerance","crosshair_v_tolerance",
-		"crosshair_morph_kernel","crosshair_erode_iter","crosshair_dilate_iter",
-		"crosshair_grid_rows","crosshair_grid_cols","crosshair_quantile_threshold",
-		"crosshair_template_path","crosshair_match_threshold","crosshair_min_area","crosshair_max_area",
-		"crosshair_shape_filter_enabled","crosshair_shape_type","crosshair_min_fill_ratio","crosshair_max_fill_ratio",
-		"crosshair_min_aspect_ratio","crosshair_max_aspect_ratio","crosshair_detect_interval",
-		"crosshair_search_radius","crosshair_color_isolation","crosshair_debug_mask"
-	};
-	for (const char* n : cross) setV(n, page == 5);
+	// 页面3: 鼠标控制 - PID参数（整合所有控制算法）
+	// 算法选择（在页面3始终显示）
+	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 3);
+	
+	// 动态PID参数组（选择1时显示，因为现在只有两种算法：AdvancedPID=0, DynamicPID=1）
+	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_speed_multiplier"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_min_coefficient"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_max_coefficient"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_sharpness"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_midpoint"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_min_data_points"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_error_tolerance"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "dynamic_smoothing_factor"), page == 3 && algorithm == 1);
+
+	// 页面6: 预测与滤波（整合预测器、贝塞尔）
+	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
+	obs_property_set_visible(obs_properties_get(props, "bezier_movement_group"), page == 6);
+
+	// 页面7: 准星检测
+	obs_property_set_visible(obs_properties_get(props, "crosshair_group"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_enabled"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_pick_color"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_color_info"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_manual_r"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_manual_g"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_manual_b"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_apply_rgb"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_h_min"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_h_max"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_s_min"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_s_max"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_v_min"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_v_max"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_h_tolerance"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_s_tolerance"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_v_tolerance"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_morph_kernel"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_erode_iter"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_dilate_iter"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_grid_rows"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_grid_cols"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_quantile_threshold"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_template_path"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_match_threshold"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_min_area"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_max_area"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_shape_filter_enabled"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_shape_type"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_min_fill_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_max_fill_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_min_aspect_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_max_aspect_ratio"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_detect_interval"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_search_radius"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_color_isolation"), page == 7);
+	obs_property_set_visible(obs_properties_get(props, "crosshair_debug_mask"), page == 7);
+
 #else
 	(void)page;
 #endif
-	UNUSED_PARAMETER(property);
+
 	return true;
 }
 
