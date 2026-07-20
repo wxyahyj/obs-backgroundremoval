@@ -4518,7 +4518,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 	while (filter->inferenceRunning) {
 		if (!filter->isInferencing) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			continue;
 		}
 
@@ -4547,19 +4547,22 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		}
 		
 		if (readIdx == -1) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#ifdef _WIN32
+			SwitchToThread();
+#else
+			std::this_thread::yield();
+#endif
 			continue;
 		}
 
-		// 读取帧数据（克隆以避免数据竞争）
-		// 加锁保护 inputFrames 的读取，防止分辨率变化时的竞态条件
+		// 读取帧：浅拷贝 Mat 头；slot 保持 state=2 直到推理完，避免每帧 8MB clone
 		cv::Mat frame;
 		int fullWidth, fullHeight;
 		int cropX, cropY;
 		int cropWidth, cropHeight;
 		{
 			std::lock_guard<std::mutex> lock(filter->inputFramesMutex);
-			frame = filter->inputFrames[readIdx].clone();
+			frame = filter->inputFrames[readIdx];
 			fullWidth = filter->inputFrameWidths[readIdx];
 			fullHeight = filter->inputFrameHeights[readIdx];
 			cropX = filter->inputCropX[readIdx];
@@ -4568,103 +4571,102 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			cropHeight = filter->inputCropHeight[readIdx];
 		}
 
-		// 标记输入缓冲区为空闲（已读取完毕）
-		filter->bufferState[readIdx].store(0, std::memory_order_release);
-		
 		// 安全检查：确保帧数据有效
 		if (frame.empty() || fullWidth <= 0 || fullHeight <= 0) {
+			filter->bufferState[readIdx].store(0, std::memory_order_release);
 			continue;
 		}
-		
-		// 安全检查：确保裁剪区域有效
+
 		if (cropWidth <= 0 || cropHeight <= 0) {
 			cropWidth = fullWidth;
 			cropHeight = fullHeight;
 			cropX = 0;
 			cropY = 0;
 		}
-		
-		// 安全检查：确保裁剪区域不超出边界
 		if (cropX < 0) cropX = 0;
 		if (cropY < 0) cropY = 0;
 		if (cropX + cropWidth > fullWidth) cropWidth = fullWidth - cropX;
 		if (cropY + cropHeight > fullHeight) cropHeight = fullHeight - cropY;
 		if (cropWidth <= 0 || cropHeight <= 0) {
+			filter->bufferState[readIdx].store(0, std::memory_order_release);
 			continue;
 		}
 
 		auto startTime = std::chrono::high_resolution_clock::now();
 		auto inferenceStartTime = startTime;
 
-		// 如果需要裁切，提取裁切区域
+		// 裁切：连续 ROI 直接用；非连续 copyTo 线程局部缓冲
 		cv::Mat inferenceFrame;
+		static thread_local cv::Mat cropBuf;
 		if (cropX > 0 || cropY > 0 || cropWidth < fullWidth || cropHeight < fullHeight) {
-			inferenceFrame = frame(cv::Rect(cropX, cropY, cropWidth, cropHeight)).clone();
+			cv::Mat roi = frame(cv::Rect(cropX, cropY, cropWidth, cropHeight));
+			if (roi.isContinuous()) inferenceFrame = roi;
+			else { roi.copyTo(cropBuf); inferenceFrame = cropBuf; }
 		} else {
-			inferenceFrame = frame;
-			cropX = 0;
-			cropY = 0;
-			cropWidth = fullWidth;
-			cropHeight = fullHeight;
+			if (frame.isContinuous()) inferenceFrame = frame;
+			else { frame.copyTo(cropBuf); inferenceFrame = cropBuf; }
+			cropX = 0; cropY = 0; cropWidth = fullWidth; cropHeight = fullHeight;
 		}
 
-		// 执行推理
+		// 短锁取模型快照，推理不持 yoloModelMutex
 		std::vector<Detection> newDetections;
-	{
-		std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
-			if (filter->yoloModel) {
+		std::shared_ptr<ModelYOLO> modelSnap;
+		{
+			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
+			modelSnap = filter->yoloModel;
+		}
+		if (modelSnap) {
 #ifdef _WIN32
 #ifdef HAVE_ONNXRUNTIME_DML_EP
-				bool dmlAttempted = false;
-				bool dmlSucceeded = false;
-				DmlPreprocessedFrame dmlFrame;  // capture crop info from preprocessedCopy for coord transform
-				if (filter->useGpuTextureInference && filter->yoloModel->isDmlTextureSupported()) {
-					DmlPreprocessedFrame preprocessedCopy;
-					{
-						std::lock_guard<std::mutex> dmlLock(filter->dmlPreprocessedFrameMutex);
-						if (filter->dmlPreprocessedFrame.valid()) {
-							preprocessedCopy = filter->dmlPreprocessedFrame;
-						}
-					}
-					if (preprocessedCopy.valid()) {
-						dmlAttempted = true;
-						try {
-							newDetections = filter->yoloModel->inferenceFromTextureDml(
-								preprocessedCopy, preprocessedCopy.srcWidth, preprocessedCopy.srcHeight);
-							dmlSucceeded = true;
-							dmlFrame = preprocessedCopy;  // capture crop info before preprocessedCopy goes out of scope
-						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
-						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference unknown error, falling back to CPU");
-						}
+			bool dmlAttempted = false;
+			bool dmlSucceeded = false;
+			DmlPreprocessedFrame dmlFrame;
+			if (filter->useGpuTextureInference && modelSnap->isDmlTextureSupported()) {
+				DmlPreprocessedFrame preprocessedCopy;
+				{
+					std::lock_guard<std::mutex> dmlLock(filter->dmlPreprocessedFrameMutex);
+					if (filter->dmlPreprocessedFrame.valid()) {
+						preprocessedCopy = filter->dmlPreprocessedFrame;
 					}
 				}
-				if (dmlSucceeded) {
-					filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
-					// DML ??? det.x/y ??????? (srcWidth x srcHeight) ???????? CPU ?????
-					// ? dmlPreprocessedFrame ??? crop ?????? cropX/Y/Width/Height?
-					// ?????? crop->full ????????????????
-					cropX = dmlFrame.cropX;
-					cropY = dmlFrame.cropY;
-					cropWidth = dmlFrame.srcWidth;
-					cropHeight = dmlFrame.srcHeight;
-					fullWidth = dmlFrame.fullWidth;
-					fullHeight = dmlFrame.fullHeight;
-				} else if (dmlAttempted) {
-					filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
-					newDetections = filter->yoloModel->inference(inferenceFrame);
-				} else {
-					newDetections = filter->yoloModel->inference(inferenceFrame);
+				if (preprocessedCopy.valid()) {
+					dmlAttempted = true;
+					try {
+						newDetections = modelSnap->inferenceFromTextureDml(
+							preprocessedCopy, preprocessedCopy.srcWidth, preprocessedCopy.srcHeight);
+						dmlSucceeded = true;
+						dmlFrame = std::move(preprocessedCopy);
+					} catch (const std::exception& e) {
+						obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
+					} catch (...) {
+						obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference unknown error, falling back to CPU");
+					}
 				}
-#else
-				newDetections = filter->yoloModel->inference(inferenceFrame);
-#endif
-#else
-				newDetections = filter->yoloModel->inference(inferenceFrame);
-#endif
 			}
+			if (dmlSucceeded) {
+				filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
+				cropX = dmlFrame.cropX;
+				cropY = dmlFrame.cropY;
+				cropWidth = dmlFrame.srcWidth;
+				cropHeight = dmlFrame.srcHeight;
+				fullWidth = dmlFrame.fullWidth;
+				fullHeight = dmlFrame.fullHeight;
+			} else if (dmlAttempted) {
+				filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+				newDetections = modelSnap->inference(inferenceFrame);
+			} else {
+				newDetections = modelSnap->inference(inferenceFrame);
+			}
+#else
+			newDetections = modelSnap->inference(inferenceFrame);
+#endif
+#else
+			newDetections = modelSnap->inference(inferenceFrame);
+#endif
 		}
+
+		// 推理完成后再释放输入 slot，渲染线程可覆写
+		filter->bufferState[readIdx].store(0, std::memory_order_release);
 
 		// 记录推理时间
 		auto endTime = std::chrono::high_resolution_clock::now();
@@ -4767,7 +4769,12 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					int n = static_cast<int>(newDetections.size());
 					int m = static_cast<int>(trackedTargets.size());
 					
-					std::vector<std::vector<float>> costMatrix(n, std::vector<float>(m, 1.0f));
+					static thread_local std::vector<std::vector<float>> costMatrix;
+					if ((int)costMatrix.size() != n) costMatrix.resize(n);
+					for (int ci = 0; ci < n; ++ci) {
+						if ((int)costMatrix[ci].size() != m) costMatrix[ci].assign(m, 1.0f);
+						else std::fill(costMatrix[ci].begin(), costMatrix[ci].end(), 1.0f);
+					}
 					
 					for (int i = 0; i < n; ++i) {
 						cv::Rect2f detBox(

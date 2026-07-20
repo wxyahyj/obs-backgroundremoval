@@ -1,12 +1,8 @@
-#include "DmlPreprocessor.h"
+﻿#include "DmlPreprocessor.h"
 #include <obs-module.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-
-#if defined(__AVX2__) || defined(_MSC_VER)
-#include <immintrin.h>
-#endif
 
 DmlPreprocessor::DmlPreprocessor()
     : initialized_(false)
@@ -67,11 +63,17 @@ bool DmlPreprocessor::preprocessFromBgra(
     const int channels = 3;
     const int planeSize = dstWidth * dstHeight;
     const int totalPixels = planeSize * channels;
-    // 复用容量；pad 填 114/255 与 letterbox 路径一致
-    if (static_cast<int>(outFrame.data.capacity()) < totalPixels) {
-        outFrame.data.reserve(static_cast<size_t>(totalPixels));
+    const float padVal = 114.0f / 255.0f;
+
+    const bool sizeChanged =
+        outFrame.width != dstWidth || outFrame.height != dstHeight ||
+        static_cast<int>(outFrame.data.size()) != totalPixels;
+
+    if (sizeChanged) {
+        outFrame.data.assign(static_cast<size_t>(totalPixels), padVal);
     }
-    outFrame.data.assign(static_cast<size_t>(totalPixels), 114.0f / 255.0f);
+    // size 不变：不整缓冲 assign；内容区会被覆盖，pad 保持
+
     outFrame.width = dstWidth;
     outFrame.height = dstHeight;
     outFrame.channels = channels;
@@ -87,7 +89,6 @@ bool DmlPreprocessor::preprocessFromBgra(
     float* gPlane = outFrame.data.data() + planeSize;
     float* bPlane = outFrame.data.data() + 2 * planeSize;
 
-    // 只扫有效内容区，pad 已是 0
     const int y0 = std::max(0, params.padY);
     const int y1 = std::min(dstHeight, params.padY + newHeight);
     const int x0 = std::max(0, params.padX);
@@ -98,7 +99,20 @@ bool DmlPreprocessor::preprocessFromBgra(
         const int srcY = std::clamp(sy, 0, srcHeight - 1);
         const uint8_t* row = bgraData + srcY * srcStrideBytes;
         const int rowBase = dy * dstWidth;
-        for (int dx = x0; dx < x1; ++dx) {
+        int dx = x0;
+        // 4 像素一批手写展开，减循环开销
+        for (; dx + 3 < x1; dx += 4) {
+            for (int k = 0; k < 4; ++k) {
+                const int sx = static_cast<int>((dx + k - params.padX) * invScale);
+                const int srcX = std::clamp(sx, 0, srcWidth - 1);
+                const uint8_t* pixel = row + srcX * 4;
+                const int idx = rowBase + dx + k;
+                bPlane[idx] = pixel[0] * inv255;
+                gPlane[idx] = pixel[1] * inv255;
+                rPlane[idx] = pixel[2] * inv255;
+            }
+        }
+        for (; dx < x1; ++dx) {
             const int sx = static_cast<int>((dx - params.padX) * invScale);
             const int srcX = std::clamp(sx, 0, srcWidth - 1);
             const uint8_t* pixel = row + srcX * 4;

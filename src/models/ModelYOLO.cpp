@@ -76,7 +76,22 @@ static void convertFloatBufferToHalf(const float* src, Ort::Float16_t* dst, size
 
 static void convertHalfBufferToFloat(const Ort::Float16_t* src, float* dst, size_t n)
 {
-	for (size_t i = 0; i < n; ++i) {
+	size_t i = 0;
+#if defined(_MSC_VER)
+	if (cpuSupportsF16C()) {
+		for (; i + 8 <= n; i += 8) {
+			__m128i h = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
+			__m256 f = _mm256_cvtph_ps(h);
+			_mm256_storeu_ps(dst + i, f);
+		}
+		for (; i + 4 <= n; i += 4) {
+			__m128i h = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(src + i));
+			__m128 f = _mm_cvtph_ps(h);
+			_mm_storeu_ps(dst + i, f);
+		}
+	}
+#endif
+	for (; i < n; ++i) {
 		dst[i] = static_cast<float>(src[i]);
 	}
 }
@@ -513,34 +528,24 @@ void ModelYOLO::preprocessInput(const cv::Mat& input, float* outputBuffer) {
         float* gChannel = outputBuffer + channelSize;
         float* bChannel = outputBuffer + channelSize * 2;
         
-        // SIMD优化：一次处理4个像素
+        // SSE: 一次 4 像素 BGRA→planar RGB float（修复原 AVX 写 8 float 越界）
         int i = 0;
-#ifdef __AVX2__
-        const __m256 normVec = _mm256_set1_ps(norm);
+#if defined(_MSC_VER) || defined(__SSE2__)
+        const __m128 normVec = _mm_set1_ps(norm);
         for (; i + 3 < channelSize; i += 4) {
-            // 加载16字节（4个BGRA像素）
-            __m128i bgra0 = _mm_loadu_si128((const __m128i*)(inputData + i * 4));
-            
-            // 提取各通道（每通道4个8位值）
-            __m128i b0 = _mm_and_si128(bgra0, _mm_set1_epi32(0xFF));
-            __m128i g0 = _mm_and_si128(_mm_srli_epi32(bgra0, 8), _mm_set1_epi32(0xFF));
-            __m128i r0 = _mm_and_si128(_mm_srli_epi32(bgra0, 16), _mm_set1_epi32(0xFF));
-            
-            // 转换为浮点并归一化
-            __m256 rFloat = _mm256_cvtepi32_ps(r0);
-            __m256 gFloat = _mm256_cvtepi32_ps(g0);
-            __m256 bFloat = _mm256_cvtepi32_ps(b0);
-            
-            rFloat = _mm256_mul_ps(rFloat, normVec);
-            gFloat = _mm256_mul_ps(gFloat, normVec);
-            bFloat = _mm256_mul_ps(bFloat, normVec);
-            
-            // 存储到输出缓冲区
-            _mm256_storeu_ps(rChannel + i, rFloat);
-            _mm256_storeu_ps(gChannel + i, gFloat);
-            _mm256_storeu_ps(bChannel + i, bFloat);
+            __m128i bgra = _mm_loadu_si128(reinterpret_cast<const __m128i*>(inputData + i * 4));
+            __m128i b = _mm_and_si128(bgra, _mm_set1_epi32(0xFF));
+            __m128i g = _mm_and_si128(_mm_srli_epi32(bgra, 8), _mm_set1_epi32(0xFF));
+            __m128i r = _mm_and_si128(_mm_srli_epi32(bgra, 16), _mm_set1_epi32(0xFF));
+            __m128 rf = _mm_mul_ps(_mm_cvtepi32_ps(r), normVec);
+            __m128 gf = _mm_mul_ps(_mm_cvtepi32_ps(g), normVec);
+            __m128 bf = _mm_mul_ps(_mm_cvtepi32_ps(b), normVec);
+            _mm_storeu_ps(rChannel + i, rf);
+            _mm_storeu_ps(gChannel + i, gf);
+            _mm_storeu_ps(bChannel + i, bf);
         }
 #endif
+        // 处理剩余像素
         // 处理剩余像素
         for (; i < channelSize; ++i) {
             rChannel[i] = inputData[i * 4 + 2] * norm;
