@@ -41,7 +41,7 @@ if(ENABLE_QT)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_QT)
   endif()
   
-  # 集成QtFluentWidgets UI库 (MIT许可证)
+  # 闆嗘垚QtFluentWidgets UI搴?(MIT璁稿彲璇?
   set(FLUENT_BUILD_DESIGNER_PLUGIN OFF CACHE BOOL "Disable QtFluentWidgets Designer plugin" FORCE)
   add_subdirectory(${CMAKE_SOURCE_DIR}/QtFluentWidgets-master ${CMAKE_BINARY_DIR}/QtFluentWidgets)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE QtFluentWidgets)
@@ -58,7 +58,7 @@ if(NOT VCPKG_TARGET_TRIPLET STREQUAL "")
   find_package(CURL CONFIG REQUIRED)
   find_package(OpenCV CONFIG REQUIRED)
   find_package(nlohmann_json CONFIG REQUIRED)
-  # Eigen3由creeper-qt提供，不再单独查找
+  # Eigen3鐢眂reeper-qt鎻愪緵锛屼笉鍐嶅崟鐙煡鎵?
   if(NOT TARGET Eigen3::Eigen)
     find_package(Eigen3 CONFIG REQUIRED)
   endif()
@@ -132,8 +132,8 @@ elseif(MSVC)
 
   set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")
 
-  # DirectML版本没有onnxruntime_providers_shared.lib，只有dll
-  # 只有存在.lib文件时才创建库目标
+  # DirectML鐗堟湰娌℃湁onnxruntime_providers_shared.lib锛屽彧鏈塪ll
+  # 鍙湁瀛樺湪.lib鏂囦欢鏃舵墠鍒涘缓搴撶洰鏍?
   if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_shared.lib")
     add_library(onnxruntime::onnxruntime_provider_shared SHARED IMPORTED)
     set_target_properties(
@@ -157,12 +157,12 @@ elseif(MSVC)
       INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
   )
   
-  # 只有存在DLL时才添加DELAYLOAD
+  # 鍙湁瀛樺湪DLL鏃舵墠娣诲姞DELAYLOAD
   if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime.dll")
     set_target_properties(onnxruntime::onnxruntime PROPERTIES INTERFACE_LINK_OPTIONS "/DELAYLOAD:onnxruntime.dll")
   endif()
   
-  # 只有存在providers_shared库时才链接
+  # 鍙湁瀛樺湪providers_shared搴撴椂鎵嶉摼鎺?
   if(ONNXRUNTIME_HAS_PROVIDERS_SHARED)
     target_link_libraries(onnxruntime::onnxruntime INTERFACE onnxruntime::onnxruntime_provider_shared)
   endif()
@@ -200,7 +200,7 @@ elseif(MSVC)
     endif()
   endif()
   
-  # DML纹理共享支持 - 添加D3D12链接库
+  # DML绾圭悊鍏变韩鏀寔 - 娣诲姞D3D12閾炬帴搴?
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE d3d12 dxgi d3d11)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/models/DmlPreprocessor.cpp)
   
@@ -226,7 +226,7 @@ endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc OpenCV::opencv_imgcodecs nlohmann_json::nlohmann_json Eigen3::Eigen)
 
-# ExternalPID 实现已切换到逆向重构的 src/mpid.cpp（移除 libs/pid 依赖）
+# ExternalPID 瀹炵幇宸插垏鎹㈠埌閫嗗悜閲嶆瀯鐨?src/mpid.cpp锛堢Щ闄?libs/pid 渚濊禆锛?
 
 # Check for ONNX Runtime Execution Providers
 include(CheckLibraryExists)
@@ -276,14 +276,14 @@ if(HAVE_ONNXRUNTIME_TENSORRT_EP)
 endif()
 
 if(WIN32)
-  # DirectML支持 - 仅在DIRECTML构建时启用
-  # 注意：GPU版本(CUDA+TensorRT)不包含DirectML，DirectML需要单独的NuGet包
+  # DirectML鏀寔 - 浠呭湪DIRECTML鏋勫缓鏃跺惎鐢?
+  # 娉ㄦ剰锛欸PU鐗堟湰(CUDA+TensorRT)涓嶅寘鍚獶irectML锛孌irectML闇€瑕佸崟鐙殑NuGet鍖?
   if(DIRECTML)
     message(STATUS "ONNX Runtime DirectML Execution Provider enabled (DirectML build)")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
   endif()
-  # DirectML 需要 dxcore.lib (Windows上始终链接，因为onnxruntime可能包含DML代码)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore)
+  # DirectML 闇€瑕?dxcore.lib (Windows涓婂缁堥摼鎺ワ紝鍥犱负onnxruntime鍙兘鍖呭惈DML浠ｇ爜)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore setupapi hid)
 endif()
 
 target_sources(
@@ -308,8 +308,11 @@ if(WIN32)
       src/MouseController.cpp
       src/MAKCUMouseController.cpp
       src/LogiDriverMouseController.cpp
+      src/GvInputMouseController.cpp
       src/logi_driver.cpp
       src/DerivativePredictor.cpp
+      src/SmithPredictor.cpp
+      src/SlewRateController.cpp
       src/aim_controller.cpp
       src/MouseControllerFactory.cpp
       src/ConfigManager.cpp

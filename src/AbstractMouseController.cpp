@@ -132,6 +132,20 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         ghostConfig.noiseFreq = config.ghostNoiseFreq;
         ghostTracker.setConfig(ghostConfig);
     }
+
+    // IMM交互多模型滤波器配置同步
+    {
+        IMMFilter::Config immCfg;
+        immCfg.enabled = config.immFilterEnabled;
+        immCfg.processNoisePos = config.immProcessNoisePos;
+        immCfg.processNoiseVel = config.immProcessNoiseVel;
+        immCfg.processNoiseAcc = config.immProcessNoiseAcc;
+        immCfg.processNoiseTurn = config.immProcessNoiseTurn;
+        immCfg.measurementNoiseX = config.immMeasurementNoiseX;
+        immCfg.measurementNoiseY = config.immMeasurementNoiseY;
+        immCfg.activeModels = config.immActiveModels;
+        immFilter.setConfig(immCfg);
+    }
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
@@ -586,10 +600,18 @@ void AbstractMouseController::tick()
             }
         }
 
-        // 导数预测器：在PID计算前预测目标位置
+        // 预测器：在PID计算前预测目标位置
         float predictedErrorX = errorX;
         float predictedErrorY = errorY;
-        if (config.useDerivativePredictor) {
+
+        // IMM交互多模型预测（优先，替代DerivativePredictor）
+        if (config.immFilterEnabled) {
+            immFilter.predict(deltaTime);
+            immFilter.update(errorX, errorY);
+            immFilter.getPrediction(deltaTime, predictedErrorX, predictedErrorY);
+        }
+        // 导数预测器（备选，IMM未启用时使用）
+        else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
@@ -925,7 +947,12 @@ void AbstractMouseController::tick()
             externalErrorY = smithCY;
         }
 
-        if (config.useDerivativePredictor) {
+        if (config.immFilterEnabled) {
+            immFilter.predict(deltaTime);
+            immFilter.update(errorX, errorY);
+            immFilter.getPrediction(deltaTime, externalErrorX, externalErrorY);
+        }
+        else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
@@ -1106,8 +1133,14 @@ void AbstractMouseController::tick()
             adaptiveErrorY = smithCY;
         }
 
-        // 导数预测器
-        if (config.useDerivativePredictor) {
+        // IMM交互多模型预测（优先）
+        if (config.immFilterEnabled) {
+            immFilter.predict(deltaTime);
+            immFilter.update(errorX, errorY);
+            immFilter.getPrediction(deltaTime, adaptiveErrorX, adaptiveErrorY);
+        }
+        // 导数预测器（备选）
+        else if (config.useDerivativePredictor) {
             predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
             float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
             predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
@@ -1448,6 +1481,7 @@ void AbstractMouseController::resetPidState()
     lastOutputX = 0.0f;
     lastOutputY = 0.0f;
     predictor.reset();
+    immFilter.reset();
     smithPredictor.reset();
     adaptivePidX_.reset();
     adaptivePidY_.reset();

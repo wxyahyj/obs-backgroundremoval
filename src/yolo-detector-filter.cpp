@@ -395,6 +395,15 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float smithModelGain;
 		float smithModelTau;
 		bool smithAutoTau;
+		// IMM交互多模型滤波器参数
+		bool immFilterEnabled;
+		float immProcessNoisePos;
+		float immProcessNoiseVel;
+		float immProcessNoiseAcc;
+		float immProcessNoiseTurn;
+		float immMeasurementNoiseX;
+		float immMeasurementNoiseY;
+		int immActiveModels;
 		// SlewRate控制器参数
 		bool slewRateEnabled;
 		float slewRateOutputGain;
@@ -492,6 +501,15 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			smithModelGain = 1.0f;
 			smithModelTau = 0.02f;
 			smithAutoTau = true;
+			// IMM交互多模型滤波器默认值
+			immFilterEnabled = false;
+			immProcessNoisePos = 0.1f;
+			immProcessNoiseVel = 0.5f;
+			immProcessNoiseAcc = 1.0f;
+			immProcessNoiseTurn = 0.1f;
+			immMeasurementNoiseX = 1.0f;
+			immMeasurementNoiseY = 1.0f;
+			immActiveModels = 3;
 			// SlewRate控制器默认值
 			slewRateEnabled = false;
 			slewRateOutputGain = 0.25f;
@@ -1071,6 +1089,44 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
 			obs_properties_add_group(props, propName, "Smith预估器", OBS_GROUP_CHECKABLE, smithProps);
 		}
+
+		// IMM交互多模型滤波器（陈金广《目标跟踪系统中的滤波方法》）
+	for (int i = 0; i < 5; i++) {
+		char immPropName[64];
+		snprintf(immPropName, sizeof(immPropName), "imm_filter_group_%d", i);
+		obs_properties_t *immProps = obs_properties_create();
+
+		snprintf(immPropName, sizeof(immPropName), "imm_enabled_%d", i);
+		obs_property_t *immEnabledProp = obs_properties_add_bool(immProps, immPropName, "IMM交互多模型预测");
+		obs_property_set_long_description(immEnabledProp, "CV匀速+CA匀加速+CT转弯三模型并行，自动择优。替代DerivativePredictor");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_process_noise_pos_%d", i);
+		obs_property_t *immQPosProp = obs_properties_add_float_slider(immProps, immPropName, "过程噪声(位置)", 0.01f, 2.0f, 0.01f);
+		obs_property_set_long_description(immQPosProp, "位置不确定性。越小→跟踪越平滑但滞后。默认0.1");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_process_noise_vel_%d", i);
+		obs_property_t *immQVelProp = obs_properties_add_float_slider(immProps, immPropName, "过程噪声(速度)", 0.1f, 5.0f, 0.1f);
+		obs_property_set_long_description(immQVelProp, "速度不确定性。越大→对变速目标越灵敏。默认0.5");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_process_noise_acc_%d", i);
+		obs_property_t *immQAccProp = obs_properties_add_float_slider(immProps, immPropName, "过程噪声(加速度)", 0.1f, 10.0f, 0.1f);
+		obs_property_set_long_description(immQAccProp, "加速度不确定性。CA模型使用。越大→对急停起跑越灵敏。默认1.0");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_process_noise_turn_%d", i);
+		obs_property_t *immQTurnProp = obs_properties_add_float_slider(immProps, immPropName, "过程噪声(转弯角速)", 0.01f, 1.0f, 0.01f);
+		obs_property_set_long_description(immQTurnProp, "转弯不确定性。CT模型使用。越大→对走位越灵敏。默认0.1");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_measurement_noise_x_%d", i);
+		obs_property_t *immRXProp = obs_properties_add_float_slider(immProps, immPropName, "测量噪声(X)", 0.1f, 10.0f, 0.1f);
+		obs_property_set_long_description(immRXProp, "X轴测量噪声。越大→更依赖预测而非观测。默认1.0");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_measurement_noise_y_%d", i);
+		obs_property_t *immRYProp = obs_properties_add_float_slider(immProps, immPropName, "测量噪声(Y)", 0.1f, 10.0f, 0.1f);
+		obs_property_set_long_description(immRYProp, "Y轴测量噪声。越大→更依赖预测而非观测。默认1.0");
+
+		snprintf(immPropName, sizeof(immPropName), "imm_filter_group_%d", i);
+		obs_properties_add_group(props, immPropName, "IMM交互多模型", OBS_GROUP_CHECKABLE, immProps);
+	}
 
 		// 贝塞尔曲线移动分组
 	for (int i = 0; i < 5; i++) {
@@ -2276,6 +2332,13 @@ snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
     obs_data_set_default_double(settings, "aim_ramp_time", 0.3);
     obs_data_set_default_double(settings, "aim_init_scale", 0.6);
     obs_data_set_default_double(settings, "aim_output_max", 128.0);
+    // IMM交互多模型滤波器默认值
+    obs_data_set_default_double(settings, "imm_process_noise_pos", 0.1);
+    obs_data_set_default_double(settings, "imm_process_noise_vel", 0.5);
+    obs_data_set_default_double(settings, "imm_process_noise_acc", 1.0);
+    obs_data_set_default_double(settings, "imm_process_noise_turn", 0.1);
+    obs_data_set_default_double(settings, "imm_measurement_noise_x", 1.0);
+    obs_data_set_default_double(settings, "imm_measurement_noise_y", 1.0);
     // SlewRate控制器默认值（全局）
     obs_data_set_default_double(settings, "slew_rate_output_gain", 0.25);
     obs_data_set_default_double(settings, "slew_rate_response_smoothing", 0.0008);
@@ -2706,6 +2769,22 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].smithModelTau = (float)obs_data_get_double(settings, propName);
 snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
 tf->mouseConfigs[i].smithAutoTau = obs_data_get_bool(settings, propName);
+		// IMM交互多模型滤波器参数
+		snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
+		tf->mouseConfigs[i].immFilterEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "imm_process_noise_pos_%d", i);
+		tf->mouseConfigs[i].immProcessNoisePos = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "imm_process_noise_vel_%d", i);
+		tf->mouseConfigs[i].immProcessNoiseVel = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "imm_process_noise_acc_%d", i);
+		tf->mouseConfigs[i].immProcessNoiseAcc = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "imm_process_noise_turn_%d", i);
+		tf->mouseConfigs[i].immProcessNoiseTurn = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "imm_measurement_noise_x_%d", i);
+		tf->mouseConfigs[i].immMeasurementNoiseX = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "imm_measurement_noise_y_%d", i);
+		tf->mouseConfigs[i].immMeasurementNoiseY = (float)obs_data_get_double(settings, propName);
+		tf->mouseConfigs[i].immActiveModels = 3;
 			// 贝塞尔曲线移动参数
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);
@@ -5654,6 +5733,15 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.smithModelGain = cfg.smithModelGain;
 		mcConfig.smithModelTau = cfg.smithModelTau;
 		mcConfig.smithAutoTau = cfg.smithAutoTau;
+		// IMM交互多模型滤波器参数
+		mcConfig.immFilterEnabled = cfg.immFilterEnabled;
+		mcConfig.immProcessNoisePos = cfg.immProcessNoisePos;
+		mcConfig.immProcessNoiseVel = cfg.immProcessNoiseVel;
+		mcConfig.immProcessNoiseAcc = cfg.immProcessNoiseAcc;
+		mcConfig.immProcessNoiseTurn = cfg.immProcessNoiseTurn;
+		mcConfig.immMeasurementNoiseX = cfg.immMeasurementNoiseX;
+		mcConfig.immMeasurementNoiseY = cfg.immMeasurementNoiseY;
+		mcConfig.immActiveModels = cfg.immActiveModels;
 		// SlewRate控制器参数（全局参数，从 tf-> 读取）
 		mcConfig.slewRateEnabled = tf->slewRateEnabled;
 		mcConfig.slewRateOutputGain = tf->slewRateOutputGain;

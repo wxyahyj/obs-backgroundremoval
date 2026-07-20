@@ -273,6 +273,16 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float smithModelTau = 0.02f;
 		bool smithAutoTau = true;
 
+		// IMM交互多模型滤波器
+		bool immFilterEnabled = false;
+		float immProcessNoisePos = 0.1f;
+		float immProcessNoiseVel = 0.5f;
+		float immProcessNoiseAcc = 1.0f;
+		float immProcessNoiseTurn = 0.1f;
+		float immMeasurementNoiseX = 1.0f;
+		float immMeasurementNoiseY = 1.0f;
+		int immActiveModels = 3;
+
 		// SlewRate控制器（限速平滑趋近）
 		bool slewRateEnabled = false;
 		float slewRateOutputGain = 0.25f;

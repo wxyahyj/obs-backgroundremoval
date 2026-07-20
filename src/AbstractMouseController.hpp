@@ -16,6 +16,7 @@
 #include "SmithPredictor.hpp"
 #include "SlewRateController.hpp"
 #include "AdaptivePIDController.hpp"
+#include "IMMFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
 #include "utils/GhostTracker.hpp"
@@ -117,6 +118,9 @@ protected:
     
     DerivativePredictor predictor;
     
+    IMMFilter immFilter;
+    bool immInitialized_;
+
     SmithPredictor smithPredictor;
 
     // avgInferenceTimeMs  推理延迟(毫秒)，Smith 自动 tau 使用
