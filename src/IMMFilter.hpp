@@ -209,52 +209,54 @@ inline void IMMFilter::updateCV(float mx, float my)
 
 inline void IMMFilter::predictCA(float dt)
 {
+	// 两轴独立 3 状态 CA：[pos,vel,acc]；手写 F*x 与块对角 F*P*F'+Q
 	float halfDt2 = 0.5f * dt * dt;
-	float F[CAX][CAX] = {
-		{1, dt, halfDt2, 0,  0,       0},
-		{0,  1,      dt, 0,  0,       0},
-		{0,  0,       1, 0,  0,       0},
-		{0,  0,       0, 1, dt, halfDt2},
-		{0,  0,       0, 0,  1,      dt},
-		{0,  0,       0, 0,  0,       1}
-	};
-
-	float Qacc = cfg_.processNoiseAcc;
-	float Q[CAX][CAX] = {};
 	float dt2 = dt * dt;
 	float dt3 = dt2 * dt;
 	float dt4 = dt2 * dt2;
 	float dt5 = dt3 * dt2;
+	float Qacc = cfg_.processNoiseAcc;
+	float q00 = Qacc * dt5 / 20.0f;
+	float q01 = Qacc * dt4 / 8.0f;
+	float q02 = Qacc * dt3 / 6.0f;
+	float q11 = Qacc * dt3 / 3.0f;
+	float q12 = Qacc * dt2 / 2.0f;
+	float q22 = Qacc * dt;
+
 	for (size_t d = 0; d < 2; d++) {
 		size_t b = d * 3;
-		Q[b][b] = Qacc * dt5 / 20.0f;
-		Q[b][b + 1] = Qacc * dt4 / 8.0f; Q[b + 1][b] = Qacc * dt4 / 8.0f;
-		Q[b][b + 2] = Qacc * dt3 / 6.0f; Q[b + 2][b] = Qacc * dt3 / 6.0f;
-		Q[b + 1][b + 1] = Qacc * dt3 / 3.0f;
-		Q[b + 1][b + 2] = Qacc * dt2 / 2.0f; Q[b + 2][b + 1] = Qacc * dt2 / 2.0f;
-		Q[b + 2][b + 2] = Qacc * dt;
-	}
+		float p = xCA_[b], v = xCA_[b + 1], a = xCA_[b + 2];
+		xCA_[b] = p + v * dt + halfDt2 * a;
+		xCA_[b + 1] = v + a * dt;
+		xCA_[b + 2] = a;
 
-	float xPred[CAX] = {};
-	float Pp[CAX][CAX] = {};
-	for (size_t i = 0; i < CAX; i++)
-		for (size_t j = 0; j < CAX; j++)
-			xPred[i] += F[i][j] * xCA_[j];
-	for (size_t i = 0; i < CAX; i++) {
-		for (size_t j = 0; j < CAX; j++) {
-			float sum = 0.0f;
-			for (size_t k = 0; k < CAX; k++)
-				sum += F[i][k] * PxCA_[k][j];
-			float sum2 = 0.0f;
-			for (size_t k = 0; k < CAX; k++)
-				sum2 += sum * F[j][k];
-			Pp[i][j] = sum2 + Q[i][j];
+		// 3x3 协方差：先 F*P，再 (F*P)*F' + Q（仅块内）
+		float P[3][3];
+		for (size_t i = 0; i < 3; i++)
+			for (size_t j = 0; j < 3; j++)
+				P[i][j] = PxCA_[b + i][b + j];
+
+		// F = [[1,dt,0.5dt2],[0,1,dt],[0,0,1]]
+		float FP[3][3] = {};
+		for (size_t j = 0; j < 3; j++) {
+			FP[0][j] = P[0][j] + dt * P[1][j] + halfDt2 * P[2][j];
+			FP[1][j] = P[1][j] + dt * P[2][j];
+			FP[2][j] = P[2][j];
 		}
+		float Pp[3][3] = {};
+		for (size_t i = 0; i < 3; i++) {
+			Pp[i][0] = FP[i][0] + dt * FP[i][1] + halfDt2 * FP[i][2];
+			Pp[i][1] = FP[i][1] + dt * FP[i][2];
+			Pp[i][2] = FP[i][2];
+		}
+		Pp[0][0] += q00; Pp[0][1] += q01; Pp[0][2] += q02;
+		Pp[1][0] += q01; Pp[1][1] += q11; Pp[1][2] += q12;
+		Pp[2][0] += q02; Pp[2][1] += q12; Pp[2][2] += q22;
+
+		for (size_t i = 0; i < 3; i++)
+			for (size_t j = 0; j < 3; j++)
+				PxCA_[b + i][b + j] = Pp[i][j];
 	}
-	for (size_t i = 0; i < CAX; i++) xCA_[i] = xPred[i];
-	for (size_t i = 0; i < CAX; i++)
-		for (size_t j = 0; j < CAX; j++)
-			PxCA_[i][j] = Pp[i][j];
 }
 
 inline void IMMFilter::updateCA(float mx, float my)

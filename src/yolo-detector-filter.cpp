@@ -111,6 +111,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::mutex lostTargetsMutex;
 	int maxReidentifyFrames;  // 重识别最大帧数
 	float reidentifyCenterThreshold;  // 重识别中心点距离阈值
+	// 检测框 EMA 平滑
+	bool detectionSmoothingEnabled = false;
+	float detectionSmoothingAlpha = 0.3f;
 
 	std::string modelPath;
 	int inputResolution;
@@ -404,6 +407,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float immMeasurementNoiseX;
 		float immMeasurementNoiseY;
 		int immActiveModels;
+		// OneEuro 误差滤波
+		bool useOneEuroFilter;
+		float oneEuroMinCutoff;
+		float oneEuroBeta;
+		float oneEuroDCutoff;
 		// SlewRate控制器参数
 		bool slewRateEnabled;
 		float slewRateOutputGain;
@@ -510,6 +518,11 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			immMeasurementNoiseX = 1.0f;
 			immMeasurementNoiseY = 1.0f;
 			immActiveModels = 3;
+			// OneEuro 误差滤波默认值
+			useOneEuroFilter = false;
+			oneEuroMinCutoff = 1.0f;
+			oneEuroBeta = 0.007f;
+			oneEuroDCutoff = 1.0f;
 			// SlewRate控制器默认值
 			slewRateEnabled = false;
 			slewRateOutputGain = 0.25f;
@@ -2036,6 +2049,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, "dynamic_fov_transition_time", 200);
     
     // 检测框平滑参数
+    obs_data_set_default_bool(settings, "detection_smoothing_enabled", false);
+    obs_data_set_default_double(settings, "detection_smoothing_alpha", 0.3);
     
     // KalmanFilter 追踪参数
     obs_data_set_default_bool(settings, "use_kalman_tracker", false);
@@ -2228,6 +2243,15 @@ snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		snprintf(propName, sizeof(propName), "imm_measurement_noise_x_%d", i);
 		obs_data_set_default_double(settings, propName, 1.0);
 		snprintf(propName, sizeof(propName), "imm_measurement_noise_y_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		// OneEuro 默认值
+		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "one_euro_min_cutoff_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "one_euro_beta_%d", i);
+		obs_data_set_default_double(settings, propName, 0.007);
+		snprintf(propName, sizeof(propName), "one_euro_d_cutoff_%d", i);
 		obs_data_set_default_double(settings, propName, 1.0);
 		// 贝塞尔曲线移动参数默认值
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
@@ -2814,7 +2838,16 @@ tf->mouseConfigs[i].smithAutoTau = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "imm_measurement_noise_y_%d", i);
 		tf->mouseConfigs[i].immMeasurementNoiseY = (float)obs_data_get_double(settings, propName);
 		tf->mouseConfigs[i].immActiveModels = 3;
-			// 贝塞尔曲线移动参数
+		// OneEuro 误差滤波
+		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
+		tf->mouseConfigs[i].useOneEuroFilter = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "one_euro_min_cutoff_%d", i);
+		tf->mouseConfigs[i].oneEuroMinCutoff = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "one_euro_beta_%d", i);
+		tf->mouseConfigs[i].oneEuroBeta = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "one_euro_d_cutoff_%d", i);
+		tf->mouseConfigs[i].oneEuroDCutoff = (float)obs_data_get_double(settings, propName);
+		// 贝塞尔曲线移动参数
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		tf->mouseConfigs[i].enableBezierMovement = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
@@ -2917,6 +2950,8 @@ tf->aimOutputMax = (float)obs_data_get_double(settings, "aim_output_max");
 	// 重识别参数
 	tf->maxReidentifyFrames = (int)obs_data_get_int(settings, "max_reidentify_frames");
 	tf->reidentifyCenterThreshold = (float)obs_data_get_double(settings, "reidentify_center_threshold");
+	tf->detectionSmoothingEnabled = obs_data_get_bool(settings, "detection_smoothing_enabled");
+	tf->detectionSmoothingAlpha = (float)obs_data_get_double(settings, "detection_smoothing_alpha");
 
 	// 准星检测参数读取
 	{
@@ -5771,6 +5806,11 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.immMeasurementNoiseX = cfg.immMeasurementNoiseX;
 		mcConfig.immMeasurementNoiseY = cfg.immMeasurementNoiseY;
 		mcConfig.immActiveModels = cfg.immActiveModels;
+		// OneEuro 误差滤波
+		mcConfig.useOneEuroFilter = cfg.useOneEuroFilter;
+		mcConfig.oneEuroMinCutoff = cfg.oneEuroMinCutoff;
+		mcConfig.oneEuroBeta = cfg.oneEuroBeta;
+		mcConfig.oneEuroDCutoff = cfg.oneEuroDCutoff;
 		// SlewRate控制器参数（全局参数，从 tf-> 读取）
 		mcConfig.slewRateEnabled = tf->slewRateEnabled;
 		mcConfig.slewRateOutputGain = tf->slewRateOutputGain;

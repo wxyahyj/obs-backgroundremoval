@@ -317,6 +317,19 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 								const float alpha = 0.5f;
 								newDetections[i].velX = alpha * dvx + (1.0f - alpha) * trackedTargets[j].velX;
 								newDetections[i].velY = alpha * dvy + (1.0f - alpha) * trackedTargets[j].velY;
+								// 检测框 EMA：a 越大越跟检测（alpha=1 无平滑）
+								if (filter->detectionSmoothingEnabled) {
+									float a = filter->detectionSmoothingAlpha;
+									if (a < 0.01f) a = 0.01f;
+									if (a > 1.0f) a = 1.0f;
+									float b = 1.0f - a;
+									newDetections[i].centerX = a * newDetections[i].centerX + b * trackedTargets[j].centerX;
+									newDetections[i].centerY = a * newDetections[i].centerY + b * trackedTargets[j].centerY;
+									newDetections[i].x = a * newDetections[i].x + b * trackedTargets[j].x;
+									newDetections[i].y = a * newDetections[i].y + b * trackedTargets[j].y;
+									newDetections[i].width = a * newDetections[i].width + b * trackedTargets[j].width;
+									newDetections[i].height = a * newDetections[i].height + b * trackedTargets[j].height;
+								}
 								trackedDetections.push_back(newDetections[i]);
 								detectionMatched[i] = true;
 								trackMatched[j] = true;

@@ -17,6 +17,7 @@
 #include "SlewRateController.hpp"
 #include "AdaptivePIDController.hpp"
 #include "IMMFilter.hpp"
+#include "OneEuroFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
 #include "utils/GhostTracker.hpp"
@@ -123,6 +124,10 @@ protected:
     
     IMMFilter immFilter;
     bool immInitialized_;
+
+    OneEuroFilter oneEuroX_;
+    OneEuroFilter oneEuroY_;
+    int oneEuroLockedTrackId_ = -1;
 
     SmithPredictor smithPredictor;
 

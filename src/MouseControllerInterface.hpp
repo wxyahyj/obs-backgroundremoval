@@ -160,6 +160,12 @@ struct MouseControllerConfig {
     float immMeasurementNoiseY = 1.0f;
     int immActiveModels = 3;
 
+    // OneEuro 误差滤波（压检测/关联抖动，快移时自动提高截止频率）
+    bool useOneEuroFilter = false;
+    float oneEuroMinCutoff = 1.0f;
+    float oneEuroBeta = 0.007f;
+    float oneEuroDCutoff = 1.0f;
+
     // SlewRate控制器（限速平滑趋近）
     bool slewRateEnabled = false;
     float slewRateOutputGain = 0.25f;

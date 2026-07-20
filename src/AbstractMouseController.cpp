@@ -478,6 +478,24 @@ void AbstractMouseController::tick()
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
 
+    // OneEuro：自适应截止，静止压抖、快移少滞后（Casiez 2012）
+    if (config.useOneEuroFilter) {
+        if (lockedTrackId != oneEuroLockedTrackId_) {
+            oneEuroX_.reset();
+            oneEuroY_.reset();
+            oneEuroLockedTrackId_ = lockedTrackId;
+        }
+        oneEuroX_.setMinCutoff(config.oneEuroMinCutoff);
+        oneEuroX_.setBeta(config.oneEuroBeta);
+        oneEuroX_.setDCutoff(config.oneEuroDCutoff);
+        oneEuroY_.setMinCutoff(config.oneEuroMinCutoff);
+        oneEuroY_.setBeta(config.oneEuroBeta);
+        oneEuroY_.setDCutoff(config.oneEuroDCutoff);
+        float dtEuro = (deltaTime > 1e-4f) ? deltaTime : (1.0f / 60.0f);
+        errorX = oneEuroX_.filter(errorX, dtEuro);
+        errorY = oneEuroY_.filter(errorY, dtEuro);
+    }
+
     float distanceSquared = errorX * errorX + errorY * errorY;
     float deadZoneSquared = config.deadZonePixels * config.deadZonePixels;
     
@@ -584,20 +602,16 @@ void AbstractMouseController::tick()
             errorX = smithCorrectedX;
             errorY = smithCorrectedY;
             smithActive = true;
-            // 周期性诊断日志：每60帧输出一次
+            // 诊断降频 + DEBUG，减热路径日志开销
             static int smithDiagFrame = 0;
-            if (++smithDiagFrame >= 60) {
+            if (++smithDiagFrame >= 120) {
                 smithDiagFrame = 0;
                 float corrX = smithPredictor.getModelStateX() - smithPredictor.getModelStateDelayedX();
                 float corrY = smithPredictor.getModelStateY() - smithPredictor.getModelStateDelayedY();
                 size_t dSteps = smithPredictor.getDelaySteps(deltaTime);
-                obs_log(LOG_INFO, "[%s] Smith诊断[AdvPID]: rawErr=(%.2f,%.2f) corrErr=(%.2f,%.2f) 修正量=(%.3f,%.3f) modelState=(%.2f,%.2f) modelDelayed=(%.2f,%.2f) delaySteps=%zu bufCount=%zu lastOut=(%.2f,%.2f) dt=%.4f",
-                        getLogPrefix(), rawErrorX, rawErrorY, smithCorrectedX, smithCorrectedY,
-                        corrX, corrY,
-                        smithPredictor.getModelStateX(), smithPredictor.getModelStateY(),
-                        smithPredictor.getModelStateDelayedX(), smithPredictor.getModelStateDelayedY(),
-                        dSteps, smithPredictor.getDelayBufCount(),
-                        lastOutputX, lastOutputY, deltaTime);
+                obs_log(LOG_DEBUG, "[%s] Smith[AdvPID]: raw=(%.1f,%.1f) corr=(%.1f,%.1f) dSteps=%zu",
+                        getLogPrefix(), rawErrorX, rawErrorY, smithCorrectedX, smithCorrectedY, dSteps);
+                (void)corrX; (void)corrY;
             }
         }
 
@@ -1525,6 +1539,9 @@ void AbstractMouseController::resetPidState()
     lastOutputY = 0.0f;
     predictor.reset();
     immFilter.reset();
+    oneEuroX_.reset();
+    oneEuroY_.reset();
+    oneEuroLockedTrackId_ = -1;
     smithPredictor.reset();
     adaptivePidX_.reset();
     adaptivePidY_.reset();

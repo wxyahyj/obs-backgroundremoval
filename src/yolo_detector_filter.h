@@ -90,6 +90,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int maxReidentifyFrames;
 	float reidentifyCenterThreshold;
 
+	// 检测框 EMA 平滑（非 Kalman 路径；alpha 越大越跟检测、越小越稳）
+	bool detectionSmoothingEnabled = false;
+	float detectionSmoothingAlpha = 0.3f;
+
 	std::string modelPath;
 	int inputResolution;
 	float confidenceThreshold;
@@ -285,6 +289,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float immMeasurementNoiseX = 1.0f;
 		float immMeasurementNoiseY = 1.0f;
 		int immActiveModels = 3;
+
+		// OneEuro 误差滤波
+		bool useOneEuroFilter = false;
+		float oneEuroMinCutoff = 1.0f;
+		float oneEuroBeta = 0.007f;
+		float oneEuroDCutoff = 1.0f;
 
 		// SlewRate控制器（限速平滑趋近）
 		bool slewRateEnabled = false;
