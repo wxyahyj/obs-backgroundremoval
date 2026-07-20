@@ -1484,6 +1484,23 @@ obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", O
 #endif
 
 	UNUSED_PARAMETER(data);
+
+	// OBS 打开属性时不一定触发 onPageChanged：默认隐藏 5 槽预测器组
+	// IMM 之前未进 setPredictorPropertiesVisible，会 5 组常显在所有页面
+	for (int i = 0; i < 5; i++) {
+		char propName[64];
+		obs_property_t *p;
+		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "ghost_tracker_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+	}
 	return props;
 }
 
@@ -1595,6 +1612,9 @@ static void setPredictorPropertiesVisible(obs_properties_t *props, int configInd
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// Smith预估器分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "smith_predictor_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// IMM 交互多模型（与导数/Smith 同属预测页 page==6，按当前配置槽显示）
+	snprintf(propName, sizeof(propName), "imm_filter_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 

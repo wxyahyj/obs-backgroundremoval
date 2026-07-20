@@ -879,6 +879,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		// Smith预估器
 		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
 		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		// IMM交互多模型
+		snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
 		// 贝塞尔曲线
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
@@ -1032,6 +1035,9 @@ static void setPredictorPropertiesVisible(obs_properties_t *props, int configInd
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// Smith预估器分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "smith_predictor_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// IMM 交互多模型
+	snprintf(propName, sizeof(propName), "imm_filter_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// SlewRate控制器分组（CHECKABLE，勾选即启用）
 	snprintf(propName, sizeof(propName), "slew_rate_group_%d", configIndex);
