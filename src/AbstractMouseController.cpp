@@ -251,6 +251,16 @@ void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detec
     config.cropOffsetY = cropY;
 }
 
+void AbstractMouseController::setDetectionsWithFrameSize(std::vector<Detection>&& detections, int frameWidth, int frameHeight, int cropX, int cropY)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    currentDetections = std::move(detections);
+    config.inferenceFrameWidth = frameWidth;
+    config.inferenceFrameHeight = frameHeight;
+    config.cropOffsetX = cropX;
+    config.cropOffsetY = cropY;
+}
+
 void AbstractMouseController::setInferenceTimeMs(float ms)
 {
     std::lock_guard<std::mutex> lock(mutex);

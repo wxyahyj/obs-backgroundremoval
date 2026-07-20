@@ -240,6 +240,7 @@ public:
     MouseControllerConfig getConfig() const override;
     void setDetections(const std::vector<Detection>& detections) override;
     void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY) override;
+    void setDetectionsWithFrameSize(std::vector<Detection>&& detections, int frameWidth, int frameHeight, int cropX, int cropY) override;
     void tick() override;
     void setCurrentWeapon(const std::string& weaponName) override;
     std::string getCurrentWeapon() const override;

@@ -266,6 +266,9 @@ public:
     virtual void setDetections(const std::vector<Detection>& detections) = 0;
 
     virtual void setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY) = 0;
+    virtual void setDetectionsWithFrameSize(std::vector<Detection>&& detections, int frameWidth, int frameHeight, int cropX, int cropY) {
+        setDetectionsWithFrameSize(static_cast<const std::vector<Detection>&>(detections), frameWidth, frameHeight, cropX, cropY);
+    }
 
     virtual void tick() = 0;
     

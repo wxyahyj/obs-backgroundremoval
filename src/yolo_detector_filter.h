@@ -163,6 +163,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int inputCropWidth[BUFFER_COUNT] = {0};
 	int inputCropHeight[BUFFER_COUNT] = {0};
 	std::mutex inputFramesMutex;
+	std::condition_variable frameReadyCv;
 	std::atomic<int> inputWriteIdx{0};
 	std::atomic<int> inputReadIdx{0};
 	std::atomic<int64_t> lastResultTimestamp{0};
@@ -189,10 +190,14 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 #endif
 
 #ifdef _WIN32
-	// DML GPU直推：渲染线程预处理好的float buffer，推理线程消费
-	DmlPreprocessedFrame dmlPreprocessedFrame;
+	// DML GPU直推：双缓冲，渲染写 / 推理 swap 取，避免每帧 1MB+ 深拷
+	DmlPreprocessedFrame dmlPreprocessedFrames[2];
+	std::atomic<int> dmlWriteIdx{0};
+	std::atomic<int> dmlReadyIdx{-1};
 	std::mutex dmlPreprocessedFrameMutex;
-	DmlPreprocessor dmlPreprocessor;  // CPU BGRA->float CHW letterbox preprocessor
+	DmlPreprocessor dmlPreprocessor;
+	// 兼容旧字段名引用：指向当前 ready 槽（仅调试用，热路径用双缓冲 API）
+	DmlPreprocessedFrame dmlPreprocessedFrame;
 #endif
 	std::queue<std::function<void()>> taskQueue;
 	std::mutex taskQueueMutex;

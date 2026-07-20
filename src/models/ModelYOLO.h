@@ -260,10 +260,24 @@ private:
     std::vector<float> outputBuffer_;
     std::vector<Ort::Float16_t> inputBufferFp16_;  // FP16输入缓冲区
     std::vector<float> outputFp32Scratch_;         // FP16 输出解码缓冲
+    std::vector<Ort::Float16_t> outputBufferFp16_;  // 持久 FP16 输出绑定缓冲
     std::vector<int64_t> inputShapeCache_;          // {1,3,H,W}
+    std::vector<int64_t> outputShapeCache_;
+    size_t outputElementCount_ = 0;
     std::unique_ptr<Ort::MemoryInfo> cpuMemInfo_;   // 持久 CPU MemoryInfo
+    Ort::Value cpuInputTensor_{nullptr};           // 复用，缓冲指针不变则不重建
+    Ort::Value cpuOutputTensor_{nullptr};
+    bool cpuInputTensorFp16_ = false;
+    bool cpuOutputTensorFp16_ = false;
+    size_t cpuInputTensorElems_ = 0;
+    size_t cpuOutputTensorElems_ = 0;
     bool useIOBinding_;
     bool isFp16Model_;  // 是否为FP16模型
+    bool isFp16Output_ = false;
+
+    void ensureCpuMemInfo();
+    void ensureCpuInputTensor();
+    void ensureCpuOutputTensor();
     
     // 预分配letterbox缓冲区
     cv::Mat letterboxBuffer_;

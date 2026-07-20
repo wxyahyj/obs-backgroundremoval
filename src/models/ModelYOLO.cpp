@@ -599,6 +599,100 @@ std::future<std::vector<Detection>> ModelYOLO::asyncInference(const cv::Mat& inp
     return future;
 }
 
+void ModelYOLO::ensureCpuMemInfo()
+{
+    if (!cpuMemInfo_) {
+        cpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
+            Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
+    }
+}
+
+void ModelYOLO::ensureCpuInputTensor()
+{
+    ensureCpuMemInfo();
+    if (inputShapeCache_.size() != 4) {
+        inputShapeCache_ = {1, 3, static_cast<int64_t>(inputHeight_), static_cast<int64_t>(inputWidth_)};
+    }
+    const size_t elems = inputBufferSize_;
+    const bool wantFp16 = isFp16Model_;
+    if (wantFp16) {
+        if (inputBufferFp16_.size() < elems) inputBufferFp16_.resize(elems);
+    } else {
+        if (inputBuffer_.size() < elems) inputBuffer_.resize(elems);
+    }
+    // 缓冲地址/类型/元素数不变则复用 Ort::Value，避免每帧 CreateTensor
+    if (cpuInputTensor_ && cpuInputTensorElems_ == elems && cpuInputTensorFp16_ == wantFp16) {
+        return;
+    }
+    if (wantFp16) {
+        cpuInputTensor_ = Ort::Value::CreateTensor<Ort::Float16_t>(
+            *cpuMemInfo_, inputBufferFp16_.data(), elems,
+            inputShapeCache_.data(), inputShapeCache_.size());
+    } else {
+        cpuInputTensor_ = Ort::Value::CreateTensor<float>(
+            *cpuMemInfo_, inputBuffer_.data(), elems,
+            inputShapeCache_.data(), inputShapeCache_.size());
+    }
+    cpuInputTensorElems_ = elems;
+    cpuInputTensorFp16_ = wantFp16;
+}
+
+void ModelYOLO::ensureCpuOutputTensor()
+{
+    ensureCpuMemInfo();
+    if (outputElementCount_ == 0) {
+        if (!outputDims_.empty()) {
+            size_t n = 1;
+            outputShapeCache_ = outputDims_[0];
+            for (auto d : outputShapeCache_) {
+                if (d < 0) d = 1;
+                n *= static_cast<size_t>(d);
+            }
+            outputElementCount_ = n;
+        } else {
+            outputElementCount_ = 1;
+            outputShapeCache_ = {1};
+        }
+    }
+    // 探测输出类型（首次）
+    if (!session_) return;
+    try {
+        auto ti = session_->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo();
+        isFp16Output_ = (ti.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16);
+        auto sh = ti.GetShape();
+        if (!sh.empty()) {
+            size_t n = 1;
+            for (auto d : sh) { if (d < 0) d = 1; n *= static_cast<size_t>(d); }
+            if (n > 0) {
+                outputElementCount_ = n;
+                outputShapeCache_.assign(sh.begin(), sh.end());
+                for (auto& d : outputShapeCache_) if (d < 0) d = 1;
+            }
+        }
+    } catch (...) {}
+
+    const size_t elems = outputElementCount_;
+    if (isFp16Output_) {
+        if (outputBufferFp16_.size() < elems) outputBufferFp16_.resize(elems);
+    } else {
+        if (outputBuffer_.size() < elems) outputBuffer_.resize(elems);
+    }
+    if (cpuOutputTensor_ && cpuOutputTensorElems_ == elems && cpuOutputTensorFp16_ == isFp16Output_) {
+        return;
+    }
+    if (isFp16Output_) {
+        cpuOutputTensor_ = Ort::Value::CreateTensor<Ort::Float16_t>(
+            *cpuMemInfo_, outputBufferFp16_.data(), elems,
+            outputShapeCache_.data(), outputShapeCache_.size());
+    } else {
+        cpuOutputTensor_ = Ort::Value::CreateTensor<float>(
+            *cpuMemInfo_, outputBuffer_.data(), elems,
+            outputShapeCache_.data(), outputShapeCache_.size());
+    }
+    cpuOutputTensorElems_ = elems;
+    cpuOutputTensorFp16_ = isFp16Output_;
+}
+
 std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     
     auto totalStartTime = std::chrono::high_resolution_clock::now();
@@ -641,55 +735,47 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         auto preprocessEndTime = std::chrono::high_resolution_clock::now();
         latency.preprocessMs = std::chrono::duration<double, std::milli>(preprocessEndTime - preprocessStartTime).count();
         
-        if (inputShapeCache_.size() != 4) {
-            inputShapeCache_ = {1, 3, static_cast<int64_t>(inputHeight_), static_cast<int64_t>(inputWidth_)};
-        }
-        if (!cpuMemInfo_) {
-            cpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
-                Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
-        }
-
-        Ort::Value inputTensor{nullptr};
         try {
             if (isFp16Model_) {
                 if (inputBufferFp16_.size() < inputBufferSize_)
                     inputBufferFp16_.resize(inputBufferSize_);
                 convertFloatBufferToHalf(inputBuffer_.data(), inputBufferFp16_.data(), inputBufferSize_);
-                inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
-                    *cpuMemInfo_,
-                    inputBufferFp16_.data(),
-                    inputBufferSize_,
-                    inputShapeCache_.data(),
-                    inputShapeCache_.size()
-                );
-            } else {
-                inputTensor = Ort::Value::CreateTensor<float>(
-                    *cpuMemInfo_,
-                    inputBuffer_.data(),
-                    inputBufferSize_,
-                    inputShapeCache_.data(),
-                    inputShapeCache_.size()
-                );
             }
+            ensureCpuInputTensor();
+            ensureCpuOutputTensor();
         } catch (const std::exception& e) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create input tensor: %s", e.what());
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to prepare tensors: %s", e.what());
             return {};
         }
-        
+
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         Ort::RunOptions runOptions;
         std::vector<Ort::Value> outputTensors;
+        bool usedBoundOutput = false;
         try {
-            if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()) {
+            if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()
+                && cpuInputTensor_ && cpuOutputTensor_) {
                 ioBinding_->ClearBoundInputs();
                 ioBinding_->ClearBoundOutputs();
-                ioBinding_->BindInput(inputNamesChar_[0], inputTensor);
-                ioBinding_->BindOutput(outputNamesChar_[0], *cpuMemInfo_);
+                ioBinding_->BindInput(inputNamesChar_[0], cpuInputTensor_);
+                ioBinding_->BindOutput(outputNamesChar_[0], cpuOutputTensor_);
                 session_->Run(runOptions, *ioBinding_);
-                outputTensors = ioBinding_->GetOutputValues();
+                usedBoundOutput = true;
             } else {
+                // fallback: 临时 CreateTensor 视图（仍用成员缓冲）
+                ensureCpuMemInfo();
+                Ort::Value inT{nullptr};
+                if (isFp16Model_) {
+                    inT = Ort::Value::CreateTensor<Ort::Float16_t>(
+                        *cpuMemInfo_, inputBufferFp16_.data(), inputBufferSize_,
+                        inputShapeCache_.data(), inputShapeCache_.size());
+                } else {
+                    inT = Ort::Value::CreateTensor<float>(
+                        *cpuMemInfo_, inputBuffer_.data(), inputBufferSize_,
+                        inputShapeCache_.data(), inputShapeCache_.size());
+                }
                 std::vector<Ort::Value> inputTensors;
-                inputTensors.push_back(std::move(inputTensor));
+                inputTensors.push_back(std::move(inT));
                 outputTensors = session_->Run(
                     runOptions,
                     inputNamesChar_.data(),
@@ -700,12 +786,18 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
                 );
             }
         } catch (const Ort::Exception& e) {
+            cpuInputTensorElems_ = 0;
+            cpuOutputTensorElems_ = 0;
             obs_log(LOG_ERROR, "[ModelYOLO] ONNX Runtime exception during Run: %s", e.what());
             return {};
         } catch (const std::exception& e) {
+            cpuInputTensorElems_ = 0;
+            cpuOutputTensorElems_ = 0;
             obs_log(LOG_ERROR, "[ModelYOLO] Exception during Run: %s", e.what());
             return {};
         } catch (...) {
+            cpuInputTensorElems_ = 0;
+            cpuOutputTensorElems_ = 0;
             obs_log(LOG_ERROR, "[ModelYOLO] Unknown exception during Run");
             return {};
         }
@@ -713,54 +805,46 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
         
-        if (outputTensors.empty()) {
-            obs_log(LOG_ERROR, "[ModelYOLO] No output tensors from ONNX Runtime");
-            return {};
-        }
-        
-        if (!outputTensors[0].IsTensor()) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Output is not a tensor");
-            return {};
-        }
-        
-        // 获取输出数据
         float* outputData = nullptr;
-        
+        std::vector<int64_t> outputShape;
         try {
-            auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
-            ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
-            
-            if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-                const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
-                size_t outputSize = 1;
-                auto shape = outputTypeInfo.GetShape();
-                for (auto dim : shape) {
-                    outputSize *= static_cast<size_t>(dim);
+            if (usedBoundOutput) {
+                if (isFp16Output_) {
+                    if (outputFp32Scratch_.size() < outputElementCount_)
+                        outputFp32Scratch_.resize(outputElementCount_);
+                    convertHalfBufferToFloat(outputBufferFp16_.data(), outputFp32Scratch_.data(), outputElementCount_);
+                    outputData = outputFp32Scratch_.data();
+                } else {
+                    outputData = outputBuffer_.data();
                 }
-                if (outputFp32Scratch_.size() < outputSize)
-                    outputFp32Scratch_.resize(outputSize);
-                convertHalfBufferToFloat(fp16Data, outputFp32Scratch_.data(), outputSize);
-                outputData = outputFp32Scratch_.data();
+                outputShape = outputShapeCache_;
             } else {
-                outputData = outputTensors[0].GetTensorMutableData<float>();
+                if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
+                    obs_log(LOG_ERROR, "[ModelYOLO] No output tensors from ONNX Runtime");
+                    return {};
+                }
+                auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+                ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
+                outputShape = outputTypeInfo.GetShape();
+                if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                    const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
+                    size_t outputSize = 1;
+                    for (auto dim : outputShape) outputSize *= static_cast<size_t>(dim > 0 ? dim : 1);
+                    if (outputFp32Scratch_.size() < outputSize)
+                        outputFp32Scratch_.resize(outputSize);
+                    convertHalfBufferToFloat(fp16Data, outputFp32Scratch_.data(), outputSize);
+                    outputData = outputFp32Scratch_.data();
+                } else {
+                    outputData = outputTensors[0].GetTensorMutableData<float>();
+                }
             }
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output tensor data: %s", e.what());
             return {};
         }
-        
+
         if (!outputData) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output tensor data");
-            return {};
-        }
-        
-        std::vector<int64_t> outputShape;
-        try {
-            // 如果已经在FP16转换中获取了shape，直接使用
-            // 否则重新获取
-            outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-        } catch (const std::exception& e) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to get output shape: %s", e.what());
             return {};
         }
         
@@ -1608,54 +1692,47 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
     try {
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         
-        if (inputShapeCache_.size() != 4) {
-            inputShapeCache_ = {1, 3, static_cast<int64_t>(inputHeight_), static_cast<int64_t>(inputWidth_)};
-        }
-        if (!cpuMemInfo_) {
-            cpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
-                Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
-        }
-
-        Ort::Value inputTensor{nullptr};
         size_t dataSize = preprocessedFrame.data.size();
-        
-        if (isFp16Model_) {
-            if (inputBufferFp16_.size() < dataSize)
-                inputBufferFp16_.resize(dataSize);
-            convertFloatBufferToHalf(preprocessedFrame.data.data(), inputBufferFp16_.data(), dataSize);
-            inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
-                *cpuMemInfo_,
-                inputBufferFp16_.data(),
-                dataSize,
-                inputShapeCache_.data(),
-                inputShapeCache_.size()
-            );
-        } else {
-            // 拷到成员缓冲，生命周期覆盖整个 Run
-            if (inputBuffer_.size() < dataSize)
-                inputBuffer_.resize(dataSize);
-            std::memcpy(inputBuffer_.data(), preprocessedFrame.data.data(), dataSize * sizeof(float));
-            inputTensor = Ort::Value::CreateTensor<float>(
-                *cpuMemInfo_,
-                inputBuffer_.data(),
-                dataSize,
-                inputShapeCache_.data(),
-                inputShapeCache_.size()
-            );
+        if (dataSize != inputBufferSize_) {
+            // 尺寸异常时退回按实际大小（仍写成员缓冲）
+            inputBufferSize_ = dataSize;
+            cpuInputTensorElems_ = 0;
         }
-        
+        if (isFp16Model_) {
+            if (inputBufferFp16_.size() < dataSize) inputBufferFp16_.resize(dataSize);
+            convertFloatBufferToHalf(preprocessedFrame.data.data(), inputBufferFp16_.data(), dataSize);
+        } else {
+            if (inputBuffer_.size() < dataSize) inputBuffer_.resize(dataSize);
+            std::memcpy(inputBuffer_.data(), preprocessedFrame.data.data(), dataSize * sizeof(float));
+        }
+        ensureCpuInputTensor();
+        ensureCpuOutputTensor();
+
         Ort::RunOptions runOptions;
         std::vector<Ort::Value> outputTensors;
-        if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()) {
+        bool usedBoundOutput = false;
+        if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()
+            && cpuInputTensor_ && cpuOutputTensor_) {
             ioBinding_->ClearBoundInputs();
             ioBinding_->ClearBoundOutputs();
-            ioBinding_->BindInput(inputNamesChar_[0], inputTensor);
-            ioBinding_->BindOutput(outputNamesChar_[0], *cpuMemInfo_);
+            ioBinding_->BindInput(inputNamesChar_[0], cpuInputTensor_);
+            ioBinding_->BindOutput(outputNamesChar_[0], cpuOutputTensor_);
             session_->Run(runOptions, *ioBinding_);
-            outputTensors = ioBinding_->GetOutputValues();
+            usedBoundOutput = true;
         } else {
+            ensureCpuMemInfo();
+            Ort::Value inT{nullptr};
+            if (isFp16Model_) {
+                inT = Ort::Value::CreateTensor<Ort::Float16_t>(
+                    *cpuMemInfo_, inputBufferFp16_.data(), dataSize,
+                    inputShapeCache_.data(), inputShapeCache_.size());
+            } else {
+                inT = Ort::Value::CreateTensor<float>(
+                    *cpuMemInfo_, inputBuffer_.data(), dataSize,
+                    inputShapeCache_.data(), inputShapeCache_.size());
+            }
             std::vector<Ort::Value> inputTensors;
-            inputTensors.push_back(std::move(inputTensor));
+            inputTensors.push_back(std::move(inT));
             outputTensors = session_->Run(
                 runOptions,
                 inputNamesChar_.data(),
@@ -1665,40 +1742,47 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
                 outputNamesChar_.size()
             );
         }
-        
+
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
-        
-        if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
-            obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid output tensor");
-            return {};
-        }
-        
+
         float* outputData = nullptr;
-        auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
-        ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
-        
-        if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-            const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
-            size_t outputSize = 1;
-            auto shape = outputTypeInfo.GetShape();
-            for (auto dim : shape) {
-                outputSize *= static_cast<size_t>(dim);
+        std::vector<int64_t> outputShape;
+        if (usedBoundOutput) {
+            if (isFp16Output_) {
+                if (outputFp32Scratch_.size() < outputElementCount_)
+                    outputFp32Scratch_.resize(outputElementCount_);
+                convertHalfBufferToFloat(outputBufferFp16_.data(), outputFp32Scratch_.data(), outputElementCount_);
+                outputData = outputFp32Scratch_.data();
+            } else {
+                outputData = outputBuffer_.data();
             }
-            if (outputFp32Scratch_.size() < outputSize)
-                outputFp32Scratch_.resize(outputSize);
-            convertHalfBufferToFloat(fp16Data, outputFp32Scratch_.data(), outputSize);
-            outputData = outputFp32Scratch_.data();
+            outputShape = outputShapeCache_;
         } else {
-            outputData = outputTensors[0].GetTensorMutableData<float>();
+            if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
+                obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid output tensor");
+                return {};
+            }
+            auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+            ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
+            outputShape = outputTypeInfo.GetShape();
+            if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
+                size_t outputSize = 1;
+                for (auto dim : outputShape) outputSize *= static_cast<size_t>(dim > 0 ? dim : 1);
+                if (outputFp32Scratch_.size() < outputSize) outputFp32Scratch_.resize(outputSize);
+                convertHalfBufferToFloat(fp16Data, outputFp32Scratch_.data(), outputSize);
+                outputData = outputFp32Scratch_.data();
+            } else {
+                outputData = outputTensors[0].GetTensorMutableData<float>();
+            }
         }
-        
+
         if (!outputData) {
             obs_log(LOG_ERROR, "[ModelYOLO] DML inference: null output data");
             return {};
         }
         
-        std::vector<int64_t> outputShape = outputTypeInfo.GetShape();
         if (outputShape.size() < 3) {
             obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid output shape");
             return {};

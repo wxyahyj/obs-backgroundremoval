@@ -193,6 +193,7 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	
 	// 保护 inputFrames 的互斥锁（防止分辨率变化时重新分配导致的竞态条件）
 	std::mutex inputFramesMutex;
+	std::condition_variable frameReadyCv;
 
 	// 无锁索引管理
 	std::atomic<int> inputWriteIdx{0};      // 主线程写入位置
@@ -227,8 +228,10 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	
 
 #ifdef _WIN32
-	// GPU?????? (DML??)
 	bool useGpuTextureInference = false;
+	DmlPreprocessedFrame dmlPreprocessedFrames[2];
+	std::atomic<int> dmlWriteIdx{0};
+	std::atomic<int> dmlReadyIdx{-1};
 	DmlPreprocessedFrame dmlPreprocessedFrame;
 	std::mutex dmlPreprocessedFrameMutex;
 	std::atomic<int> dmlDirectFrames{0};
@@ -4547,13 +4550,17 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 		}
 		
 		if (readIdx == -1) {
-#ifdef _WIN32
-			SwitchToThread();
-#else
-			std::this_thread::yield();
-#endif
+			std::unique_lock<std::mutex> lk(filter->inputFramesMutex);
+			filter->frameReadyCv.wait_for(lk, std::chrono::milliseconds(2), [&]() {
+				if (!filter->inferenceRunning || !filter->isInferencing) return true;
+				for (int bi = 0; bi < filter->BUFFER_COUNT; ++bi) {
+					if (filter->bufferState[bi].load(std::memory_order_acquire) == 1) return true;
+				}
+				return false;
+			});
 			continue;
 		}
+
 
 		// 读取帧：浅拷贝 Mat 头；slot 保持 state=2 直到推理完，避免每帧 8MB clone
 		cv::Mat frame;
@@ -4622,20 +4629,20 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 			bool dmlSucceeded = false;
 			DmlPreprocessedFrame dmlFrame;
 			if (filter->useGpuTextureInference && modelSnap->isDmlTextureSupported()) {
-				DmlPreprocessedFrame preprocessedCopy;
-				{
-					std::lock_guard<std::mutex> dmlLock(filter->dmlPreprocessedFrameMutex);
-					if (filter->dmlPreprocessedFrame.valid()) {
-						preprocessedCopy = filter->dmlPreprocessedFrame;
-					}
-				}
-				if (preprocessedCopy.valid()) {
+				int ridx = filter->dmlReadyIdx.exchange(-1, std::memory_order_acq_rel);
+				if (ridx >= 0 && ridx < 2 && filter->dmlPreprocessedFrames[ridx].valid()) {
+					DmlPreprocessedFrame& pre = filter->dmlPreprocessedFrames[ridx];
 					dmlAttempted = true;
 					try {
 						newDetections = modelSnap->inferenceFromTextureDml(
-							preprocessedCopy, preprocessedCopy.srcWidth, preprocessedCopy.srcHeight);
+							pre, pre.srcWidth, pre.srcHeight);
 						dmlSucceeded = true;
-						dmlFrame = std::move(preprocessedCopy);
+						dmlFrame.cropX = pre.cropX;
+						dmlFrame.cropY = pre.cropY;
+						dmlFrame.srcWidth = pre.srcWidth;
+						dmlFrame.srcHeight = pre.srcHeight;
+						dmlFrame.fullWidth = pre.fullWidth;
+						dmlFrame.fullHeight = pre.fullHeight;
 					} catch (const std::exception& e) {
 						obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
 					} catch (...) {
@@ -6218,6 +6225,7 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 								// 更新写入索引
 								tf->inputWriteIdx.store((checkIdx + 1) % tf->BUFFER_COUNT, std::memory_order_release);
 								tf->framesSubmitted.fetch_add(1, std::memory_order_relaxed);
+								tf->frameReadyCv.notify_one();
 								submitted = true;
 								break;
 							}
@@ -6285,23 +6293,22 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 										}
 									}
 									const uint8_t* srcPtr = video_data + dmlCropY * static_cast<int>(linesize) + dmlCropX * 4;
-									DmlPreprocessedFrame tmpFrame;
-									if (tf->dmlPreprocessor.preprocessFromBgra(
-										srcPtr, dmlCropW, dmlCropH,
-										static_cast<int>(linesize), dstW, dstH, tmpFrame)) {
-										tmpFrame.srcWidth = dmlCropW;
-										tmpFrame.srcHeight = dmlCropH;
-										tmpFrame.cropX = dmlCropX;
-										tmpFrame.cropY = dmlCropY;
-										tmpFrame.fullWidth = static_cast<int>(width);
-										tmpFrame.fullHeight = static_cast<int>(height);
-										tmpFrame.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-											std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-										{
-											std::lock_guard<std::mutex> dmlLock(tf->dmlPreprocessedFrameMutex);
-											tf->dmlPreprocessedFrame = std::move(tmpFrame);
+										int widx = tf->dmlWriteIdx.load(std::memory_order_relaxed) & 1;
+										DmlPreprocessedFrame& tmpFrame = tf->dmlPreprocessedFrames[widx];
+										if (tf->dmlPreprocessor.preprocessFromBgra(
+											srcPtr, dmlCropW, dmlCropH,
+											static_cast<int>(linesize), dstW, dstH, tmpFrame)) {
+											tmpFrame.srcWidth = dmlCropW;
+											tmpFrame.srcHeight = dmlCropH;
+											tmpFrame.cropX = dmlCropX;
+											tmpFrame.cropY = dmlCropY;
+											tmpFrame.fullWidth = static_cast<int>(width);
+											tmpFrame.fullHeight = static_cast<int>(height);
+											tmpFrame.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+												std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+											tf->dmlReadyIdx.store(widx, std::memory_order_release);
+											tf->dmlWriteIdx.store(widx ^ 1, std::memory_order_relaxed);
 										}
-									}
 								}
 								#endif
 						gs_stagesurface_unmap(tf->stagesurface);
