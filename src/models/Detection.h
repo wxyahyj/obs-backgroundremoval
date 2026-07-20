@@ -19,6 +19,9 @@ struct Detection {
 
     int trackId = -1;
     int lostFrames = 0;
+    // 归一化坐标下每帧速度（关联/coast/re-id 用）
+    float velX = 0.0f;
+    float velY = 0.0f;
 
     cv::Rect getPixelBBox(int imageWidth, int imageHeight) const {
         return cv::Rect(

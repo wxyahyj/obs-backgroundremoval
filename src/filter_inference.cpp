@@ -268,31 +268,28 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 				} else {
 					int n = static_cast<int>(newDetections.size());
 					int m = static_cast<int>(trackedTargets.size());
-					
 					std::vector<std::vector<float>> costMatrix(n, std::vector<float>(m, 1.0f));
-					
+
 					for (int i = 0; i < n; ++i) {
-						cv::Rect2f detBox(
-							newDetections[i].x,
-							newDetections[i].y,
-							newDetections[i].width,
-							newDetections[i].height
-						);
-						cv::Point2f detCenter(newDetections[i].centerX, newDetections[i].centerY);
-						
+						const auto& det = newDetections[i];
+						cv::Rect2f detBox(det.x, det.y, det.width, det.height);
+						cv::Point2f detCenter(det.centerX, det.centerY);
 						for (int j = 0; j < m; ++j) {
-							if (newDetections[i].classId != trackedTargets[j].classId) {
+							const auto& trk = trackedTargets[j];
+							if (det.classId != trk.classId) {
 								costMatrix[i][j] = 1e6f;
 								continue;
 							}
-							cv::Rect2f trackBox(
-								trackedTargets[j].x,
-								trackedTargets[j].y,
-								trackedTargets[j].width,
-								trackedTargets[j].height
-							);
-							cv::Point2f trackCenter(trackedTargets[j].centerX, trackedTargets[j].centerY);
-							
+							// 粗门控：中心距过大直接拒，少算 IoU/形状（Bar-Shalom gating）
+							float gdx = det.centerX - trk.centerX;
+							float gdy = det.centerY - trk.centerY;
+							float gate = 0.35f + 0.5f * std::max(det.width + trk.width, det.height + trk.height);
+							if (gdx * gdx + gdy * gdy > gate * gate) {
+								costMatrix[i][j] = 1e6f;
+								continue;
+							}
+							cv::Rect2f trackBox(trk.x, trk.y, trk.width, trk.height);
+							cv::Point2f trackCenter(trk.centerX, trk.centerY);
 							costMatrix[i][j] = HungarianAlgorithm::calculateFusedDistance(
 								detBox, trackBox, detCenter, trackCenter,
 								filter->trackingWeightIou,
@@ -314,6 +311,12 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 							if (newDetections[i].classId == trackedTargets[j].classId) {
 								newDetections[i].trackId = trackedTargets[j].trackId;
 								newDetections[i].lostFrames = 0;
+								// 常速估计（归一化坐标/帧）：匹配时更新速度
+								float dvx = newDetections[i].centerX - trackedTargets[j].centerX;
+								float dvy = newDetections[i].centerY - trackedTargets[j].centerY;
+								const float alpha = 0.5f;
+								newDetections[i].velX = alpha * dvx + (1.0f - alpha) * trackedTargets[j].velX;
+								newDetections[i].velY = alpha * dvy + (1.0f - alpha) * trackedTargets[j].velY;
 								trackedDetections.push_back(newDetections[i]);
 								detectionMatched[i] = true;
 								trackMatched[j] = true;
@@ -321,10 +324,15 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 						}
 					}
 
-					// 未匹配航迹：coast 或进 re-id 缓冲
+					// 未匹配航迹：常速 coast（ByteTrack）或进 re-id 缓冲
 					for (int j = 0; j < m; ++j) {
 						if (!trackMatched[j]) {
 							trackedTargets[j].lostFrames++;
+							// 位置沿速度外推，避免遮挡时框钉死
+							trackedTargets[j].centerX += trackedTargets[j].velX;
+							trackedTargets[j].centerY += trackedTargets[j].velY;
+							trackedTargets[j].x += trackedTargets[j].velX;
+							trackedTargets[j].y += trackedTargets[j].velY;
 							if (trackedTargets[j].lostFrames <= filter->maxLostFrames) {
 								trackedDetections.push_back(trackedTargets[j]);
 							} else {
@@ -338,6 +346,8 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 								lost.height = trackedTargets[j].height;
 								lost.centerX = trackedTargets[j].centerX;
 								lost.centerY = trackedTargets[j].centerY;
+								lost.velX = trackedTargets[j].velX;
+								lost.velY = trackedTargets[j].velY;
 								lost.lostFrames = 0;
 								lost.lostTime = std::chrono::steady_clock::now();
 								bool found = false;
@@ -356,7 +366,6 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 					}
 
 					// re-id 必须在赋新 ID 之前：先认回旧 ID，再给剩余检测新号
-					// （旧逻辑先 newId 再 re-id 会双推同一框 → 双 ID 闪烁）
 					{
 						std::lock_guard<std::mutex> lostLock(filter->lostTargetsMutex);
 						auto now = std::chrono::steady_clock::now();
@@ -367,20 +376,26 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 								continue;
 							}
 
+							// 常速预测丢失后的位置（约 33ms/帧）
+							float framesLost = static_cast<float>(elapsed) / 33.0f;
+							float predCx = it->centerX + it->velX * framesLost;
+							float predCy = it->centerY + it->velY * framesLost;
+
 							bool reidentified = false;
 							for (int i = 0; i < n; ++i) {
 								if (detectionMatched[i]) continue;
 								if (it->classId >= 0 && newDetections[i].classId != it->classId) continue;
 
-								float dx = newDetections[i].centerX - it->centerX;
-								float dy = newDetections[i].centerY - it->centerY;
+								float dx = newDetections[i].centerX - predCx;
+								float dy = newDetections[i].centerY - predCy;
 								float centerDist = std::sqrt(dx * dx + dy * dy);
-								// 门控：中心距 + 半框尺度
 								float gate = std::max(filter->reidentifyCenterThreshold,
 									0.5f * std::max(it->width, it->height));
 								if (centerDist < gate) {
 									newDetections[i].trackId = it->trackId;
 									newDetections[i].lostFrames = 0;
+									newDetections[i].velX = it->velX;
+									newDetections[i].velY = it->velY;
 									trackedDetections.push_back(newDetections[i]);
 									detectionMatched[i] = true;
 									it = filter->lostTargets.erase(it);

@@ -146,36 +146,35 @@ inline void IMMFilter::predictCV(float dt)
 	Q[3][2] = Qvel * dt3 / 2.0f;
 	Q[3][3] = Qpos * dt + Qvel * dt2;
 
-	float xPred[CX] = {};
-	float Pp[CX][CX] = {};
-	for (size_t i = 0; i < CX; i++)
-		for (size_t j = 0; j < CX; j++)
-			xPred[i] += F[i][j] * xCV_[j];
+	// CV 状态转移稀疏：x' = x+vx*dt, y' = y+vy*dt，手写 F*x 与 F*P*F'+Q
+	float x0 = xCV_[0], v0 = xCV_[1], y0 = xCV_[2], u0 = xCV_[3];
+	xCV_[0] = x0 + v0 * dt;
+	xCV_[1] = v0;
+	xCV_[2] = y0 + u0 * dt;
+	xCV_[3] = u0;
 
-	for (size_t i = 0; i < CX; i++) {
-		for (size_t j = 0; j < CX; j++) {
-			float row[CX] = {};
-			for (size_t k = 0; k < CX; k++)
-				row[j] += F[i][k] * PxCV_[k][j];
-			(void)row;
-		}
-	}
-	for (size_t i = 0; i < CX; i++) {
-		for (size_t j = 0; j < CX; j++) {
-			float sum = 0.0f;
-			for (size_t k = 0; k < CX; k++)
-				sum += F[i][k] * PxCV_[k][j];
-			float sum2 = 0.0f;
-			for (size_t k = 0; k < CX; k++)
-				sum2 += sum * F[j][k];
-			Pp[i][j] = sum2 + Q[i][j];
-		}
-	}
-
-	for (size_t i = 0; i < CX; i++) xCV_[i] = xPred[i];
-	for (size_t i = 0; i < CX; i++)
-		for (size_t j = 0; j < CX; j++)
-			PxCV_[i][j] = Pp[i][j];
+	float P00 = PxCV_[0][0], P01 = PxCV_[0][1], P02 = PxCV_[0][2], P03 = PxCV_[0][3];
+	float P11 = PxCV_[1][1], P12 = PxCV_[1][2], P13 = PxCV_[1][3];
+	float P22 = PxCV_[2][2], P23 = PxCV_[2][3], P33 = PxCV_[3][3];
+	// F*P*F'：位置行混入速度协方差
+	PxCV_[0][0] = P00 + dt * (P01 + P01) + dt * dt * P11 + Q[0][0];
+	PxCV_[0][1] = P01 + dt * P11 + Q[0][1];
+	PxCV_[1][0] = PxCV_[0][1];
+	PxCV_[1][1] = P11 + Q[1][1];
+	PxCV_[2][2] = P22 + dt * (P23 + P23) + dt * dt * P33 + Q[2][2];
+	PxCV_[2][3] = P23 + dt * P33 + Q[2][3];
+	PxCV_[3][2] = PxCV_[2][3];
+	PxCV_[3][3] = P33 + Q[3][3];
+	// 交叉项
+	PxCV_[0][2] = P02 + dt * P12 + dt * P03 + dt * dt * P13;
+	PxCV_[0][3] = P03 + dt * P13;
+	PxCV_[1][2] = P12 + dt * P13;
+	PxCV_[1][3] = P13;
+	PxCV_[2][0] = PxCV_[0][2];
+	PxCV_[3][0] = PxCV_[0][3];
+	PxCV_[2][1] = PxCV_[1][2];
+	PxCV_[3][1] = PxCV_[1][3];
+	(void)F;
 }
 
 inline void IMMFilter::updateCV(float mx, float my)

@@ -869,14 +869,11 @@ void AbstractMouseController::tick()
         
         moveY = totalY;
         
-        if (++logCounter_ >= 30) {
+        // 热路径少打 LOG_INFO：约每 2s 一次，减 OBS 日志锁争用
+        if (++logCounter_ >= 120) {
             logCounter_ = 0;
-            blog(LOG_INFO, "[%s高级PID] errorX=%.1f errorY=%.1f | kpGainX=%.2f kpGainY=%.2f | iGainX=%.2f iGainY=%.2f",
-                 getLogPrefix(), errorX, errorY, adaptivePGainX, adaptivePGainY, adaptiveIGainX, adaptiveIGainY);
-            blog(LOG_INFO, "[%s高级PID] pOutX=%.1f pOutY=%.1f | iOutX=%.1f iOutY=%.1f | d2OutX=%.1f d2OutY=%.1f",
-                 getLogPrefix(), pOutX, pOutY, iOutX, iOutY, d2OutX, d2OutY);
-            blog(LOG_INFO, "[%s高级PID] totalX=%.1f totalY=%.1f | kf2x=%.2f kf3x=%.2f",
-                 getLogPrefix(), totalX, totalY, kf2OutX, kf3X_x);
+            blog(LOG_DEBUG, "[%s高级PID] err=%.1f,%.1f out=%.1f,%.1f kp=%.2f,%.2f",
+                 getLogPrefix(), errorX, errorY, totalX, totalY, adaptivePGainX, adaptivePGainY);
         }
 
         if (pidDataCallback_) {
@@ -970,12 +967,10 @@ void AbstractMouseController::tick()
         moveX = static_cast<float>(externalPidX.update(externalErrorX));
         moveY = static_cast<float>(externalPidY.update(externalErrorY));
 
-        if (++externalLogCounter_ >= 30) {
+        if (++externalLogCounter_ >= 120) {
             externalLogCounter_ = 0;
-            blog(LOG_INFO, "[%s外部PID] dt=%.4f | errorX=%.1f errorY=%.1f | extErrX=%.1f extErrY=%.1f | moveX=%.1f moveY=%.1f",
-                 getLogPrefix(), deltaTime, errorX, errorY, externalErrorX, externalErrorY, moveX, moveY);
-            blog(LOG_INFO, "[%s外部PID] KpX=%.2f KiX=%.2f KdX=%.2f | KpY=%.2f KiY=%.2f KdY=%.2f",
-                 getLogPrefix(), config.externalKpX, config.externalKiX, config.externalKdX, config.externalKpY, config.externalKiY, config.externalKdY);
+            blog(LOG_DEBUG, "[%s外部PID] err=%.1f,%.1f out=%.1f,%.1f",
+                 getLogPrefix(), errorX, errorY, moveX, moveY);
         }
 
         if (pidDataCallback_) {

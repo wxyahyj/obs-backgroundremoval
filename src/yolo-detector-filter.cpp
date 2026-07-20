@@ -2213,8 +2213,23 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
-			obs_data_set_default_double(settings, propName, 0.1);
-// 贝塞尔曲线移动参数默认值
+		obs_data_set_default_double(settings, propName, 0.1);
+		// IMM 交互多模型默认值（键名必须带 _%d，与 UI/读取一致）
+		snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "imm_process_noise_pos_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
+		snprintf(propName, sizeof(propName), "imm_process_noise_vel_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "imm_process_noise_acc_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "imm_process_noise_turn_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
+		snprintf(propName, sizeof(propName), "imm_measurement_noise_x_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "imm_measurement_noise_y_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		// 贝塞尔曲线移动参数默认值
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "bezier_curvature_%d", i);
@@ -2352,13 +2367,7 @@ snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
     obs_data_set_default_double(settings, "aim_ramp_time", 0.3);
     obs_data_set_default_double(settings, "aim_init_scale", 0.6);
     obs_data_set_default_double(settings, "aim_output_max", 128.0);
-    // IMM交互多模型滤波器默认值
-    obs_data_set_default_double(settings, "imm_process_noise_pos", 0.1);
-    obs_data_set_default_double(settings, "imm_process_noise_vel", 0.5);
-    obs_data_set_default_double(settings, "imm_process_noise_acc", 1.0);
-    obs_data_set_default_double(settings, "imm_process_noise_turn", 0.1);
-    obs_data_set_default_double(settings, "imm_measurement_noise_x", 1.0);
-    obs_data_set_default_double(settings, "imm_measurement_noise_y", 1.0);
+    // IMM 默认值已在 5 配置循环 imm_*_%d 中设置
     // SlewRate控制器默认值（全局）
     obs_data_set_default_double(settings, "slew_rate_output_gain", 0.25);
     obs_data_set_default_double(settings, "slew_rate_response_smoothing", 0.0008);

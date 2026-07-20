@@ -37,6 +37,8 @@ struct LostTarget {
 	int classId = -1;
 	float x, y, width, height;
 	float centerX, centerY;
+	float velX = 0.0f;
+	float velY = 0.0f;
 	int lostFrames;
 	std::chrono::steady_clock::time_point lostTime;
 };
