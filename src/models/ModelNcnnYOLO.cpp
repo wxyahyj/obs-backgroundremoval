@@ -170,63 +170,38 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 提取输出 blob
+        // 遍历全部 blob 找最大非图像输出
         ncnn::Mat outputMat;
         int extractRet = -1;
+        int bestBlobIndex = -1;
+        int bestTotal = 0;
+        int nBlobs = (int)net_.blobs().size();
 
-        // 方法1: 通过 output_indexes() 提取（输出 blob 索引）
-        const std::vector<int>& outIdxs = net_.output_indexes();
-        for (size_t oi = 0; oi < outIdxs.size(); oi++) {
-            extractRet = ex.extract(outIdxs[oi], outputMat);
-            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] output_index[%zu]=%d ok (total=%d)",
-                        oi, outIdxs[oi], (int)outputMat.total());
-                break;
-            }
-        }
+        for (int bi = 0; bi < nBlobs; bi++) {
+            ncnn::Mat tmp;
+            int r = ex.extract(bi, tmp);
+            if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
 
-        // 方法2: 按 blob 名 "out0" 提取（需要 NCNN_STRING）
-        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            extractRet = ex.extract("out0", outputMat);
-            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] name 'out0' ok (total=%d)", (int)outputMat.total());
-            }
-        }
+            int t = (int)tmp.total();
+            int d = tmp.dims;
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] blob %d: dims=%d c=%d h=%d w=%d total=%d",
+                    bi, d, tmp.c, tmp.h, tmp.w, t);
 
-        // 方法3: 遍历 blobs 列表，按名字匹配 "out0" 后提取
-        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            int nblobs = (int)net_.blobs().size();
-            for (int bi = 0; bi < nblobs; bi++) {
-                if (net_.blobs()[bi].name != "out0") continue;
-                extractRet = ex.extract(bi, outputMat);
-                if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] blob name 'out0' idx=%d ok (total=%d)",
-                            bi, (int)outputMat.total());
-                }
-                break;
-            }
-        }
-
-        // 方法4: 倒序遍历 blobs，取第一个非空
-        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            int nb = (int)net_.blobs().size();
-            for (int bi = nb - 1; bi >= 0; bi--) {
-                ncnn::Mat tmp;
-                int r = ex.extract(bi, tmp);
-                if (r == 0 && tmp.data != nullptr && tmp.total() > 0) {
-                    outputMat = tmp;
-                    extractRet = 0;
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] fallback blob %d ok (total=%d)",
-                            bi, (int)tmp.total());
-                    break;
-                }
+            if (t > 100000) continue; // 跳过输入图/大特征图
+            if (t > bestTotal) {
+                bestTotal = t;
+                bestBlobIndex = bi;
+                outputMat = tmp;
+                extractRet = 0;
             }
         }
 
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] all extract methods failed");
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] no suitable output blob (best=%d total=%d)",
+                    bestBlobIndex, bestTotal);
             return {};
         }
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] using blob %d (total=%d)", bestBlobIndex, bestTotal);
 
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
