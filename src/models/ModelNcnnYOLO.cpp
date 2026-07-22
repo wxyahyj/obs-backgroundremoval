@@ -171,21 +171,19 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ex.input(0, inputMat);
         ncnn::Mat outputMat;
 
-        // 尝试提取输出：先试 blob 名 "out0"，再试最后 blob 索引
-        int extractRet = ex.extract("out0", outputMat);
-        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            // 回退：取最后一个 blob（索引 blob_count-1）
-            int blobCount = net_.blob_count();
-            for (int i = blobCount - 1; i >= 0; i--) {
-                extractRet = ex.extract(i, outputMat);
-                if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] extract using blob index %d (blob_count=%d)", i, blobCount);
-                    break;
-                }
+        // 提取输出：用 net_.output_names() 找到正确的输出 blob
+        std::vector<const char*> outNames = net_.output_names();
+        int extractRet = -1;
+        for (size_t oi = 0; oi < outNames.size(); oi++) {
+            extractRet = ex.extract(outNames[oi], outputMat);
+            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] extract output '%s' (idx=%zu/%zu)",
+                        outNames[oi], oi + 1, outNames.size());
+                break;
             }
         }
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed (ret=%d, data=%p, total=%d)",
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed, ret=%d, data=%p, total=%d",
                     extractRet, outputMat.data, (int)outputMat.total());
             return {};
         }
