@@ -170,115 +170,69 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 提取输出：遍历全部 blob，选形状最匹配的
+        // 提取输出 blob
         ncnn::Mat outputMat;
         int extractRet = -1;
-        int nBlobs = (int)net_.blobs().size();
-        int bestBlobIdx = -1;
-        int bestScore = -1;
 
-        for (int bi = 0; bi < nBlobs; bi++) {
-            ncnn::Mat tmp;
-            int r = ex.extract(bi, tmp);
-            if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
-
-            int d = tmp.dims;
-            int tc = (d >= 3) ? tmp.c : 1;
-            int th = (d >= 2) ? tmp.h : 1;
-            int tw = tmp.w;
-            int ttot = (int)tmp.total();
-
-            // 跳过输入图/特征图：c=1 或 c=3 且 h>100 且 w>100 → 是图像
-            bool isImage = (ttot > 10000) && (tc == 1 || tc == 3) && (th > 10) && (tw > 10);
-            if (isImage) continue;
-
-            // 2D 或 1D 输出最佳；3D+c=1 也行
-            int score = 0;
-            if (d <= 2) score = 100;          // 2D/1D → 检测输出
-            else if (tc == 1) score = 80;     // 3D+c=1
-            else if (tc <= 20) score = 50;    // 小通道数
-            else score = 30;                  // 大通道数
-
-            // boxes 数 = h, elements = w（或反之）
-            // elements ≈ 4/5 + numClasses
-            int ge = th;
-            int gb = tw;
-            for (int t = 0; t < 2; t++) {
-                int gc = (version_ == Version::YOLOv5) ? ge - 5 : ge - 4;
-                if (gc > 0 && gc <= 20) {
-                    if (gc == numClasses_) score += 50;  // 匹配当前 numClasses
-                    else score += 20;
-                    break;
-                }
-                std::swap(ge, gb);
-            }
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestBlobIdx = bi;
-                outputMat = tmp;
-                extractRet = r;
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] blob %d dims=%d c=%d h=%d w=%d total=%d score=%d",
-                        bi, d, tc, th, tw, ttot, score);
-            }
+        // 优先: 通过 output_indexes() 取正式输出 blob
+        // 这要求 .param 文件有 Output 层注册
+        const std::vector<int>& outIdxs = net_.output_indexes();
+        if (!outIdxs.empty()) {
+            extractRet = ex.extract(outIdxs[0], outputMat);
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] extract via output_index %d (ret=%d)", outIdxs[0], extractRet);
+        } else {
+            // 回退: 直接通过 blob 名提取
+            extractRet = ex.extract("out0", outputMat);
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] extract via name 'out0' (ret=%d)", extractRet);
         }
 
+        // 如果提取失败，输出诊断信息
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed, bestBlob=%d", bestBlobIdx);
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed ret=%d data=%p total=%d outIdxs=%zu",
+                    extractRet, outputMat.data, (int)outputMat.total(), outIdxs.size());
+            // 扫描全部有效 blob 用于诊断
+            int nb = (int)net_.blobs().size();
+            for (int bi = nb - 1; bi >= 0; bi--) {
+                ncnn::Mat tmp;
+                int r = ex.extract(bi, tmp);
+                if (r == 0 && tmp.data != nullptr && tmp.total() > 0) {
+                    obs_log(LOG_INFO, "[ModelNcnnYOLO] diag blob %d: dims=%d c=%d h=%d w=%d total=%d",
+                            bi, tmp.dims, tmp.c, tmp.h, tmp.w, (int)tmp.total());
+                    break;
+                }
+            }
             return {};
         }
 
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] using blob %d (score=%d)", bestBlobIdx, bestScore);
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
 
-        const float* rawData = (const float*)outputMat.data;
+        // pnnx 输出为 2D: [h, w] = [boxes, elements]
+        // 或 3D: [c=1, h=boxes, w=elements]
         int dims = outputMat.dims;
-        int c = (dims >= 3) ? outputMat.c : 1;
-        int h = (dims >= 2) ? outputMat.h : 1;
-        int w = outputMat.w;
-        int total = (int)outputMat.total();
-
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] ncnn output: dims=%d, c=%d, h=%d, w=%d, total=%d, first=%.4f %.4f %.4f",
-                dims, c, h, w, total, rawData[0], rawData[1], rawData[2]);
-
-        int numBoxes = 0, numElements = 0;
-        int detectedClasses = 80;
-
-        for (int trial = 0; trial < 2; trial++) {
-            int gb = (trial == 0) ? w : h;
-            int ge = (trial == 0) ? h : w;
-            int gc = (version_ == Version::YOLOv5) ? ge - 5 : ge - 4;
-            if (gc > 0 && gc <= 20) {
-                numBoxes = gb;
-                numElements = ge;
-                detectedClasses = gc;
-                break;
-            }
+        int boxDim = (dims >= 2) ? outputMat.h : outputMat.w;
+        int elemDim = outputMat.w;
+        if (dims >= 3 && outputMat.c > 1) {
+            boxDim = outputMat.h * outputMat.w;
+            elemDim = outputMat.c;
         }
-        if (numBoxes == 0) {
-            numBoxes = w;
-            numElements = h;
-            detectedClasses = (version_ == Version::YOLOv5) ? h - 5 : h - 4;
+
+        int numBoxes = boxDim;
+        int numElements = elemDim;
+        int detectedClasses = 80;
+        if (version_ == Version::YOLOv5) {
+            if (numElements > 5) detectedClasses = numElements - 5;
+        } else {
+            if (numElements > 4) detectedClasses = numElements - 4;
         }
         if (detectedClasses > 0 && detectedClasses < 1000) {
             numClasses_ = detectedClasses;
         }
 
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] Output: boxes=%d, elements=%d, classes=%d",
-                numBoxes, numElements, numClasses_);
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] Output: dims=%d c=%d h=%d w=%d boxes=%d elems=%d classes=%d",
+                dims, outputMat.c, outputMat.h, outputMat.w, numBoxes, numElements, numClasses_);
 
-        const float* outputData = nullptr;
-        if (numBoxes == w && numElements == h) {
-            outputData = rawData;
-        } else {
-            ncnnFwdScratch_.resize(numBoxes * numElements);
-            float* td = ncnnFwdScratch_.data();
-            for (int i = 0; i < numBoxes; i++)
-                for (int j = 0; j < numElements; j++)
-                    td[i * numElements + j] = rawData[j * numBoxes + i];
-            outputData = td;
-        }
+        const float* outputData = (const float*)outputMat.data;
 
         if (numBoxes <= 0 || numElements <= 0) {
             obs_log(LOG_ERROR, "[ModelNcnnYOLO] Invalid output: boxes=%d, elements=%d", numBoxes, numElements);
