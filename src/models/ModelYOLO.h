@@ -7,6 +7,7 @@
 
 #include "Model.h"
 #include "Detection.h"
+#include "IYoloModel.h"
 #include <vector>
 #include <string>
 #include <memory>
@@ -19,150 +20,51 @@
 #include <atomic>
 #include <cstdio>
 
-#ifdef _WIN32
-#include "DmlPreprocessor.h"
-#endif
-
 // 前向声明CUDA类型
 struct cudaGraphicsResource;
 typedef struct cudaGraphicsResource* cudaGraphicsResource_t;
 
-// 延迟统计结构体
-struct InferenceLatency {
-    double totalMs;           // 总延迟
-    double preprocessMs;      // 预处理延迟
-    double inferenceMs;       // 推理延迟
-    double postprocessMs;     // 后处理延迟
-    double gpuCopyMs;         // GPU数据拷贝延迟（仅GPU路径）
-    double cudaKernelMs;      // CUDA内核执行延迟（仅GPU路径）
-    bool isGpuPath;           // 是否使用GPU路径
-    
-    InferenceLatency() : totalMs(0), preprocessMs(0), inferenceMs(0), 
-                         postprocessMs(0), gpuCopyMs(0), cudaKernelMs(0), isGpuPath(false) {}
-    
-    InferenceLatency& operator+=(const InferenceLatency& other) {
-        totalMs += other.totalMs;
-        preprocessMs += other.preprocessMs;
-        inferenceMs += other.inferenceMs;
-        postprocessMs += other.postprocessMs;
-        gpuCopyMs += other.gpuCopyMs;
-        cudaKernelMs += other.cudaKernelMs;
-        isGpuPath = isGpuPath || other.isGpuPath;
-        return *this;
-    }
-};
-
-// 延迟统计器
-class LatencyStats {
+class ModelYOLO : public ModelBCHW, public IYoloModel {
 public:
-    void addSample(const InferenceLatency& latency) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        count_++;
-        sum_ += latency;
-        if (count_ == 1 || latency.totalMs < min_.totalMs) min_ = latency;
-        if (count_ == 1 || latency.totalMs > max_.totalMs) max_ = latency;
-    }
-    
-    void reset() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        count_ = 0;
-        sum_ = InferenceLatency();
-        min_ = InferenceLatency();
-        max_ = InferenceLatency();
-    }
-    
-    std::string getSummary() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (count_ == 0) return "无数据";
-        
-        char buf[1024];
-        if (sum_.isGpuPath) {
-            snprintf(buf, sizeof(buf),
-                "=== 延迟统计 (GPU路径) ===\n"
-                "总延迟: 平均 %.2fms | 最小 %.2fms | 最大 %.2fms\n"
-                "  预处理: %.2fms (CUDA内核: %.2fms, GPU拷贝: %.2fms)\n"
-                "  推理: %.2fms\n"
-                "  后处理: %.2fms\n"
-                "样本数: %zu",
-                sum_.totalMs / count_, min_.totalMs, max_.totalMs,
-                sum_.preprocessMs / count_, sum_.cudaKernelMs / count_, sum_.gpuCopyMs / count_,
-                sum_.inferenceMs / count_,
-                sum_.postprocessMs / count_,
-                count_);
-        } else {
-            snprintf(buf, sizeof(buf),
-                "=== 延迟统计 (CPU路径) ===\n"
-                "总延迟: 平均 %.2fms | 最小 %.2fms | 最大 %.2fms\n"
-                "  预处理: %.2fms\n"
-                "  推理: %.2fms\n"
-                "  后处理: %.2fms\n"
-                "样本数: %zu",
-                sum_.totalMs / count_, min_.totalMs, max_.totalMs,
-                sum_.preprocessMs / count_,
-                sum_.inferenceMs / count_,
-                sum_.postprocessMs / count_,
-                count_);
-        }
-        return std::string(buf);
-    }
-    
-    size_t getCount() const { return count_; }
-    
-private:
-    mutable std::mutex mutex_;
-    size_t count_ = 0;
-    InferenceLatency sum_;
-    InferenceLatency min_;
-    InferenceLatency max_;
-};
-
-class ModelYOLO : public ModelBCHW {
-public:
-    enum class Version {
-        YOLOv5 = 0,
-        YOLOv8 = 1,
-        YOLOv11 = 2
-    };
-
     explicit ModelYOLO(Version version);
     ~ModelYOLO() override;
 
-    void loadModel(const std::string& modelPath, const std::string& useGPU = "cpu", int numThreads = 1, int inputResolution = 640);
+    void loadModel(const std::string& modelPath, const std::string& useGPU = "cpu", int numThreads = 1, int inputResolution = 640) override;
     void preprocessInput(const cv::Mat& input, float* outputBuffer);
-    void setInputResolution(int resolution);
+    void setInputResolution(int resolution) override;
 
-    std::vector<Detection> inference(const cv::Mat& input);
-    std::future<std::vector<Detection>> asyncInference(const cv::Mat& input);
+    std::vector<Detection> inference(const cv::Mat& input) override;
+    std::future<std::vector<Detection>> asyncInference(const cv::Mat& input) override;
 
     // GPU纹理直接推理（CUDA/TensorRT）
-    std::vector<Detection> inferenceFromTexture(void* d3d11Texture, int width, int height, 
+    std::vector<Detection> inferenceFromTexture(void* d3d11Texture, int width, int height,
                                                  int originalWidth, int originalHeight,
-                                                 InferenceLatency* outLatency = nullptr);
-    bool isGpuTextureSupported() const { return cudaInteropInitialized_; }
-    
+                                                 InferenceLatency* outLatency = nullptr) override;
+    bool isGpuTextureSupported() const override { return cudaInteropInitialized_; }
+
     // DML纹理直接推理
     std::vector<Detection> inferenceFromTextureDml(const DmlPreprocessedFrame& preprocessedFrame,
                                                     int originalWidth, int originalHeight,
-                                                    InferenceLatency* outLatency = nullptr);
-    bool isDmlTextureSupported() const { return dmlInteropInitialized_; }
-    
+                                                    InferenceLatency* outLatency = nullptr) override;
+    bool isDmlTextureSupported() const override { return dmlInteropInitialized_; }
+
     // 延迟统计
     const LatencyStats& getLatencyStats() const { return latencyStats_; }
-    void resetLatencyStats() { latencyStats_.reset(); }
-    std::string getLatencySummary() const { return latencyStats_.getSummary(); }
+    void resetLatencyStats() override { latencyStats_.reset(); }
+    std::string getLatencySummary() const override { return latencyStats_.getSummary(); }
 
-    void setConfidenceThreshold(float threshold);
-    void setNMSThreshold(float threshold);
-    void setTargetClass(int classId);
-    void setTargetClasses(const std::vector<int>& classIds);
-    void loadClassNames(const std::string& namesFile);
+    void setConfidenceThreshold(float threshold) override;
+    void setNMSThreshold(float threshold) override;
+    void setTargetClass(int classId) override;
+    void setTargetClasses(const std::vector<int>& classIds) override;
+    void loadClassNames(const std::string& namesFile) override;
 
-    Version getVersion() const { return version_; }
-    int getInputWidth() const { return inputWidth_; }
-    int getInputHeight() const { return inputHeight_; }
-    int getNumClasses() const { return numClasses_; }
-    const std::vector<std::string>& getClassNames() const { return classNames_; }
-    DmlPreprocessor* getDmlPreprocessor() const { return dmlPreprocessor_.get(); }
+    Version getVersion() const override { return version_; }
+    int getInputWidth() const override { return inputWidth_; }
+    int getInputHeight() const override { return inputHeight_; }
+    int getNumClasses() const override { return numClasses_; }
+    const std::vector<std::string>& getClassNames() const override { return classNames_; }
+    DmlPreprocessor* getDmlPreprocessor() const override { return dmlPreprocessor_.get(); }
 
 private:
     struct LetterboxInfo {
