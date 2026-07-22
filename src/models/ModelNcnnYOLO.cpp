@@ -309,9 +309,9 @@ std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv5(
     std::vector<cv::Rect2f> boxes;
     std::vector<float> scores;
     std::vector<int> classIds;
-    const int numElements = 5 + numClasses;
+    // pnnx 输出：绝对坐标 [x_center, y_center, width, height, obj_conf, cls0...]
     for (int i = 0; i < numBoxes; ++i) {
-        const float* detection = rawOutput + i * numElements;
+        const float* detection = rawOutput + i * (5 + numClasses);
         float objectness = detection[4];
         if (objectness < confidenceThreshold_) continue;
         int maxClassId = 0;
@@ -333,6 +333,7 @@ std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv5(
             isTargetClass = true;
         }
         if (!isTargetClass) continue;
+        // pnnx 已解码为绝对坐标，直接做 letterbox 反算
         float cx = detection[0];
         float cy = detection[1];
         float w = detection[2];
@@ -373,9 +374,10 @@ std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv8(
     std::vector<cv::Rect2f> boxes;
     std::vector<float> scores;
     std::vector<int> classIds;
-    const int numElements = 4 + numClasses;
+    // pnnx 输出：绝对坐标 [x_center, y_center, width, height, cls0...]
+    // YOLOv8 无 objectness，直接用 max class prob
     for (int i = 0; i < numBoxes; ++i) {
-        const float* detection = rawOutput + i * numElements;
+        const float* detection = rawOutput + i * (4 + numClasses);
         float maxClassProb = detection[4];
         int maxClassId = 0;
         for (int c = 1; c < numClasses; ++c) {
@@ -394,6 +396,7 @@ std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv8(
             isTargetClass = true;
         }
         if (!isTargetClass) continue;
+        // pnnx 已解码为绝对坐标
         float cx = detection[0];
         float cy = detection[1];
         float w = detection[2];
