@@ -170,7 +170,12 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
         ncnn::Mat outputMat;
-        ex.extract("out0", outputMat);
+        int extractRet = ex.extract(0, outputMat);
+        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed (ret=%d, data=%p, total=%d)",
+                    extractRet, outputMat.data, (int)outputMat.total());
+            return {};
+        }
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
 
