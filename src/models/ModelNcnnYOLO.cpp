@@ -170,38 +170,50 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 遍历全部 blob 找最大非图像输出
+        // 遍历全部 blob 找输出
         ncnn::Mat outputMat;
         int extractRet = -1;
         int bestBlobIndex = -1;
         int bestTotal = 0;
         int nBlobs = (int)net_.blobs().size();
 
-        for (int bi = 0; bi < nBlobs; bi++) {
-            ncnn::Mat tmp;
-            int r = ex.extract(bi, tmp);
-            if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
+        // 先试已知输出 blob 名
+        for (const char* name : {"final_out0", "out0", "out1", "out2", "out3"}) {
+            extractRet = ex.extract(name, outputMat);
+            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
+                bestBlobIndex = -2;
+                bestTotal = (int)outputMat.total();
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] extract '%s' ok (total=%d)", name, bestTotal);
+                break;
+            }
+        }
 
-            int t = (int)tmp.total();
-            int d = tmp.dims;
-            obs_log(LOG_INFO, "[ModelNcnnYOLO] blob %d: dims=%d c=%d h=%d w=%d total=%d",
-                    bi, d, tmp.c, tmp.h, tmp.w, t);
+        if (bestBlobIndex != -2 || bestTotal <= 0) {
+            for (int bi = 0; bi < nBlobs; bi++) {
+                ncnn::Mat tmp;
+                int r = ex.extract(bi, tmp);
+                if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
 
-            if (t > 100000) continue; // 跳过输入图/大特征图
-            if (t > bestTotal) {
-                bestTotal = t;
-                bestBlobIndex = bi;
-                outputMat = tmp;
-                extractRet = 0;
+                int t = (int)tmp.total();
+                int d = tmp.dims;
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] blob %d: dims=%d c=%d h=%d w=%d total=%d",
+                        bi, d, tmp.c, tmp.h, tmp.w, t);
+
+                if (t > 100000) continue;
+                if (t > bestTotal) {
+                    bestTotal = t;
+                    bestBlobIndex = bi;
+                    outputMat = tmp;
+                    extractRet = 0;
+                }
             }
         }
 
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] no suitable output blob (best=%d total=%d)",
-                    bestBlobIndex, bestTotal);
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] no suitable output blob");
             return {};
         }
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] using blob %d (total=%d)", bestBlobIndex, bestTotal);
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] using blob index %d (total=%d)", bestBlobIndex, bestTotal);
 
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
