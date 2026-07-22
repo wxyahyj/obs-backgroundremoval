@@ -124,8 +124,19 @@ void ModelNcnnYOLO::loadModel(const std::string& modelPath, const std::string& u
     net_.opt = opt;
     int ret = net_.load_param(paramPath.c_str());
     if (ret != 0) {
-        obs_log(LOG_ERROR, "[ModelNcnnYOLO] Failed to load param file: %s (ret=%d)", paramPath.c_str(), ret);
-        throw std::runtime_error("Failed to load ncnn param file: " + paramPath);
+        // .ncnn.param 失败，回退 .param
+        std::string fallbackParam = basePath + ".param";
+        std::string fallbackBin = basePath + ".bin";
+        std::string oldParamPath = paramPath;
+        paramPath = fallbackParam;
+        binPath = fallbackBin;
+        ret = net_.load_param(paramPath.c_str());
+        if (ret != 0) {
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] Failed to load param: %s (ret=%d) and %s (ret=%d)",
+                    oldParamPath.c_str(), -1, paramPath.c_str(), ret);
+            throw std::runtime_error("Failed to load ncnn param file: " + oldParamPath);
+        }
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] Falling back to: %s", paramPath.c_str());
     }
     ret = net_.load_model(binPath.c_str());
     if (ret != 0) {
