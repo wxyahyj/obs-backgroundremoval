@@ -76,13 +76,13 @@ private:
     };
 
     std::vector<Detection> postprocessYOLOv5(
-        const float* rawOutput, int numBoxes, int numClasses,
+        const float* rawOutput, int numBoxes, int stride, int numClasses,
         const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize);
     std::vector<Detection> postprocessYOLOv8(
-        const float* rawOutput, int numBoxes, int numClasses,
+        const float* rawOutput, int numBoxes, int stride, int numClasses,
         const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize);
     std::vector<Detection> postprocessYOLOv11(
-        const float* rawOutput, int numBoxes, int numClasses,
+        const float* rawOutput, int numBoxes, int stride, int numClasses,
         const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize);
 
     std::vector<int> performNMS(

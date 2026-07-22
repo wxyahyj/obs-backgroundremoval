@@ -242,24 +242,24 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         }
 
         int numBoxes = boxDim;
-        int numElements = elemDim;
+        int stride = (numBoxes > 0) ? (int)(outputMat.total() / numBoxes) : elemDim;
         int detectedClasses = 80;
         if (version_ == Version::YOLOv5) {
-            if (numElements > 5) detectedClasses = numElements - 5;
+            if (stride > 5) detectedClasses = stride - 5;
         } else {
-            if (numElements > 4) detectedClasses = numElements - 4;
+            if (stride > 4) detectedClasses = stride - 4;
         }
         if (detectedClasses > 0 && detectedClasses < 1000) {
             numClasses_ = detectedClasses;
         }
 
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] Output: dims=%d c=%d h=%d w=%d boxes=%d elems=%d classes=%d",
-                dims, outputMat.c, outputMat.h, outputMat.w, numBoxes, numElements, numClasses_);
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] Output: dims=%d c=%d h=%d w=%d boxes=%d stride=%d classes=%d",
+                dims, outputMat.c, outputMat.h, outputMat.w, numBoxes, stride, numClasses_);
 
         const float* outputData = (const float*)outputMat.data;
 
-        if (numBoxes <= 0 || numElements <= 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] Invalid output: boxes=%d, elements=%d", numBoxes, numElements);
+        if (numBoxes <= 0 || stride <= 0) {
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] Invalid output: boxes=%d, stride=%d", numBoxes, stride);
             return {};
         }
 
@@ -268,13 +268,13 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         std::vector<Detection> detections;
         switch (version_) {
             case Version::YOLOv5:
-                detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                detections = postprocessYOLOv5(outputData, numBoxes, stride, numClasses_, letterboxInfo, originalSize);
                 break;
             case Version::YOLOv8:
-                detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                detections = postprocessYOLOv8(outputData, numBoxes, stride, numClasses_, letterboxInfo, originalSize);
                 break;
             case Version::YOLOv11:
-                detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                detections = postprocessYOLOv11(outputData, numBoxes, stride, numClasses_, letterboxInfo, originalSize);
                 break;
         }
 
@@ -303,15 +303,15 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
 }
 
 std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv5(
-    const float* rawOutput, int numBoxes, int numClasses,
+    const float* rawOutput, int numBoxes, int stride, int numClasses,
     const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize) {
     std::vector<Detection> detections;
     std::vector<cv::Rect2f> boxes;
     std::vector<float> scores;
     std::vector<int> classIds;
-    // pnnx 输出：绝对坐标 [x_center, y_center, width, height, obj_conf, cls0...]
+    // stride = total / numBoxes, pnnx 输出元素数（5+cls 或其它）
     for (int i = 0; i < numBoxes; ++i) {
-        const float* detection = rawOutput + i * (5 + numClasses);
+        const float* detection = rawOutput + i * stride;
         float objectness = detection[4];
         if (objectness < confidenceThreshold_) continue;
         int maxClassId = 0;
@@ -368,16 +368,15 @@ std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv5(
 }
 
 std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv8(
-    const float* rawOutput, int numBoxes, int numClasses,
+    const float* rawOutput, int numBoxes, int stride, int numClasses,
     const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize) {
     std::vector<Detection> detections;
     std::vector<cv::Rect2f> boxes;
     std::vector<float> scores;
     std::vector<int> classIds;
-    // pnnx 输出：绝对坐标 [x_center, y_center, width, height, cls0...]
     // YOLOv8 无 objectness，直接用 max class prob
     for (int i = 0; i < numBoxes; ++i) {
-        const float* detection = rawOutput + i * (4 + numClasses);
+        const float* detection = rawOutput + i * stride;
         float maxClassProb = detection[4];
         int maxClassId = 0;
         for (int c = 1; c < numClasses; ++c) {
@@ -431,9 +430,9 @@ std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv8(
 }
 
 std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv11(
-    const float* rawOutput, int numBoxes, int numClasses,
+    const float* rawOutput, int numBoxes, int stride, int numClasses,
     const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize) {
-    return postprocessYOLOv8(rawOutput, numBoxes, numClasses, letterboxInfo, originalImageSize);
+    return postprocessYOLOv8(rawOutput, numBoxes, stride, numClasses, letterboxInfo, originalImageSize);
 }
 
 std::vector<int> ModelNcnnYOLO::performNMS(
