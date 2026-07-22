@@ -181,99 +181,139 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 遍历全部 blob 找输出
-        ncnn::Mat outputMat;
-        int extractRet = -1;
-        int bestBlobIndex = -1;
-        int bestTotal = 0;
+        // 扫描全部 blob，提取检测头（3D: [c, h, w]，c 为 3*(5+cls)）
+        struct HeadBlob {
+            ncnn::Mat mat;
+            int idx;
+            int channels;
+            int headH;
+            int headW;
+            int total;
+        };
+        std::vector<HeadBlob> heads;
         int nBlobs = (int)net_.blobs().size();
 
-        // 先试已知输出 blob 名
-        for (const char* name : {"final_out0", "out0", "out1", "out2", "out3"}) {
-            extractRet = ex.extract(name, outputMat);
-            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                bestBlobIndex = -2;
-                bestTotal = (int)outputMat.total();
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] extract '%s' ok (total=%d)", name, bestTotal);
-                break;
-            }
+        for (int bi = 0; bi < nBlobs; bi++) {
+            ncnn::Mat tmp;
+            int r = ex.extract(bi, tmp);
+            if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
+            if (tmp.dims != 3) continue;
+            int c = tmp.c;
+            if (c < 6 || c > 300 || c % 3 != 0) continue;
+            // c = 3*(5+cls) → cls = c/3 - 5
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] head blob %d: c=%d h=%d w=%d total=%d",
+                    bi, c, tmp.h, tmp.w, (int)tmp.total());
+            heads.push_back({tmp, bi, c, tmp.h, tmp.w, (int)tmp.total()});
         }
 
-        if (bestBlobIndex != -2 || bestTotal <= 0) {
-            for (int bi = 0; bi < nBlobs; bi++) {
-                ncnn::Mat tmp;
-                int r = ex.extract(bi, tmp);
-                if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
+        // 按 total 排序（大→小 = stride 8/16/32）
+        std::sort(heads.begin(), heads.end(),
+                  [](const HeadBlob& a, const HeadBlob& b) { return a.total > b.total; });
 
-                int t = (int)tmp.total();
-                int d = tmp.dims;
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] blob %d: dims=%d c=%d h=%d w=%d total=%d",
-                        bi, d, tmp.c, tmp.h, tmp.w, t);
-
-                if (t > 100000) continue;
-                if (t > bestTotal) {
-                    bestTotal = t;
-                    bestBlobIndex = bi;
-                    outputMat = tmp;
-                    extractRet = 0;
-                }
-            }
-        }
-
-        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] no suitable output blob");
+        if (heads.empty()) {
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] no detection head blobs found");
             return {};
         }
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] using blob index %d (total=%d)", bestBlobIndex, bestTotal);
+
+        // 取头 3 个 head（或全部）作为检测头
+        int nHeads = std::min((int)heads.size(), 3);
+        int detectedClasses = heads[0].channels / 3 - 5;
+        if (detectedClasses > 0 && detectedClasses < 1000) {
+            numClasses_ = detectedClasses;
+        }
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] using %d heads, classes=%d", nHeads, numClasses_);
 
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
 
-        // pnnx 输出为 2D: [h, w] = [boxes, elements]
-        // 或 3D: [c=1, h=boxes, w=elements]
-        int dims = outputMat.dims;
-        int boxDim = (dims >= 2) ? outputMat.h : outputMat.w;
-        int elemDim = outputMat.w;
-        if (dims >= 3 && outputMat.c > 1) {
-            boxDim = outputMat.h * outputMat.w;
-            elemDim = outputMat.c;
-        }
-
-        int numBoxes = boxDim;
-        int stride = (numBoxes > 0) ? (int)(outputMat.total() / numBoxes) : elemDim;
-        int detectedClasses = 80;
-        if (version_ == Version::YOLOv5) {
-            if (stride > 5) detectedClasses = stride - 5;
-        } else {
-            if (stride > 4) detectedClasses = stride - 4;
-        }
-        if (detectedClasses > 0 && detectedClasses < 1000) {
-            numClasses_ = detectedClasses;
-        }
-
-        obs_log(LOG_INFO, "[ModelNcnnYOLO] Output: dims=%d c=%d h=%d w=%d boxes=%d stride=%d classes=%d",
-                dims, outputMat.c, outputMat.h, outputMat.w, numBoxes, stride, numClasses_);
-
-        const float* outputData = (const float*)outputMat.data;
-
-        if (numBoxes <= 0 || stride <= 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] Invalid output: boxes=%d, stride=%d", numBoxes, stride);
-            return {};
-        }
-
         cv::Size originalSize(input.cols, input.rows);
         auto postprocessStartTime = std::chrono::high_resolution_clock::now();
         std::vector<Detection> detections;
-        switch (version_) {
-            case Version::YOLOv5:
-                detections = postprocessYOLOv5(outputData, numBoxes, stride, numClasses_, letterboxInfo, originalSize);
-                break;
-            case Version::YOLOv8:
-                detections = postprocessYOLOv8(outputData, numBoxes, stride, numClasses_, letterboxInfo, originalSize);
-                break;
-            case Version::YOLOv11:
-                detections = postprocessYOLOv11(outputData, numBoxes, stride, numClasses_, letterboxInfo, originalSize);
-                break;
+
+        // 解析每个检测头
+        int strideVals[3] = {8, 16, 32}; // 按 total 从大到小对应 stride
+        for (int hi = 0; hi < nHeads; hi++) {
+            const HeadBlob& hb = heads[hi];
+            int stride = strideVals[hi];
+            int h = hb.headH;
+            int w = hb.headW;
+            int c = hb.channels;
+            int numAnchors = 3;
+            int elemPerAnchor = c / numAnchors; // = 5+cls
+
+            const float* data = (const float*)hb.mat.data;
+
+            for (int ai = 0; ai < numAnchors; ai++) {
+                int chBase = ai * elemPerAnchor;
+                for (int i = 0; i < h; i++) {
+                    for (int j = 0; j < w; j++) {
+                        // 每个 anchor 在每个 grid 位置提取 9 个值
+                        float cx = hb.mat.channel(chBase + 0)[i * w + j];
+                        float cy = hb.mat.channel(chBase + 1)[i * w + j];
+                        float bw = hb.mat.channel(chBase + 2)[i * w + j];
+                        float bh = hb.mat.channel(chBase + 3)[i * w + j];
+                        float obj = hb.mat.channel(chBase + 4)[i * w + j];
+                        if (obj < confidenceThreshold_) continue;
+                        int bestCls = 0;
+                        float bestProb = hb.mat.channel(chBase + 5)[i * w + j];
+                        for (int ci = 1; ci < numClasses_; ci++) {
+                            float p = hb.mat.channel(chBase + 5 + ci)[i * w + j];
+                            if (p > bestProb) { bestProb = p; bestCls = ci; }
+                        }
+                        float conf = obj * bestProb;
+                        if (conf < confidenceThreshold_) continue;
+
+                        bool isTargetClass = false;
+                        if (targetClassId_ >= 0) {
+                            isTargetClass = (bestCls == targetClassId_);
+                        } else if (!targetClasses_.empty()) {
+                            isTargetClass = targetClasses_.count(bestCls);
+                        } else {
+                            isTargetClass = true;
+                        }
+                        if (!isTargetClass) continue;
+
+                        // 已经绝对坐标，做 letterbox 反算
+                        float x1 = (cx - bw / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
+                        float y1 = (cy - bh / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
+                        float x2 = (cx + bw / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
+                        float y2 = (cy + bh / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
+                        x1 = std::max(0.0f, std::min(x1, (float)originalSize.width));
+                        y1 = std::max(0.0f, std::min(y1, (float)originalSize.height));
+                        x2 = std::max(0.0f, std::min(x2, (float)originalSize.width));
+                        y2 = std::max(0.0f, std::min(y2, (float)originalSize.height));
+
+                        Detection det;
+                        det.classId = bestCls;
+                        det.className = (bestCls < (int)classNames_.size()) ? classNames_[bestCls] : "Cls" + std::to_string(bestCls);
+                        det.confidence = conf;
+                        det.x = x1 / originalSize.width;
+                        det.y = y1 / originalSize.height;
+                        det.width = (x2 - x1) / originalSize.width;
+                        det.height = (y2 - y1) / originalSize.height;
+                        det.centerX = det.x + det.width / 2.0f;
+                        det.centerY = det.y + det.height / 2.0f;
+                        detections.push_back(det);
+                    }
+                }
+            }
+        }
+
+        // NMS
+        if (!detections.empty()) {
+            std::vector<cv::Rect2f> boxes;
+            std::vector<float> scores;
+            std::vector<int> classIds;
+            for (auto& d : detections) {
+                boxes.push_back(cv::Rect2f(d.x * originalSize.width, d.y * originalSize.height,
+                                           d.width * originalSize.width, d.height * originalSize.height));
+                scores.push_back(d.confidence);
+                classIds.push_back(d.classId);
+            }
+            std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
+            std::vector<Detection> filtered;
+            for (int idx : nmsIndices) filtered.push_back(detections[idx]);
+            detections = filtered;
         }
 
         auto postprocessEndTime = std::chrono::high_resolution_clock::now();
@@ -298,139 +338,6 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         obs_log(LOG_ERROR, "[ModelNcnnYOLO] Unknown inference exception");
         return {};
     }
-}
-
-std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv5(
-    const float* rawOutput, int numBoxes, int stride, int numClasses,
-    const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize) {
-    std::vector<Detection> detections;
-    std::vector<cv::Rect2f> boxes;
-    std::vector<float> scores;
-    std::vector<int> classIds;
-    // stride = total / numBoxes, pnnx 输出元素数（5+cls 或其它）
-    for (int i = 0; i < numBoxes; ++i) {
-        const float* detection = rawOutput + i * stride;
-        float objectness = detection[4];
-        if (objectness < confidenceThreshold_) continue;
-        int maxClassId = 0;
-        float maxClassProb = detection[5];
-        for (int c = 1; c < numClasses; ++c) {
-            if (detection[5 + c] > maxClassProb) {
-                maxClassProb = detection[5 + c];
-                maxClassId = c;
-            }
-        }
-        float confidence = objectness * maxClassProb;
-        if (confidence < confidenceThreshold_) continue;
-        bool isTargetClass = false;
-        if (targetClassId_ >= 0) {
-            isTargetClass = (maxClassId == targetClassId_);
-        } else if (!targetClasses_.empty()) {
-            isTargetClass = targetClasses_.count(maxClassId);
-        } else {
-            isTargetClass = true;
-        }
-        if (!isTargetClass) continue;
-        // pnnx 已解码为绝对坐标，直接做 letterbox 反算
-        float cx = detection[0];
-        float cy = detection[1];
-        float w = detection[2];
-        float h = detection[3];
-        float x1 = (cx - w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
-        float y1 = (cy - h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
-        float x2 = (cx + w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
-        float y2 = (cy + h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
-        x1 = std::max(0.0f, std::min(x1, (float)originalImageSize.width));
-        y1 = std::max(0.0f, std::min(y1, (float)originalImageSize.height));
-        x2 = std::max(0.0f, std::min(x2, (float)originalImageSize.width));
-        y2 = std::max(0.0f, std::min(y2, (float)originalImageSize.height));
-        boxes.push_back(cv::Rect2f(x1, y1, x2 - x1, y2 - y1));
-        scores.push_back(confidence);
-        classIds.push_back(maxClassId);
-    }
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
-    for (int idx : nmsIndices) {
-        Detection det;
-        det.classId = classIds[idx];
-        det.className = (det.classId < (int)classNames_.size()) ? classNames_[det.classId] : "Class_" + std::to_string(det.classId);
-        det.confidence = scores[idx];
-        det.x = boxes[idx].x / originalImageSize.width;
-        det.y = boxes[idx].y / originalImageSize.height;
-        det.width = boxes[idx].width / originalImageSize.width;
-        det.height = boxes[idx].height / originalImageSize.height;
-        det.centerX = det.x + det.width / 2.0f;
-        det.centerY = det.y + det.height / 2.0f;
-        detections.push_back(det);
-    }
-    return detections;
-}
-
-std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv8(
-    const float* rawOutput, int numBoxes, int stride, int numClasses,
-    const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize) {
-    std::vector<Detection> detections;
-    std::vector<cv::Rect2f> boxes;
-    std::vector<float> scores;
-    std::vector<int> classIds;
-    // YOLOv8 无 objectness，直接用 max class prob
-    for (int i = 0; i < numBoxes; ++i) {
-        const float* detection = rawOutput + i * stride;
-        float maxClassProb = detection[4];
-        int maxClassId = 0;
-        for (int c = 1; c < numClasses; ++c) {
-            if (detection[4 + c] > maxClassProb) {
-                maxClassProb = detection[4 + c];
-                maxClassId = c;
-            }
-        }
-        if (maxClassProb < confidenceThreshold_) continue;
-        bool isTargetClass = false;
-        if (targetClassId_ >= 0) {
-            isTargetClass = (maxClassId == targetClassId_);
-        } else if (!targetClasses_.empty()) {
-            isTargetClass = targetClasses_.count(maxClassId);
-        } else {
-            isTargetClass = true;
-        }
-        if (!isTargetClass) continue;
-        // pnnx 已解码为绝对坐标
-        float cx = detection[0];
-        float cy = detection[1];
-        float w = detection[2];
-        float h = detection[3];
-        float x1 = (cx - w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
-        float y1 = (cy - h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
-        float x2 = (cx + w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
-        float y2 = (cy + h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
-        x1 = std::max(0.0f, std::min(x1, (float)originalImageSize.width));
-        y1 = std::max(0.0f, std::min(y1, (float)originalImageSize.height));
-        x2 = std::max(0.0f, std::min(x2, (float)originalImageSize.width));
-        y2 = std::max(0.0f, std::min(y2, (float)originalImageSize.height));
-        boxes.push_back(cv::Rect2f(x1, y1, x2 - x1, y2 - y1));
-        scores.push_back(maxClassProb);
-        classIds.push_back(maxClassId);
-    }
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
-    for (int idx : nmsIndices) {
-        Detection det;
-        det.classId = classIds[idx];
-        det.className = (det.classId < (int)classNames_.size()) ? classNames_[det.classId] : "Class_" + std::to_string(det.classId);
-        det.confidence = scores[idx];
-        det.x = boxes[idx].x / originalImageSize.width;
-        det.y = boxes[idx].y / originalImageSize.height;
-        det.width = boxes[idx].width / originalImageSize.width;
-        det.height = boxes[idx].height / originalImageSize.height;
-        det.centerX = det.x + det.width / 2.0f;
-        det.centerY = det.y + det.height / 2.0f;
-        detections.push_back(det);
-    }
-    return detections;
-}
-
-std::vector<Detection> ModelNcnnYOLO::postprocessYOLOv11(
-    const float* rawOutput, int numBoxes, int stride, int numClasses,
-    const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize) {
-    return postprocessYOLOv8(rawOutput, numBoxes, stride, numClasses, letterboxInfo, originalImageSize);
 }
 
 std::vector<int> ModelNcnnYOLO::performNMS(

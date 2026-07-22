@@ -75,16 +75,6 @@ private:
         std::promise<std::vector<Detection>> promise;
     };
 
-    std::vector<Detection> postprocessYOLOv5(
-        const float* rawOutput, int numBoxes, int stride, int numClasses,
-        const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize);
-    std::vector<Detection> postprocessYOLOv8(
-        const float* rawOutput, int numBoxes, int stride, int numClasses,
-        const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize);
-    std::vector<Detection> postprocessYOLOv11(
-        const float* rawOutput, int numBoxes, int stride, int numClasses,
-        const LetterboxInfo& letterboxInfo, const cv::Size& originalImageSize);
-
     std::vector<int> performNMS(
         const std::vector<cv::Rect2f>& boxes,
         const std::vector<float>& scores,
@@ -110,12 +100,9 @@ private:
     bool vulkanEnabled_;
     bool modelLoaded_;
 
-    // 预分配letterbox缓冲区
+    // 预分配 letterbox 缓冲区
     cv::Mat letterboxBuffer_;
     cv::Mat resizedBuffer_;
-
-    // ncnn 输出转置缓冲区
-    std::vector<float> ncnnFwdScratch_;
 
     // 延迟统计
     LatencyStats latencyStats_;
