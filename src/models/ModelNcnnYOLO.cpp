@@ -170,37 +170,46 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 提取输出 blob
+        // 提取输出 blob：遍历所有注册的输出索引
         ncnn::Mat outputMat;
         int extractRet = -1;
 
-        // 优先: 通过 output_indexes() 取正式输出 blob
-        // 这要求 .param 文件有 Output 层注册
         const std::vector<int>& outIdxs = net_.output_indexes();
-        if (!outIdxs.empty()) {
-            extractRet = ex.extract(outIdxs[0], outputMat);
-            obs_log(LOG_INFO, "[ModelNcnnYOLO] extract via output_index %d (ret=%d)", outIdxs[0], extractRet);
-        } else {
-            // 回退: 直接通过 blob 名提取
-            extractRet = ex.extract("out0", outputMat);
-            obs_log(LOG_INFO, "[ModelNcnnYOLO] extract via name 'out0' (ret=%d)", extractRet);
+
+        // 尝试每个 output_index（pnnx 有 4 个输出: out1, out2, out3, out0）
+        for (size_t oi = 0; oi < outIdxs.size(); oi++) {
+            extractRet = ex.extract(outIdxs[oi], outputMat);
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] extract output_index[%zu]=%d (ret=%d)",
+                    oi, outIdxs[oi], extractRet);
+            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0)
+                break;
         }
 
-        // 如果提取失败，输出诊断信息
+        // 回退1：按 blob 名 "out0" 提取
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed ret=%d data=%p total=%d outIdxs=%zu",
-                    extractRet, outputMat.data, (int)outputMat.total(), outIdxs.size());
-            // 扫描全部有效 blob 用于诊断
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] trying name 'out0'");
+            extractRet = ex.extract("out0", outputMat);
+        }
+
+        // 回退2：从末尾倒序提第一个有效 blob
+        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
             int nb = (int)net_.blobs().size();
+            obs_log(LOG_INFO, "[ModelNcnnYOLO] scanning %d blobs from end", nb);
             for (int bi = nb - 1; bi >= 0; bi--) {
                 ncnn::Mat tmp;
                 int r = ex.extract(bi, tmp);
                 if (r == 0 && tmp.data != nullptr && tmp.total() > 0) {
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] diag blob %d: dims=%d c=%d h=%d w=%d total=%d",
+                    outputMat = tmp;
+                    extractRet = 0;
+                    obs_log(LOG_INFO, "[ModelNcnnYOLO] fallback blob %d: dims=%d c=%d h=%d w=%d total=%d",
                             bi, tmp.dims, tmp.c, tmp.h, tmp.w, (int)tmp.total());
                     break;
                 }
             }
+        }
+
+        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] all extract methods failed");
             return {};
         }
 
