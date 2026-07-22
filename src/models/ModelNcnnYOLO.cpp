@@ -91,8 +91,19 @@ void ModelNcnnYOLO::loadModel(const std::string& modelPath, const std::string& u
     if (basePath.size() > 5 && basePath.substr(basePath.size() - 5) == ".onnx") {
         basePath = basePath.substr(0, basePath.size() - 5);
     }
-    std::string paramPath = basePath + ".param";
-    std::string binPath = basePath + ".bin";
+    // pnnx 生成 xxx.ncnn.param/xxx.ncnn.bin，优先尝试
+    std::string paramPath = basePath + ".ncnn.param";
+    std::string binPath = basePath + ".ncnn.bin";
+    bool foundNcnnSuffix = false;
+    {
+        FILE* fp = nullptr;
+        fopen_s(&fp, paramPath.c_str(), "rb");
+        if (fp) { fclose(fp); foundNcnnSuffix = true; }
+    }
+    if (!foundNcnnSuffix) {
+        paramPath = basePath + ".param";
+        binPath = basePath + ".bin";
+    }
     obs_log(LOG_INFO, "[ModelNcnnYOLO] Param file: %s", paramPath.c_str());
     obs_log(LOG_INFO, "[ModelNcnnYOLO] Bin file: %s", binPath.c_str());
     ncnn::Option opt;
