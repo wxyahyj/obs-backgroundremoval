@@ -170,41 +170,65 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 提取输出：output_indexes() → 回退末尾找非空2D blob
+        // 提取输出：遍历全部 blob，选形状最匹配的
         ncnn::Mat outputMat;
         int extractRet = -1;
+        int nBlobs = (int)net_.blobs().size();
+        int bestBlobIdx = -1;
+        int bestScore = -1;
 
-        const std::vector<int>& outIdxs = net_.output_indexes();
-        if (!outIdxs.empty()) {
-            for (size_t oi = 0; oi < outIdxs.size(); oi++) {
-                extractRet = ex.extract(outIdxs[oi], outputMat);
-                if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] extract output_index %d (c=%d h=%d w=%d total=%d)",
-                            outIdxs[oi], outputMat.c, outputMat.h, outputMat.w, (int)outputMat.total());
+        for (int bi = 0; bi < nBlobs; bi++) {
+            ncnn::Mat tmp;
+            int r = ex.extract(bi, tmp);
+            if (r != 0 || tmp.data == nullptr || tmp.total() == 0) continue;
+
+            int d = tmp.dims;
+            int tc = (d >= 3) ? tmp.c : 1;
+            int th = (d >= 2) ? tmp.h : 1;
+            int tw = tmp.w;
+            int ttot = (int)tmp.total();
+
+            // 跳过输入图/特征图：c=1 或 c=3 且 h>100 且 w>100 → 是图像
+            bool isImage = (ttot > 10000) && (tc == 1 || tc == 3) && (th > 10) && (tw > 10);
+            if (isImage) continue;
+
+            // 2D 或 1D 输出最佳；3D+c=1 也行
+            int score = 0;
+            if (d <= 2) score = 100;          // 2D/1D → 检测输出
+            else if (tc == 1) score = 80;     // 3D+c=1
+            else if (tc <= 20) score = 50;    // 小通道数
+            else score = 30;                  // 大通道数
+
+            // boxes 数 = h, elements = w（或反之）
+            // elements ≈ 4/5 + numClasses
+            int ge = th;
+            int gb = tw;
+            for (int t = 0; t < 2; t++) {
+                int gc = (version_ == Version::YOLOv5) ? ge - 5 : ge - 4;
+                if (gc > 0 && gc <= 20) {
+                    if (gc == numClasses_) score += 50;  // 匹配当前 numClasses
+                    else score += 20;
                     break;
                 }
+                std::swap(ge, gb);
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestBlobIdx = bi;
+                outputMat = tmp;
+                extractRet = r;
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] blob %d dims=%d c=%d h=%d w=%d total=%d score=%d",
+                        bi, d, tc, th, tw, ttot, score);
             }
         }
 
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            int nBlobs = (int)net_.blobs().size();
-            for (int bi = nBlobs - 1; bi >= 0; bi--) {
-                ncnn::Mat tmp;
-                int r = ex.extract(bi, tmp);
-                if (r == 0 && tmp.data != nullptr && tmp.total() > 0) {
-                    outputMat = tmp;
-                    extractRet = 0;
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] blob idx %d (dims=%d c=%d h=%d w=%d total=%d)",
-                            bi, tmp.dims, tmp.c, tmp.h, tmp.w, (int)tmp.total());
-                    break;
-                }
-            }
-        }
-        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed, ret=%d, data=%p, total=%d",
-                    extractRet, outputMat.data, (int)outputMat.total());
+            obs_log(LOG_ERROR, "[ModelNcnnYOLO] extract failed, bestBlob=%d", bestBlobIdx);
             return {};
         }
+
+        obs_log(LOG_INFO, "[ModelNcnnYOLO] using blob %d (score=%d)", bestBlobIdx, bestScore);
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
 
