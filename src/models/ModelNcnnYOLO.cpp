@@ -170,16 +170,34 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 提取输出 blob：取 net.blobs() 中最后一个 blob（模型输出）
-        int nBlobs = (int)net_.blobs().size();
+        // 提取输出：output_indexes() → 回退末尾找非空2D blob
         ncnn::Mat outputMat;
         int extractRet = -1;
-        for (int bi = nBlobs - 1; bi >= 0; bi--) {
-            extractRet = ex.extract(bi, outputMat);
-            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] extract blob index %d (total=%d, c=%d, h=%d, w=%d)",
-                        bi, (int)outputMat.total(), outputMat.c, outputMat.h, outputMat.w);
-                break;
+
+        const std::vector<int>& outIdxs = net_.output_indexes();
+        if (!outIdxs.empty()) {
+            for (size_t oi = 0; oi < outIdxs.size(); oi++) {
+                extractRet = ex.extract(outIdxs[oi], outputMat);
+                if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
+                    obs_log(LOG_INFO, "[ModelNcnnYOLO] extract output_index %d (c=%d h=%d w=%d total=%d)",
+                            outIdxs[oi], outputMat.c, outputMat.h, outputMat.w, (int)outputMat.total());
+                    break;
+                }
+            }
+        }
+
+        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
+            int nBlobs = (int)net_.blobs().size();
+            for (int bi = nBlobs - 1; bi >= 0; bi--) {
+                ncnn::Mat tmp;
+                int r = ex.extract(bi, tmp);
+                if (r == 0 && tmp.data != nullptr && tmp.total() > 0) {
+                    outputMat = tmp;
+                    extractRet = 0;
+                    obs_log(LOG_INFO, "[ModelNcnnYOLO] blob idx %d (dims=%d c=%d h=%d w=%d total=%d)",
+                            bi, tmp.dims, tmp.c, tmp.h, tmp.w, (int)tmp.total());
+                    break;
+                }
             }
         }
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
