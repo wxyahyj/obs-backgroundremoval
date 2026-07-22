@@ -170,39 +170,54 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
 
-        // 提取输出 blob：遍历所有注册的输出索引
+        // 提取输出 blob
         ncnn::Mat outputMat;
         int extractRet = -1;
 
+        // 方法1: 通过 output_indexes() 提取（输出 blob 索引）
         const std::vector<int>& outIdxs = net_.output_indexes();
-
-        // 尝试每个 output_index（pnnx 有 4 个输出: out1, out2, out3, out0）
         for (size_t oi = 0; oi < outIdxs.size(); oi++) {
             extractRet = ex.extract(outIdxs[oi], outputMat);
-            obs_log(LOG_INFO, "[ModelNcnnYOLO] extract output_index[%zu]=%d (ret=%d)",
-                    oi, outIdxs[oi], extractRet);
-            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0)
+            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] output_index[%zu]=%d ok (total=%d)",
+                        oi, outIdxs[oi], (int)outputMat.total());
                 break;
+            }
         }
 
-        // 回退1：按 blob 名 "out0" 提取
+        // 方法2: 按 blob 名 "out0" 提取（需要 NCNN_STRING）
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
-            obs_log(LOG_INFO, "[ModelNcnnYOLO] trying name 'out0'");
             extractRet = ex.extract("out0", outputMat);
+            if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] name 'out0' ok (total=%d)", (int)outputMat.total());
+            }
         }
 
-        // 回退2：从末尾倒序提第一个有效 blob
+        // 方法3: 遍历 blobs 列表，按名字匹配 "out0" 后提取
+        if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
+            int nblobs = (int)net_.blobs().size();
+            for (int bi = 0; bi < nblobs; bi++) {
+                if (net_.blobs()[bi].name != "out0") continue;
+                extractRet = ex.extract(bi, outputMat);
+                if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
+                    obs_log(LOG_INFO, "[ModelNcnnYOLO] blob name 'out0' idx=%d ok (total=%d)",
+                            bi, (int)outputMat.total());
+                }
+                break;
+            }
+        }
+
+        // 方法4: 倒序遍历 blobs，取第一个非空
         if (extractRet != 0 || outputMat.data == nullptr || outputMat.total() == 0) {
             int nb = (int)net_.blobs().size();
-            obs_log(LOG_INFO, "[ModelNcnnYOLO] scanning %d blobs from end", nb);
             for (int bi = nb - 1; bi >= 0; bi--) {
                 ncnn::Mat tmp;
                 int r = ex.extract(bi, tmp);
                 if (r == 0 && tmp.data != nullptr && tmp.total() > 0) {
                     outputMat = tmp;
                     extractRet = 0;
-                    obs_log(LOG_INFO, "[ModelNcnnYOLO] fallback blob %d: dims=%d c=%d h=%d w=%d total=%d",
-                            bi, tmp.dims, tmp.c, tmp.h, tmp.w, (int)tmp.total());
+                    obs_log(LOG_INFO, "[ModelNcnnYOLO] fallback blob %d ok (total=%d)",
+                            bi, (int)tmp.total());
                     break;
                 }
             }
