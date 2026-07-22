@@ -169,16 +169,16 @@ std::vector<Detection> ModelNcnnYOLO::doInference(const cv::Mat& input) {
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         ncnn::Extractor ex = net_.create_extractor();
         ex.input(0, inputMat);
-        ncnn::Mat outputMat;
 
-        // 提取输出：用 net_.output_names() 找到正确的输出 blob
-        std::vector<const char*> outNames = net_.output_names();
+        // 提取输出 blob：取 net.blobs() 中最后一个 blob（模型输出）
+        int nBlobs = (int)net_.blobs().size();
+        ncnn::Mat outputMat;
         int extractRet = -1;
-        for (size_t oi = 0; oi < outNames.size(); oi++) {
-            extractRet = ex.extract(outNames[oi], outputMat);
+        for (int bi = nBlobs - 1; bi >= 0; bi--) {
+            extractRet = ex.extract(bi, outputMat);
             if (extractRet == 0 && outputMat.data != nullptr && outputMat.total() > 0) {
-                obs_log(LOG_INFO, "[ModelNcnnYOLO] extract output '%s' (idx=%zu/%zu)",
-                        outNames[oi], oi + 1, outNames.size());
+                obs_log(LOG_INFO, "[ModelNcnnYOLO] extract blob index %d (total=%d, c=%d, h=%d, w=%d)",
+                        bi, (int)outputMat.total(), outputMat.c, outputMat.h, outputMat.w);
                 break;
             }
         }
