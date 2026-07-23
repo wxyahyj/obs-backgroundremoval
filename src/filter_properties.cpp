@@ -44,9 +44,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *modelPathProp = obs_properties_add_path(props, "model_path", obs_module_text("ModelPath"), OBS_PATH_FILE, "ONNX Models (*.onnx)", nullptr);
 	obs_property_set_long_description(modelPathProp, "选择YOLO ONNX模型文件路径");
 	obs_property_t *modelVersion = obs_properties_add_list(props, "model_version", obs_module_text("ModelVersion"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(modelVersion, "YOLOv5", static_cast<int>(ModelYOLO::Version::YOLOv5));
-	obs_property_list_add_int(modelVersion, "YOLOv8", static_cast<int>(ModelYOLO::Version::YOLOv8));
-	obs_property_list_add_int(modelVersion, "YOLOv11", static_cast<int>(ModelYOLO::Version::YOLOv11));
+	obs_property_list_add_int(modelVersion, "YOLOv5", static_cast<int>(IYoloModel::Version::YOLOv5));
+	obs_property_list_add_int(modelVersion, "YOLOv8", static_cast<int>(IYoloModel::Version::YOLOv8));
+	obs_property_list_add_int(modelVersion, "YOLOv11", static_cast<int>(IYoloModel::Version::YOLOv11));
 	obs_property_set_long_description(modelVersion, "选择YOLO模型版本（V5/V8/V11等）");
 	obs_property_t *useGPUList = obs_properties_add_list(props, "use_gpu", obs_module_text("UseGPU"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(useGPUList, "CPU", USEGPU_CPU);
@@ -65,7 +65,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 	obs_property_list_add_string(useGPUList, "DirectML", USEGPU_DML);
 #endif
-	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/CPU）");
+#ifdef HAVE_NCNN
+	obs_property_list_add_string(useGPUList, "ncnn (Vulkan)", USEGPU_NCNN);
+#endif
+	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/ncnn/CPU）");
 	
 #ifdef _WIN32
 	obs_property_t *useGpuTextureProp = obs_properties_add_bool(props, "use_gpu_texture_inference", "启用GPU纹理推理");
@@ -230,7 +233,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
 		obs_property_list_add_int(controllerTypeList, "罗技/雷蛇驱动", 2);
 		obs_property_list_add_int(controllerTypeList, "UU remote GvInput", 3);
-        obs_property_set_long_description(controllerTypeList, "mouse control: WindowsAPI=system API, MAKCU=serial, Logi/Razer=kernel driver, GvInput=Netease WHQL HID");
+		obs_property_list_add_int(controllerTypeList, "NtUserSendInput", 5);
+		obs_property_list_add_int(controllerTypeList, "NtUserInjectMouse", 6);
+		obs_property_list_add_int(controllerTypeList, "NtUserInjectPointer", 7);
+        obs_property_set_long_description(controllerTypeList, "mouse control: WindowsAPI=system API, MAKCU=serial, Logi/Razer=kernel driver, GvInput=Netease WHQL HID, NtUserSendInput=direct NtUserSendInput call, NtUserInjectMouse=virtual pointer device injection, NtUserInjectPointer=low-level pointer injection");
 		obs_property_set_modified_callback(controllerTypeList, onConfigChanged);
 
 		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
@@ -1406,14 +1412,14 @@ bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs_data_t
 void yolo_detector_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "model_path", "");
-	obs_data_set_default_int(settings, "model_version", static_cast<int>(ModelYOLO::Version::YOLOv8));
+	obs_data_set_default_int(settings, "model_version", static_cast<int>(IYoloModel::Version::YOLOv8));
 	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
 #ifdef _WIN32
 	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
 #endif
 	obs_data_set_default_int(settings, "input_resolution", 640);
 	obs_data_set_default_int(settings, "num_threads", 4);
-	obs_data_set_default_double(settings, "confidence_threshold", 0.5);
+	obs_data_set_default_double(settings, "confidence_threshold", 0.2);
 	obs_data_set_default_double(settings, "nms_threshold", 0.45);
 	obs_data_set_default_int(settings, "target_class", -1);
 	obs_data_set_default_int(settings, "inference_interval_frames", 1);
@@ -1859,7 +1865,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->isDisabled = true;
 
 	std::string newModelPath = obs_data_get_string(settings, "model_path");
-	ModelYOLO::Version newModelVersion = static_cast<ModelYOLO::Version>(obs_data_get_int(settings, "model_version"));
+	IYoloModel::Version newModelVersion = static_cast<IYoloModel::Version>(obs_data_get_int(settings, "model_version"));
 	std::string newUseGPU = obs_data_get_string(settings, "use_gpu");
 	uint32_t newNumThreads = (uint32_t)obs_data_get_int(settings, "num_threads");
 	int newInputResolution = (int)obs_data_get_int(settings, "input_resolution");
@@ -1879,17 +1885,18 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		
 		if (!tf->modelPath.empty()) {
 			try {
-				obs_log(LOG_INFO, "[YOLO Filter] Loading new model: %s", tf->modelPath.c_str());
-				
-				std::shared_ptr<ModelYOLO> newYoloModel = std::make_shared<ModelYOLO>(tf->modelVersion);
-				
-				newYoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
-				
+				obs_log(LOG_INFO, "[YOLO Filter] Loading new model: %s (backend: %s)", tf->modelPath.c_str(), tf->useGPU.c_str());
+
+				std::shared_ptr<IYoloModel> newYoloModel;
+				newYoloModel = std::make_shared<ModelYOLO>(tf->modelVersion);
+
+					newYoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
+
 				obs_log(LOG_INFO, "[YOLO Filter] Model loaded successfully");
-				
+
 				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
 				tf->yoloModel = std::move(newYoloModel);
-				
+
 			} catch (const std::exception& e) {
 				obs_log(LOG_ERROR, "[YOLO Filter] Failed to load model: %s", e.what());
 				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);

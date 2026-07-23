@@ -165,8 +165,14 @@ ModelYOLO::ModelYOLO(Version version)
       gpuMemInfo_(nullptr),
       cudaInteropInitialized_(false),
       cudaStream_(nullptr),
+      cudaRegisteredTex_(nullptr),
       cudaResource_(nullptr),
       cudaInputBuffer_(nullptr),
+      cudaInputBufferBytes_(0),
+      cudaOutputBuffer_(nullptr),
+      cudaOutputBufferBytes_(0),
+      cudaBgraStaging_(nullptr),
+      cudaBgraStagingBytes_(0),
       dmlInteropInitialized_(false),
       dmlPreprocessor_(nullptr),
       lastLatencyLogTime_(std::chrono::steady_clock::now()),
@@ -259,22 +265,24 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
             sessionOptions.SetIntraOpNumThreads(numThreads);
         }
         
-#ifdef HAVE_ONNXRUNTIME_CUDA_EP
-        if (currentUseGPU == "cuda") {
-            obs_log(LOG_INFO, "[ModelYOLO] Attempting to enable CUDA execution provider...");
-            try {
-                obs_log(LOG_INFO, "[ModelYOLO] Loading CUDA execution provider with device ID 0");
-                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, 0));
-                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled successfully");
-            } catch (const std::exception& e) {
-                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
-                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider fallback to CPU mode");
-                obs_log(LOG_INFO, "[ModelYOLO] Possible reasons: missing cuDNN, incorrect CUDA version, or missing dependencies");
-                gpuFailed = true;
-                currentUseGPU = "cpu";
-            }
-        }
-#endif
+	#ifdef HAVE_ONNXRUNTIME_CUDA_EP
+	        if (currentUseGPU == "cuda") {
+	            obs_log(LOG_INFO, "[ModelYOLO] Attempting to enable CUDA execution provider...");
+	            try {
+	                obs_log(LOG_INFO, "[ModelYOLO] Loading CUDA execution provider with device ID 0");
+	                // 通过 Ort::GetApi 运行时 API 表调用, 不依赖 .lib 导出
+	                OrtCUDAProviderOptions cuda_options{};
+	                cuda_options.device_id = 0;
+	                Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA(
+	                    static_cast<OrtSessionOptions*>(sessionOptions), &cuda_options);
+	                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled successfully");
+	            } catch (const std::exception& e) {
+	                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
+	                gpuFailed = true;
+	                currentUseGPU = "cpu";
+	            }
+	        }
+	#endif
 #ifdef HAVE_ONNXRUNTIME_ROCM_EP
         if (currentUseGPU == "rocm" && !gpuFailed) {
             try {
@@ -1262,45 +1270,91 @@ bool ModelYOLO::initializeGpuMemory() {
     }
     
     try {
-        // 创建GPU内存信息
         if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
+#ifdef HAVE_CUDA
+            // Real CUDA device memory (NOT CreateCpu — that was a bug).
+            cudaMemInfo_ = std::make_unique<Ort::MemoryInfo>(
+                "Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault
+            );
             gpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
-                Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault)
+                "Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault
             );
-            
-            // 创建CUDA分配器
-            gpuAllocator_ = std::make_unique<Ort::Allocator>(*session_, *gpuMemInfo_);
-            
-            // 预分配GPU输入张量
-            std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
-            gpuInputTensor_ = Ort::Value::CreateTensor<float>(
-                *gpuAllocator_, inputShape.data(), inputShape.size()
-            );
-            
-            // 预分配GPU输出张量
-            if (!outputDims_.empty()) {
-                gpuOutputTensor_ = Ort::Value::CreateTensor<float>(
-                    *gpuAllocator_, outputDims_[0].data(), outputDims_[0].size()
-                );
+
+            size_t inputBytes = static_cast<size_t>(3) * inputHeight_ * inputWidth_ * sizeof(float);
+            if (cudaInputBuffer_ && cudaInputBufferBytes_ < inputBytes) {
+                cudaFree(cudaInputBuffer_);
+                cudaInputBuffer_ = nullptr;
+                cudaInputBufferBytes_ = 0;
+                cudaInputTensor_ = Ort::Value(nullptr);
             }
-            
+            if (!cudaInputBuffer_) {
+                if (cudaMalloc(&cudaInputBuffer_, inputBytes) != cudaSuccess) {
+                    obs_log(LOG_ERROR, "[ModelYOLO] cudaMalloc input failed");
+                    useGpuMemory_ = false;
+                    return false;
+                }
+                cudaInputBufferBytes_ = inputBytes;
+            }
+
+            std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
+            inputShapeCache_ = inputShape;
+            cudaInputTensor_ = Ort::Value::CreateTensor<float>(
+                *cudaMemInfo_,
+                static_cast<float*>(cudaInputBuffer_),
+                inputBytes / sizeof(float),
+                inputShape.data(),
+                inputShape.size()
+            );
+
+            // Optional device output buffer for IoBinding
+            if (!outputDims_.empty()) {
+                size_t outElems = 1;
+                for (auto d : outputDims_[0]) {
+                    if (d > 0) outElems *= static_cast<size_t>(d);
+                }
+                size_t outBytes = outElems * sizeof(float);
+                if (cudaOutputBuffer_ && cudaOutputBufferBytes_ < outBytes) {
+                    cudaFree(cudaOutputBuffer_);
+                    cudaOutputBuffer_ = nullptr;
+                    cudaOutputBufferBytes_ = 0;
+                    gpuOutputTensor_ = Ort::Value(nullptr);
+                }
+                if (!cudaOutputBuffer_ && outElems > 0) {
+                    if (cudaMalloc(&cudaOutputBuffer_, outBytes) == cudaSuccess) {
+                        cudaOutputBufferBytes_ = outBytes;
+                        gpuOutputTensor_ = Ort::Value::CreateTensor<float>(
+                            *cudaMemInfo_,
+                            static_cast<float*>(cudaOutputBuffer_),
+                            outElems,
+                            outputDims_[0].data(),
+                            outputDims_[0].size()
+                        );
+                    }
+                }
+            }
+
+            gpuInputTensor_ = Ort::Value(nullptr); // prefer cudaInputTensor_
             useGpuMemory_ = true;
-            obs_log(LOG_INFO, "[ModelYOLO] CUDA persistent memory allocated: input %dx%d", 
-                    inputWidth_, inputHeight_);
+            obs_log(LOG_INFO, "[ModelYOLO] CUDA device memory allocated: input %dx%d (%zu bytes)",
+                    inputWidth_, inputHeight_, inputBytes);
             return true;
+#else
+            obs_log(LOG_WARNING, "[ModelYOLO] HAVE_CUDA not defined, cannot allocate device memory");
+            return false;
+#endif
 #else
             obs_log(LOG_WARNING, "[ModelYOLO] CUDA EP not available, using CPU memory");
             return false;
 #endif
         } else if (currentDevice_ == "dml") {
 #ifdef HAVE_ONNXRUNTIME_DML_EP
-            // DirectML使用CPU内存作为暂存，但IOBinding仍然有效
+            // DirectML uses CPU staging; IOBinding still useful
             gpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
                 Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)
             );
             
-            useGpuMemory_ = false;  // DML不使用真正的GPU内存分配
+            useGpuMemory_ = false;
             obs_log(LOG_INFO, "[ModelYOLO] DirectML mode: using IOBinding with CPU memory");
             return true;
 #else
@@ -1317,6 +1371,10 @@ bool ModelYOLO::initializeGpuMemory() {
 }
 
 void ModelYOLO::releaseGpuMemory() {
+    cudaInputTensor_ = Ort::Value(nullptr);
+    gpuInputTensor_ = Ort::Value(nullptr);
+    gpuOutputTensor_ = Ort::Value(nullptr);
+
     if (gpuAllocator_) {
         gpuAllocator_.reset();
         gpuAllocator_ = nullptr;
@@ -1326,10 +1384,29 @@ void ModelYOLO::releaseGpuMemory() {
         gpuMemInfo_.reset();
         gpuMemInfo_ = nullptr;
     }
-    
-    // Ort::Value会自动释放
-    gpuInputTensor_ = Ort::Value(nullptr);
-    gpuOutputTensor_ = Ort::Value(nullptr);
+    if (cudaMemInfo_) {
+        cudaMemInfo_.reset();
+        cudaMemInfo_ = nullptr;
+    }
+
+#ifdef HAVE_CUDA
+    // Device buffers are owned by cudaMalloc — free after Ort::Value release
+    if (cudaInputBuffer_) {
+        cudaFree(cudaInputBuffer_);
+        cudaInputBuffer_ = nullptr;
+        cudaInputBufferBytes_ = 0;
+    }
+    if (cudaOutputBuffer_) {
+        cudaFree(cudaOutputBuffer_);
+        cudaOutputBuffer_ = nullptr;
+        cudaOutputBufferBytes_ = 0;
+    }
+    if (cudaBgraStaging_) {
+        cudaFree(cudaBgraStaging_);
+        cudaBgraStaging_ = nullptr;
+        cudaBgraStagingBytes_ = 0;
+    }
+#endif
     
     useGpuMemory_ = false;
     obs_log(LOG_INFO, "[ModelYOLO] GPU memory released");
@@ -1341,24 +1418,27 @@ void ModelYOLO::releaseGpuMemory() {
 
 bool ModelYOLO::initializeCudaInterop() {
 #ifdef HAVE_CUDA
-    if (!useGpuMemory_) {
-        obs_log(LOG_WARNING, "[ModelYOLO] Cannot init CUDA interop: GPU memory not initialized");
+    if (!useGpuMemory_ || !cudaInputBuffer_) {
+        obs_log(LOG_WARNING, "[ModelYOLO] Cannot init CUDA interop: device input buffer not ready");
         return false;
     }
     
     try {
-        // 创建CUDA流
-        cudaStream_t stream;
-        cudaError_t err = cudaStreamCreate(&stream);
-        if (err != cudaSuccess) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create CUDA stream: %s", 
-                    cudaGetErrorString(err));
-            return false;
+        if (!cudaStream_) {
+            cudaStream_t stream;
+            cudaError_t err = cudaStreamCreate(&stream);
+            if (err != cudaSuccess) {
+                obs_log(LOG_ERROR, "[ModelYOLO] Failed to create CUDA stream: %s",
+                        cudaGetErrorString(err));
+                return false;
+            }
+            cudaStream_ = stream;
         }
-        cudaStream_ = stream;
-        
+
+        cudaRegisteredTex_ = nullptr;
+        // cudaResource_ registered lazily on first texture
         cudaInteropInitialized_ = true;
-        obs_log(LOG_INFO, "[ModelYOLO] CUDA interop initialized");
+        obs_log(LOG_INFO, "[ModelYOLO] CUDA D3D11 interop initialized (lazy register)");
         return true;
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] CUDA interop init failed: %s", e.what());
@@ -1376,17 +1456,13 @@ void ModelYOLO::releaseCudaInterop() {
         cudaGraphicsUnregisterResource(cudaResource_);
         cudaResource_ = nullptr;
     }
+    cudaRegisteredTex_ = nullptr;
     
     if (cudaStream_) {
         cudaStreamDestroy(static_cast<cudaStream_t>(cudaStream_));
         cudaStream_ = nullptr;
     }
-    
-    if (cudaInputBuffer_) {
-        cudaFree(cudaInputBuffer_);
-        cudaInputBuffer_ = nullptr;
-    }
-    
+    // Device input/output buffers are owned by releaseGpuMemory()
     cudaInteropInitialized_ = false;
     obs_log(LOG_INFO, "[ModelYOLO] CUDA interop released");
 #endif
@@ -1440,179 +1516,276 @@ void ModelYOLO::releaseDmlInterop() {
 #endif
 }
 
-std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int width, int height, 
+std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
+                                                         int cropX, int cropY, int cropW, int cropH,
                                                          int originalWidth, int originalHeight,
                                                          InferenceLatency* outLatency) {
 #ifdef HAVE_CUDA
     auto totalStartTime = std::chrono::high_resolution_clock::now();
     InferenceLatency latency;
     latency.isGpuPath = true;
-    
-    if (!cudaInteropInitialized_ || !session_) {
+    latency.gpuCopyMs = 0.0;
+
+    if (!cudaInteropInitialized_ || !session_ || !cudaInputBuffer_ || !cudaStream_) {
         return {};
     }
-    
+    if (!d3d11Texture || cropW <= 0 || cropH <= 0) {
+        return {};
+    }
+
+    if (inputNamesChar_.empty() || outputNamesChar_.empty()) {
+        inputNamesChar_.clear();
+        outputNamesChar_.clear();
+        for (const auto& name : inputNames_) inputNamesChar_.push_back(name.get());
+        for (const auto& name : outputNames_) outputNamesChar_.push_back(name.get());
+        if (inputNamesChar_.empty() || outputNamesChar_.empty()) return {};
+    }
+
     std::vector<Detection> detections;
-    
+
     try {
         auto cudaStartTime = std::chrono::high_resolution_clock::now();
-        
+
         ID3D11Texture2D* d3dTex = static_cast<ID3D11Texture2D*>(d3d11Texture);
-        if (!d3dTex) return {};
-        
         cudaStream_t stream = static_cast<cudaStream_t>(cudaStream_);
-        
-        if (!cudaResource_) {
-            cudaError_t err = cudaGraphicsD3D11RegisterResource(
-                &cudaResource_, d3dTex, cudaGraphicsRegisterFlagsNone);
-            if (err != cudaSuccess) {
-                obs_log(LOG_ERROR, "[ModelYOLO] Failed to register D3D11 texture: %s",
-                        cudaGetErrorString(err));
-                return {};
+
+        // Re-register if texture pointer changed (texrender may recycle or replace)
+        if (cudaRegisteredTex_ != d3d11Texture) {
+            if (cudaResource_) {
+                cudaGraphicsUnregisterResource(cudaResource_);
+                cudaResource_ = nullptr;
             }
+            cudaError_t regErr = cudaGraphicsD3D11RegisterResource(
+                &cudaResource_, d3dTex, cudaGraphicsRegisterFlagsNone);
+            if (regErr != cudaSuccess) {
+                obs_log(LOG_ERROR, "[ModelYOLO] D3D11 register failed: %s",
+                        cudaGetErrorString(regErr));
+                cudaRegisteredTex_ = nullptr;
+                throw std::runtime_error(std::string("D3D11 register failed: ") +
+                                         cudaGetErrorString(regErr));
+            }
+            cudaRegisteredTex_ = d3d11Texture;
+            obs_log(LOG_INFO, "[ModelYOLO] D3D11 texture registered for CUDA interop");
         }
-        
+
         cudaError_t err = cudaGraphicsMapResources(1, &cudaResource_, stream);
         if (err != cudaSuccess) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to map texture: %s", 
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to map texture: %s",
                     cudaGetErrorString(err));
-            return {};
-        }
-        
-        cudaArray_t cudaArray;
-        err = cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource_, 0, 0);
-        if (err != cudaSuccess) {
-            cudaGraphicsUnmapResources(1, &cudaResource_, stream);
-            return {};
-        }
-        
-        size_t requiredSize = 3 * inputHeight_ * inputWidth_ * sizeof(float);
-        if (!cudaInputBuffer_) {
-            err = cudaMalloc(&cudaInputBuffer_, requiredSize);
-            if (err != cudaSuccess) {
-                obs_log(LOG_ERROR, "[ModelYOLO] Failed to allocate CUDA input buffer: %s",
-                        cudaGetErrorString(err));
-                cudaGraphicsUnmapResources(1, &cudaResource_, stream);
-                return {};
+            // Invalidate cache — texture may have been destroyed
+            if (cudaResource_) {
+                cudaGraphicsUnregisterResource(cudaResource_);
+                cudaResource_ = nullptr;
             }
+            cudaRegisteredTex_ = nullptr;
+            throw std::runtime_error(std::string("D3D11 map failed: ") + cudaGetErrorString(err));
         }
-        
+
+        cudaArray_t cudaArray = nullptr;
+        err = cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource_, 0, 0);
+        if (err != cudaSuccess || !cudaArray) {
+            cudaGraphicsUnmapResources(1, &cudaResource_, stream);
+            throw std::runtime_error("cudaGraphicsSubResourceGetMappedArray failed");
+        }
+
+        size_t requiredBytes = static_cast<size_t>(3) * inputHeight_ * inputWidth_ * sizeof(float);
+        if (cudaInputBufferBytes_ < requiredBytes) {
+            cudaGraphicsUnmapResources(1, &cudaResource_, stream);
+            throw std::runtime_error("CUDA input buffer too small");
+        }
+
         auto kernelStartTime = std::chrono::high_resolution_clock::now();
-        
-        bool preprocessSuccess = cudaLetterboxAndPreprocess(
+        bool preprocessSuccess = cudaLetterboxAndPreprocessCrop(
             cudaArray,
             static_cast<float*>(cudaInputBuffer_),
+            originalWidth,
+            originalHeight,
+            cropX, cropY, cropW, cropH,
             inputWidth_,
             inputHeight_,
             stream
         );
-        
         auto kernelEndTime = std::chrono::high_resolution_clock::now();
         latency.cudaKernelMs = std::chrono::duration<double, std::milli>(kernelEndTime - kernelStartTime).count();
-        
+
         cudaGraphicsUnmapResources(1, &cudaResource_, stream);
-        
+
         if (!preprocessSuccess) {
-            obs_log(LOG_ERROR, "[ModelYOLO] CUDA letterbox preprocessing failed");
-            return {};
+            throw std::runtime_error("CUDA letterbox crop preprocess failed");
         }
-        
-        err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            obs_log(LOG_ERROR, "[ModelYOLO] CUDA stream sync failed: %s", 
-                    cudaGetErrorString(err));
-            return {};
-        }
-        
-        auto copyStartTime = std::chrono::high_resolution_clock::now();
-        cudaMemcpy(inputBuffer_.data(), cudaInputBuffer_, requiredSize, cudaMemcpyDeviceToHost);
-        auto copyEndTime = std::chrono::high_resolution_clock::now();
-        latency.gpuCopyMs = std::chrono::duration<double, std::milli>(copyEndTime - copyStartTime).count();
-        
-        latency.preprocessMs = std::chrono::duration<double, std::milli>(copyEndTime - cudaStartTime).count();
-        
-        auto inferenceStartTime = std::chrono::high_resolution_clock::now();
-        
+
+        // Ensure device tensor wraps current buffer
         if (inputShapeCache_.size() != 4) {
             inputShapeCache_ = {1, 3, static_cast<int64_t>(inputHeight_), static_cast<int64_t>(inputWidth_)};
         }
-        if (!cpuMemInfo_) {
-            cpuMemInfo_ = std::make_unique<Ort::MemoryInfo>(
-                Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
+        if (!cudaMemInfo_) {
+            cudaMemInfo_ = std::make_unique<Ort::MemoryInfo>(
+                "Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+        }
+        if (!cudaInputTensor_) {
+            cudaInputTensor_ = Ort::Value::CreateTensor<float>(
+                *cudaMemInfo_,
+                static_cast<float*>(cudaInputBuffer_),
+                requiredBytes / sizeof(float),
+                inputShapeCache_.data(),
+                inputShapeCache_.size()
+            );
         }
 
-        Ort::Value inputTensor{nullptr};
+        // FP16 models: D2H convert then CPU tensor (device FP16 path not wired yet)
+        bool useDeviceInput = !isFp16Model_;
         if (isFp16Model_) {
-            if (inputBufferFp16_.size() < inputBufferSize_)
-                inputBufferFp16_.resize(inputBufferSize_);
+            auto copyStart = std::chrono::high_resolution_clock::now();
+            if (inputBuffer_.size() < inputBufferSize_) inputBuffer_.resize(inputBufferSize_);
+            if (inputBufferFp16_.size() < inputBufferSize_) inputBufferFp16_.resize(inputBufferSize_);
+            cudaMemcpyAsync(inputBuffer_.data(), cudaInputBuffer_, requiredBytes,
+                            cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
             convertFloatBufferToHalf(inputBuffer_.data(), inputBufferFp16_.data(), inputBufferSize_);
-            inputTensor = Ort::Value::CreateTensor<Ort::Float16_t>(
-                *cpuMemInfo_, inputBufferFp16_.data(), inputBufferSize_,
-                inputShapeCache_.data(), inputShapeCache_.size()
-            );
+            auto copyEnd = std::chrono::high_resolution_clock::now();
+            latency.gpuCopyMs = std::chrono::duration<double, std::milli>(copyEnd - copyStart).count();
+            useDeviceInput = false;
         } else {
-            inputTensor = Ort::Value::CreateTensor<float>(
-                *cpuMemInfo_, inputBuffer_.data(), inputBufferSize_,
-                inputShapeCache_.data(), inputShapeCache_.size()
+            // Kernel wrote device buffer; sync before ORT may consume it
+            err = cudaStreamSynchronize(stream);
+            if (err != cudaSuccess) {
+                obs_log(LOG_ERROR, "[ModelYOLO] CUDA stream sync failed: %s",
+                        cudaGetErrorString(err));
+                return {};
+            }
+        }
+
+        latency.preprocessMs = std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - cudaStartTime).count();
+
+        auto inferenceStartTime = std::chrono::high_resolution_clock::now();
+        Ort::RunOptions runOptions;
+        std::vector<Ort::Value> outputTensors;
+        bool usedBoundOutput = false;
+
+        if (useDeviceInput && useIOBinding_ && ioBinding_ && cudaInputTensor_) {
+            try {
+                ioBinding_->ClearBoundInputs();
+                ioBinding_->ClearBoundOutputs();
+                ioBinding_->BindInput(inputNamesChar_[0], cudaInputTensor_);
+                if (gpuOutputTensor_) {
+                    ioBinding_->BindOutput(outputNamesChar_[0], gpuOutputTensor_);
+                } else {
+                    // Let ORT allocate CPU output
+                    ensureCpuMemInfo();
+                    ioBinding_->BindOutput(outputNamesChar_[0], static_cast<const OrtMemoryInfo*>(*cpuMemInfo_));
+                }
+                session_->Run(runOptions, *ioBinding_);
+                usedBoundOutput = true;
+            } catch (const std::exception& e) {
+                obs_log(LOG_WARNING, "[ModelYOLO] CUDA IoBinding Run failed: %s, fallback session->Run", e.what());
+                usedBoundOutput = false;
+                std::vector<Ort::Value> inTs;
+                Ort::Value inT = Ort::Value::CreateTensor<float>(
+                    *cudaMemInfo_,
+                    static_cast<float*>(cudaInputBuffer_),
+                    requiredBytes / sizeof(float),
+                    inputShapeCache_.data(),
+                    inputShapeCache_.size()
+                );
+                inTs.push_back(std::move(inT));
+                outputTensors = session_->Run(
+                    runOptions,
+                    inputNamesChar_.data(), inTs.data(), inTs.size(),
+                    outputNamesChar_.data(), outputNamesChar_.size()
+                );
+            }
+        } else {
+            ensureCpuMemInfo();
+            Ort::Value inT{nullptr};
+            if (isFp16Model_) {
+                inT = Ort::Value::CreateTensor<Ort::Float16_t>(
+                    *cpuMemInfo_, inputBufferFp16_.data(), inputBufferSize_,
+                    inputShapeCache_.data(), inputShapeCache_.size());
+            } else {
+                inT = Ort::Value::CreateTensor<float>(
+                    *cudaMemInfo_,
+                    static_cast<float*>(cudaInputBuffer_),
+                    requiredBytes / sizeof(float),
+                    inputShapeCache_.data(),
+                    inputShapeCache_.size()
+                );
+            }
+            std::vector<Ort::Value> inTs;
+            inTs.push_back(std::move(inT));
+            outputTensors = session_->Run(
+                runOptions,
+                inputNamesChar_.data(), inTs.data(), inTs.size(),
+                outputNamesChar_.data(), outputNamesChar_.size()
             );
         }
-        
-        std::vector<Ort::Value> inputTensors;
-        inputTensors.push_back(std::move(inputTensor));
-        
-        Ort::RunOptions runOptions;
-        std::vector<Ort::Value> outputTensors = session_->Run(
-            runOptions,
-            inputNamesChar_.data(),
-            inputTensors.data(),
-            inputTensors.size(),
-            outputNamesChar_.data(),
-            outputNamesChar_.size()
-        );
-        
+
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
         latency.inferenceMs = std::chrono::duration<double, std::milli>(inferenceEndTime - inferenceStartTime).count();
-        
-        if (outputTensors.empty() || !outputTensors[0].IsTensor()) {
-            return {};
-        }
-        
+
         float* outputData = nullptr;
-        auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
-        ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
-        
-        if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-            const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
-            size_t outputSize = 1;
-            auto shape = outputTypeInfo.GetShape();
-            for (auto dim : shape) {
-                outputSize *= static_cast<size_t>(dim);
+        std::vector<int64_t> outputShape;
+
+        if (usedBoundOutput && gpuOutputTensor_) {
+            // Copy device output → host for postprocess
+            size_t outElems = 1;
+            for (auto d : outputDims_[0]) if (d > 0) outElems *= static_cast<size_t>(d);
+            if (outputBuffer_.size() < outElems) outputBuffer_.resize(outElems);
+            cudaMemcpy(outputBuffer_.data(), cudaOutputBuffer_, outElems * sizeof(float),
+                       cudaMemcpyDeviceToHost);
+            outputData = outputBuffer_.data();
+            outputShape = outputDims_[0];
+        } else if (usedBoundOutput && ioBinding_) {
+            // BindOutput to CPU MemoryInfo — outputs via GetOutputValues
+            try {
+                std::vector<Ort::Value> boundOuts = ioBinding_->GetOutputValues();
+                if (!boundOuts.empty() && boundOuts[0].IsTensor()) {
+                    auto info = boundOuts[0].GetTensorTypeAndShapeInfo();
+                    outputShape = info.GetShape();
+                    ONNXTensorElementDataType t = info.GetElementType();
+                    if (t == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                        const Ort::Float16_t* fp16 = boundOuts[0].GetTensorData<Ort::Float16_t>();
+                        size_t n = 1;
+                        for (auto d : outputShape) if (d > 0) n *= static_cast<size_t>(d);
+                        if (outputFp32Scratch_.size() < n) outputFp32Scratch_.resize(n);
+                        convertHalfBufferToFloat(fp16, outputFp32Scratch_.data(), n);
+                        outputData = outputFp32Scratch_.data();
+                    } else {
+                        outputData = boundOuts[0].GetTensorMutableData<float>();
+                    }
+                }
+            } catch (...) {
+                return {};
             }
-            if (outputFp32Scratch_.size() < outputSize)
-                outputFp32Scratch_.resize(outputSize);
-            convertHalfBufferToFloat(fp16Data, outputFp32Scratch_.data(), outputSize);
-            outputData = outputFp32Scratch_.data();
         } else {
-            outputData = outputTensors[0].GetTensorMutableData<float>();
+            if (outputTensors.empty() || !outputTensors[0].IsTensor()) return {};
+            auto outputTypeInfo = outputTensors[0].GetTensorTypeAndShapeInfo();
+            outputShape = outputTypeInfo.GetShape();
+            ONNXTensorElementDataType outputType = outputTypeInfo.GetElementType();
+            if (outputType == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                const Ort::Float16_t* fp16Data = outputTensors[0].GetTensorData<Ort::Float16_t>();
+                size_t outputSize = 1;
+                for (auto dim : outputShape) if (dim > 0) outputSize *= static_cast<size_t>(dim);
+                if (outputFp32Scratch_.size() < outputSize) outputFp32Scratch_.resize(outputSize);
+                convertHalfBufferToFloat(fp16Data, outputFp32Scratch_.data(), outputSize);
+                outputData = outputFp32Scratch_.data();
+            } else {
+                outputData = outputTensors[0].GetTensorMutableData<float>();
+            }
         }
-        
-        if (!outputData) return {};
-        
-        std::vector<int64_t> outputShape = outputTypeInfo.GetShape();
-        if (outputShape.size() < 3) return {};
-        
-        int numBoxes = 0;
-        if (version_ == Version::YOLOv5) {
-            numBoxes = static_cast<int>(outputShape[1]);
-        } else {
-            numBoxes = static_cast<int>(outputShape[2]);
-        }
-        
+
+        if (!outputData || outputShape.size() < 3) return {};
+
+        int numBoxes = (version_ == Version::YOLOv5)
+            ? static_cast<int>(outputShape[1])
+            : static_cast<int>(outputShape[2]);
+
         auto postprocessStartTime = std::chrono::high_resolution_clock::now();
-        
-        LetterboxInfo letterboxInfo = calculateLetterboxParams(width, height, inputWidth_, inputHeight_);
-        cv::Size originalSize(originalWidth, originalHeight);
-        
+        // Letterbox was computed on crop region
+        LetterboxInfo letterboxInfo = calculateLetterboxParams(cropW, cropH, inputWidth_, inputHeight_);
+        // Postprocess in crop-local space; filter remaps using cropX/Y + full size
+        cv::Size originalSize(cropW, cropH);
+
         switch (version_) {
             case Version::YOLOv5:
                 detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
@@ -1624,35 +1797,30 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture, int w
                 detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
                 break;
         }
-        
+
         auto postprocessEndTime = std::chrono::high_resolution_clock::now();
         latency.postprocessMs = std::chrono::duration<double, std::milli>(postprocessEndTime - postprocessStartTime).count();
-        
-        auto totalEndTime = std::chrono::high_resolution_clock::now();
-        latency.totalMs = std::chrono::duration<double, std::milli>(totalEndTime - totalStartTime).count();
-        
+        latency.totalMs = std::chrono::duration<double, std::milli>(postprocessEndTime - totalStartTime).count();
         latencyStats_.addSample(latency);
-        
-        if (outLatency) {
-            *outLatency = latency;
-        }
-        
+        if (outLatency) *outLatency = latency;
+
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLatencyLogTime_).count() >= LATENCY_LOG_INTERVAL_MS) {
             lastLatencyLogTime_ = now;
-            obs_log(LOG_INFO, "[ModelYOLO] 延迟统计 (GPU路径):\n%s", latencyStats_.getSummary().c_str());
+            obs_log(LOG_INFO, "[ModelYOLO] 延迟统计 (CUDA纹理路径):\n%s", latencyStats_.getSummary().c_str());
         }
-        
+
+        (void)originalWidth;
+        (void)originalHeight;
         return detections;
-        
+
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Texture inference failed: %s", e.what());
         return {};
     }
 #else
     (void)d3d11Texture;
-    (void)width;
-    (void)height;
+    (void)cropX; (void)cropY; (void)cropW; (void)cropH;
     (void)originalWidth;
     (void)originalHeight;
     (void)outLatency;

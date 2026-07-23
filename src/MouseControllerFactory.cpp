@@ -11,6 +11,12 @@ std::unique_ptr<MouseControllerInterface> MouseControllerFactory::createControll
             return std::make_unique<GvInputMouseController>();
         case ControllerType::TencInput:
             return std::make_unique<TencInputMouseController>();
+        case ControllerType::NtUserSendInput:
+            return std::make_unique<NtUserSendInputMouseController>();
+        case ControllerType::NtUserInjectMouse:
+            return std::make_unique<NtUserInjectMouseController>();
+        case ControllerType::NtUserInjectPointer:
+            return std::make_unique<NtUserInjectPointerController>();
         case ControllerType::LogiDriver:
             return std::make_unique<LogiDriverMouseController>(logiDriverType);
         case ControllerType::WindowsAPI:
