@@ -36,8 +36,9 @@ public:
     std::vector<Detection> inference(const cv::Mat& input) override;
     std::future<std::vector<Detection>> asyncInference(const cv::Mat& input) override;
 
-    // GPU纹理直接推理（CUDA/TensorRT）
-    std::vector<Detection> inferenceFromTexture(void* d3d11Texture, int width, int height,
+    // GPU纹理直接推理（CUDA/TensorRT）— D3D11 interop, device float, no D2H
+    std::vector<Detection> inferenceFromTexture(void* d3d11Texture,
+                                                 int cropX, int cropY, int cropW, int cropH,
                                                  int originalWidth, int originalHeight,
                                                  InferenceLatency* outLatency = nullptr) override;
     bool isGpuTextureSupported() const override { return cudaInteropInitialized_; }
@@ -200,8 +201,17 @@ private:
     // === 阶段2：CUDA纹理共享 ===
     bool cudaInteropInitialized_;
     void* cudaStream_;
+    // Cached register: only valid while the same ID3D11Texture2D* is live
+    void* cudaRegisteredTex_;                 // last registered ID3D11Texture2D*
     cudaGraphicsResource_t cudaResource_;
-    void* cudaInputBuffer_;
+    void* cudaInputBuffer_;                   // device float CHW (cudaMalloc)
+    size_t cudaInputBufferBytes_;
+    void* cudaOutputBuffer_;                  // device float output (optional)
+    size_t cudaOutputBufferBytes_;
+    void* cudaBgraStaging_;                   // device BGRA for host fallback
+    size_t cudaBgraStagingBytes_;
+    std::unique_ptr<Ort::MemoryInfo> cudaMemInfo_; // "Cuda" device MemoryInfo
+    Ort::Value cudaInputTensor_{nullptr};     // wraps cudaInputBuffer_
     
     // === DML纹理共享 ===
     bool dmlInteropInitialized_;

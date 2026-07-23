@@ -137,7 +137,7 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		// 执行推理：短锁取 shared_ptr，推理不持 yoloModelMutex
 		std::vector<Detection> newDetections;
-		std::shared_ptr<ModelYOLO> modelSnap;
+		std::shared_ptr<IYoloModel> modelSnap;
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			modelSnap = filter->yoloModel;

@@ -156,11 +156,9 @@ elseif(MSVC)
       IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime.dll"
       INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
   )
-  
-  # 鍙湁瀛樺湪DLL鏃舵墠娣诲姞DELAYLOAD
-  if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime.dll")
-    set_target_properties(onnxruntime::onnxruntime PROPERTIES INTERFACE_LINK_OPTIONS "/DELAYLOAD:onnxruntime.dll")
-  endif()
+	  
+	  # DELAYLOAD removed — API loaded via runtime function table
+
   
   # 鍙湁瀛樺湪providers_shared搴撴椂鎵嶉摼鎺?
   if(ONNXRUNTIME_HAS_PROVIDERS_SHARED)
@@ -173,31 +171,58 @@ elseif(MSVC)
   file(GLOB ONNXRUNTIME_DLL_PDB_FILES "${ONNXRUNTIME_DIR}/lib/*.dll" "${ONNXRUNTIME_DIR}/lib/*.pdb")
   install(FILES ${ONNXRUNTIME_DLL_PDB_FILES} DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit/obs-backgroundremoval")
 
-  if(ENABLE_CUDA)
-    include(CheckLanguage)
-    check_language(CUDA)
-    if(CMAKE_CUDA_COMPILER)
-      enable_language(CUDA)
-      find_package(CUDAToolkit REQUIRED)
-      
-      set(CUDA_SOURCES
-        src/models/CudaPreprocessor.cu
-      )
-      
-      set_source_files_properties(${CUDA_SOURCES} PROPERTIES LANGUAGE CUDA)
-      set_source_files_properties(${CUDA_SOURCES} PROPERTIES CUDA_ARCHITECTURES "75;86;89")
-      
-      target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CUDA_SOURCES})
-      target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-      target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CUDA::cudart)
-      
-      target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_CUDA)
-      target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
-      
-      message(STATUS "CUDA support enabled - CUDA version: ${CUDAToolkit_VERSION}")
-    else()
-      message(WARNING "CUDA compiler not found, CUDA support disabled")
-    endif()
+  if(ENABLE_CUDA AND GPU)
+    # NOTE: intentionally NOT calling enable_language(CUDA). With the Visual Studio
+    # generator that requires the NVIDIA CUDA MSBuild toolset, which is NOT installed
+    # here (the CUDA toolkit at D:/CUDATool has no VS integration). Instead compile
+    # CudaPreprocessor.cu with nvcc directly via a custom command and link the
+    # resulting object into the MSVC-built plugin.
+    #
+    # IMPORTANT: nvcc detects MSVC version from the VCToolsVersion env var set by
+    # vcvars/vsdevcmd. VS 2026 (MSVC 14.51+) is too new for CUDA 12.5 — cudafe++
+    # crashes (0xC0000005). Force VCToolsVersion to the last supported version.
+    find_package(CUDAToolkit REQUIRED)
+    set(_cuda_src "${CMAKE_SOURCE_DIR}/src/models/CudaPreprocessor.cu")
+    set(_cuda_obj "${CMAKE_CURRENT_BINARY_DIR}/CudaPreprocessor.cuda.obj")
+    get_filename_component(_msvc_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    # Write a cmake -P helper so the nvcc custom build step always runs under the
+    # correct MSVC toolset env, even when MSBuild / vcvars inject a newer version.
+    # nvcc detects MSVC version from VCToolsVersion env var; VS 2026 (14.51+) is
+    # too new for CUDA 12.5 — cudafe++ crashes with ACCESS_VIOLATION.
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/_cuda_compile.cmake"
+      "set(ENV{VCToolsVersion} \"14.44.35207\")\n"
+      "set(ENV{VCToolsInstallDir} \"E:/VisualStudio/chanping/VC/Tools/MSVC/14.44.35207/\")\n"
+      "execute_process(\n"
+      "  COMMAND ${CUDAToolkit_NVCC_EXECUTABLE}\n"
+      "    -c \"${_cuda_src}\"\n"
+      "    -o \"${_cuda_obj}\"\n"
+      "    -I \"${CMAKE_SOURCE_DIR}/src/models\"\n"
+      "    -I \"${CUDAToolkit_INCLUDE_DIRS}\"\n"
+      "    -ccbin \"${_msvc_bin_dir}\"\n"
+      "    -Xcompiler \"/MD /Zi\"\n"
+      "    -O2\n"
+      "  RESULT_VARIABLE _nvcc_result\n"
+      ")\n"
+      "if(NOT _nvcc_result EQUAL 0)\n"
+      "  message(FATAL_ERROR \"nvcc failed with exit code \${_nvcc_result}\")\n"
+      "endif()\n"
+    )
+    add_custom_command(
+      OUTPUT "${_cuda_obj}"
+      COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_CURRENT_BINARY_DIR}/_cuda_compile.cmake"
+      DEPENDS "${_cuda_src}" "${CMAKE_SOURCE_DIR}/src/models/CudaPreprocessor.cuh"
+      COMMENT "Compiling CudaPreprocessor.cu with nvcc (MSVC 14.44 toolset)"
+      VERBATIM
+    )
+    set_source_files_properties("${_cuda_obj}" PROPERTIES EXTERNAL_OBJECT TRUE)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_CUDA)
+    # CUDA toolkit headers so ModelYOLO.cpp (compiled by MSVC) can include
+    # <cuda_runtime.h> via CudaPreprocessor.cuh; CUDA::cudart resolves
+    # cudaStreamCreate / cudaFree / cudaGraphicsUnregisterResource etc.
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CUDA::cudart)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${_cuda_obj}")
+    message(STATUS "CUDA support enabled (nvcc: ${CUDAToolkit_NVCC_EXECUTABLE})")
   endif()
   
   # DML绾圭悊鍏变韩鏀寔 - 娣诲姞D3D12閾炬帴搴?
@@ -226,53 +251,37 @@ endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OpenCV::opencv_core OpenCV::opencv_imgproc OpenCV::opencv_imgcodecs nlohmann_json::nlohmann_json Eigen3::Eigen)
 
-# ExternalPID 瀹炵幇宸插垏鎹㈠埌閫嗗悜閲嶆瀯鐨?src/mpid.cpp锛堢Щ闄?libs/pid 渚濊禆锛?
+# ONNX Runtime DirectML Execution Provider
+# Only attempt this when building for DirectML. The GPU package has no DML
+# provider, and the CUDA-enabled toolchain makes the try_compile unreliable,
+# so we skip it for GPU builds (where DIRECTML=OFF anyway). We pass the
+# concrete onnxruntime.lib path (not the imported target name) because
+# check_library_exists expects a library file/path.
+if(DIRECTML)
+  include(CheckLibraryExists)
+  check_library_exists(
+    "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib"
+    OrtSessionOptionsAppendExecutionProvider_DML
+    onnxruntime_c_api.h
+    HAVE_ONNXRUNTIME_DML_EP
+  )
+  if(HAVE_ONNXRUNTIME_DML_EP)
+    message(STATUS "ONNX Runtime DirectML Execution Provider found")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+  endif()
+endif()
 
-# Check for ONNX Runtime Execution Providers
-include(CheckLibraryExists)
-
-check_library_exists(
-  onnxruntime::onnxruntime
-  OrtSessionOptionsAppendExecutionProvider_CUDA
-  onnxruntime_c_api.h
-  HAVE_ONNXRUNTIME_CUDA_EP
-)
-if(HAVE_ONNXRUNTIME_CUDA_EP)
-  message(STATUS "ONNX Runtime CUDA Execution Provider found")
+# ONNX Runtime CUDA / TensorRT Execution Providers
+# Invoked at runtime via the Ort API table (no provider .lib link needed), but the
+# provider DLLs must ship with the build (the install glob at line 171 copies lib/*.dll).
+# Detect by the presence of the provider import libraries in the ORT package.
+if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_cuda.lib")
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_CUDA_EP)
+  message(STATUS "ONNX Runtime CUDA Execution Provider enabled")
 endif()
-
-check_library_exists(
-  onnxruntime::onnxruntime
-  OrtSessionOptionsAppendExecutionProvider_ROCM
-  onnxruntime_c_api.h
-  HAVE_ONNXRUNTIME_ROCM_EP
-)
-if(HAVE_ONNXRUNTIME_ROCM_EP)
-  message(STATUS "ONNX Runtime ROCM Execution Provider found")
-  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_ROCM_EP)
-endif()
-
-check_library_exists(
-  onnxruntime::onnxruntime
-  OrtSessionOptionsAppendExecutionProvider_MIGraphX
-  onnxruntime_c_api.h
-  HAVE_ONNXRUNTIME_MIGRAPHX_EP
-)
-if(HAVE_ONNXRUNTIME_MIGRAPHX_EP)
-  message(STATUS "ONNX Runtime MIGraphX Execution Provider found")
-  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_MIGRAPHX_EP)
-endif()
-
-check_library_exists(
-  onnxruntime::onnxruntime
-  OrtSessionOptionsAppendExecutionProvider_Tensorrt
-  onnxruntime_c_api.h
-  HAVE_ONNXRUNTIME_TENSORRT_EP
-)
-if(HAVE_ONNXRUNTIME_TENSORRT_EP)
-  message(STATUS "ONNX Runtime TensorRT Execution Provider found")
+if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_tensorrt.lib")
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_TENSORRT_EP)
+  message(STATUS "ONNX Runtime TensorRT Execution Provider enabled")
 endif()
 
 if(WIN32)
@@ -282,7 +291,7 @@ if(WIN32)
     message(STATUS "ONNX Runtime DirectML Execution Provider enabled (DirectML build)")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_ONNXRUNTIME_DML_EP)
   endif()
-  # DirectML 闇€瑕?dxcore.lib (Windows涓婂缁堥摼鎺ワ紝鍥犱负onnxruntime鍙兘鍖呭惈DML浠ｇ爜)
+  # DirectML 闇€瑕?dxcore.lib (Windows涓婂鏁堥摼鎺ワ紝鍥犱负onnxruntime鍙兘鍖呭惈DML浠ｇ爜)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dxcore setupapi hid)
 endif()
 
@@ -309,6 +318,9 @@ if(WIN32)
       src/MAKCUMouseController.cpp
       src/LogiDriverMouseController.cpp
       src/GvInputMouseController.cpp
+      src/NtUserSendInputMouseController.cpp
+      src/NtUserInjectMouseController.cpp
+      src/NtUserInjectPointerController.cpp
       src/logi_driver.cpp
       src/DerivativePredictor.cpp
       src/SmithPredictor.cpp

@@ -37,6 +37,7 @@
 
 #include <plugin-support.h>
 #include "models/ModelYOLO.h"
+#include "models/IYoloModel.h"
 #include "models/Detection.h"
 #include "HungarianAlgorithm.hpp"
 #include "FilterData.h"
@@ -64,9 +65,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	yolo_detector_filter(yolo_detector_filter&&) = default;
 	yolo_detector_filter& operator=(yolo_detector_filter&&) = default;
 	
-	std::shared_ptr<ModelYOLO> yoloModel;
+	std::shared_ptr<IYoloModel> yoloModel;
 	std::mutex yoloModelMutex;
-	ModelYOLO::Version modelVersion;
+	IYoloModel::Version modelVersion;
 
 	std::vector<Detection> detections;
 	std::mutex detectionsMutex;
@@ -237,6 +238,20 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::atomic<int> dmlDirectFrames{0};
 	DmlPreprocessor dmlPreprocessor;
 	std::atomic<int> dmlFallbackFrames{0};
+
+	// CUDA/TRT D3D11 texture slots (render writes pointer+ROI, inference consumes)
+	struct CudaTexSlot {
+		void* d3d11Tex = nullptr; // ID3D11Texture2D* from gs_texture_get_obj
+		int cropX = 0, cropY = 0, cropW = 0, cropH = 0;
+		int fullW = 0, fullH = 0;
+		int64_t timestamp = 0;
+		bool valid = false;
+	};
+	CudaTexSlot cudaTexSlots[2];
+	std::atomic<int> cudaWriteIdx{0};
+	std::atomic<int> cudaReadyIdx{-1};
+	std::atomic<int> cudaDirectFrames{0};
+	std::atomic<int> cudaFallbackFrames{0};
 #endif
 
 	
@@ -715,9 +730,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_t *modelPathProp = obs_properties_add_path(props, "model_path", obs_module_text("ModelPath"), OBS_PATH_FILE, "ONNX Models (*.onnx)", nullptr);
 	obs_property_set_long_description(modelPathProp, "选择YOLO ONNX模型文件路径");
 	obs_property_t *modelVersion = obs_properties_add_list(props, "model_version", obs_module_text("ModelVersion"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(modelVersion, "YOLOv5", static_cast<int>(ModelYOLO::Version::YOLOv5));
-	obs_property_list_add_int(modelVersion, "YOLOv8", static_cast<int>(ModelYOLO::Version::YOLOv8));
-	obs_property_list_add_int(modelVersion, "YOLOv11", static_cast<int>(ModelYOLO::Version::YOLOv11));
+	obs_property_list_add_int(modelVersion, "YOLOv5", static_cast<int>(IYoloModel::Version::YOLOv5));
+	obs_property_list_add_int(modelVersion, "YOLOv8", static_cast<int>(IYoloModel::Version::YOLOv8));
+	obs_property_list_add_int(modelVersion, "YOLOv11", static_cast<int>(IYoloModel::Version::YOLOv11));
 	obs_property_set_long_description(modelVersion, "选择YOLO模型版本（V5/V8/V11等）");
 	obs_property_t *useGPUList = obs_properties_add_list(props, "use_gpu", obs_module_text("UseGPU"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(useGPUList, "CPU", USEGPU_CPU);
@@ -736,7 +751,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 	obs_property_list_add_string(useGPUList, "DirectML", USEGPU_DML);
 #endif
-	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/CPU）");
+#ifdef HAVE_NCNN
+	obs_property_list_add_string(useGPUList, "ncnn (Vulkan)", USEGPU_NCNN);
+#endif
+	obs_property_set_long_description(useGPUList, "选择推理设备（CUDA/GPU/DirectML/ncnn/CPU）");
 	
 #ifdef _WIN32
 	obs_property_t *useGpuTextureProp = obs_properties_add_bool(props, "use_gpu_texture_inference", "启用GPU纹理推理(实验性)");
@@ -901,7 +919,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
 		obs_property_list_add_int(controllerTypeList, "罗技/雷蛇驱动", 2);
 		obs_property_list_add_int(controllerTypeList, "UU remote GvInput", 3);
-        obs_property_set_long_description(controllerTypeList, "mouse control: WindowsAPI=system API, MAKCU=serial, Logi/Razer=kernel driver, GvInput=Netease WHQL HID");
+		obs_property_list_add_int(controllerTypeList, "NtUserSendInput", 5);
+		obs_property_list_add_int(controllerTypeList, "NtUserInjectMouse", 6);
+		obs_property_list_add_int(controllerTypeList, "NtUserInjectPointer", 7);
+        obs_property_set_long_description(controllerTypeList, "mouse control: WindowsAPI=system API, MAKCU=serial, Logi/Razer=kernel driver, GvInput=Netease WHQL HID, NtUserSendInput=direct NtUserSendInput call, NtUserInjectMouse=virtual pointer device injection, NtUserInjectPointer=low-level pointer injection");
 		obs_property_set_modified_callback(controllerTypeList, onConfigChanged);
 
 		snprintf(propName, sizeof(propName), "logi_driver_type_%d", i);
@@ -2017,7 +2038,7 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 void yolo_detector_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "model_path", "");
-	obs_data_set_default_int(settings, "model_version", static_cast<int>(ModelYOLO::Version::YOLOv8));
+	obs_data_set_default_int(settings, "model_version", static_cast<int>(IYoloModel::Version::YOLOv8));
 	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
 #ifdef _WIN32
 	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
@@ -2470,7 +2491,7 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->isDisabled = true;
 
 	std::string newModelPath = obs_data_get_string(settings, "model_path");
-	ModelYOLO::Version newModelVersion = static_cast<ModelYOLO::Version>(obs_data_get_int(settings, "model_version"));
+	IYoloModel::Version newModelVersion = static_cast<IYoloModel::Version>(obs_data_get_int(settings, "model_version"));
 	std::string newUseGPU = obs_data_get_string(settings, "use_gpu");
 	uint32_t newNumThreads = (uint32_t)obs_data_get_int(settings, "num_threads");
 	int newInputResolution = (int)obs_data_get_int(settings, "input_resolution");
@@ -2490,17 +2511,18 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		
 		if (!tf->modelPath.empty()) {
 			try {
-				obs_log(LOG_INFO, "[YOLO Filter] Loading new model: %s", tf->modelPath.c_str());
-				
-				std::shared_ptr<ModelYOLO> newYoloModel = std::make_shared<ModelYOLO>(tf->modelVersion);
-				
+				obs_log(LOG_INFO, "[YOLO Filter] Loading new model: %s (backend: %s)", tf->modelPath.c_str(), tf->useGPU.c_str());
+
+				std::shared_ptr<IYoloModel> newYoloModel;
+				newYoloModel = std::make_shared<ModelYOLO>(tf->modelVersion);
+
 				newYoloModel->loadModel(tf->modelPath, tf->useGPU, (int)tf->numThreads, tf->inputResolution);
-				
+
 				obs_log(LOG_INFO, "[YOLO Filter] Model loaded successfully");
-				
+
 				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
 				tf->yoloModel = std::move(newYoloModel);
-				
+
 			} catch (const std::exception& e) {
 				obs_log(LOG_ERROR, "[YOLO Filter] Failed to load model: %s", e.what());
 				std::lock_guard<std::mutex> lock(tf->yoloModelMutex);
@@ -2515,17 +2537,27 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 	tf->confidenceThreshold = (float)obs_data_get_double(settings, "confidence_threshold");
 	
 #ifdef _WIN32
-	tf->useGpuTextureInference = obs_data_get_bool(settings, "use_gpu_texture_inference");
-	// GPU纹理推理支持CUDA、TensorRT和DML设备
-	if (tf->useGpuTextureInference && tf->useGPU != "cuda" && tf->useGPU != "tensorrt" && tf->useGPU != "dml") {
-		obs_log(LOG_WARNING, "[YOLO Filter] GPU纹理推理需要CUDA、TensorRT或DML设备，已禁用");
-		tf->useGpuTextureInference = false;
-	}
-	if (tf->useGpuTextureInference) {
-#ifdef HAVE_ONNXRUNTIME_DML_EP
-		tf->dmlPreprocessor.initialize();
-#endif
-	}
+		tf->useGpuTextureInference = obs_data_get_bool(settings, "use_gpu_texture_inference");
+		// GPU纹理推理支持CUDA、TensorRT和DML设备
+		if (tf->useGpuTextureInference && tf->useGPU != "cuda" && tf->useGPU != "tensorrt" && tf->useGPU != "dml") {
+			obs_log(LOG_WARNING, "[YOLO Filter] GPU纹理推理需要CUDA、TensorRT或DML设备，已禁用");
+			tf->useGpuTextureInference = false;
+		}
+		if (tf->useGpuTextureInference) {
+			if (tf->useGPU == "dml") {
+	#ifdef HAVE_ONNXRUNTIME_DML_EP
+				tf->dmlPreprocessor.initialize();
+				obs_log(LOG_INFO, "[YOLO Filter] GPU纹理推理: DML float-buffer 路径");
+	#endif
+			} else if (tf->useGPU == "cuda" || tf->useGPU == "tensorrt") {
+				obs_log(LOG_INFO, "[YOLO Filter] GPU纹理推理: CUDA D3D11 interop 路径 (device=%s)",
+					tf->useGPU.c_str());
+			}
+		} else {
+			// invalidate pending slots when disabled
+			tf->cudaReadyIdx.store(-1, std::memory_order_release);
+			tf->dmlReadyIdx.store(-1, std::memory_order_release);
+		}
 #endif
 	tf->nmsThreshold = (float)obs_data_get_double(settings, "nms_threshold");
 	tf->targetClassId = (int)obs_data_get_int(settings, "target_class");
@@ -4617,60 +4649,83 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 
 		// 短锁取模型快照，推理不持 yoloModelMutex
 		std::vector<Detection> newDetections;
-		std::shared_ptr<ModelYOLO> modelSnap;
+		std::shared_ptr<IYoloModel> modelSnap;
 		{
 			std::lock_guard<std::mutex> lock(filter->yoloModelMutex);
 			modelSnap = filter->yoloModel;
 		}
-		if (modelSnap) {
-#ifdef _WIN32
-#ifdef HAVE_ONNXRUNTIME_DML_EP
-			bool dmlAttempted = false;
-			bool dmlSucceeded = false;
-			DmlPreprocessedFrame dmlFrame;
-			if (filter->useGpuTextureInference && modelSnap->isDmlTextureSupported()) {
-				int ridx = filter->dmlReadyIdx.exchange(-1, std::memory_order_acq_rel);
-				if (ridx >= 0 && ridx < 2 && filter->dmlPreprocessedFrames[ridx].valid()) {
-					DmlPreprocessedFrame& pre = filter->dmlPreprocessedFrames[ridx];
-					dmlAttempted = true;
-					try {
-						newDetections = modelSnap->inferenceFromTextureDml(
-							pre, pre.srcWidth, pre.srcHeight);
-						dmlSucceeded = true;
-						dmlFrame.cropX = pre.cropX;
-						dmlFrame.cropY = pre.cropY;
-						dmlFrame.srcWidth = pre.srcWidth;
-						dmlFrame.srcHeight = pre.srcHeight;
-						dmlFrame.fullWidth = pre.fullWidth;
-						dmlFrame.fullHeight = pre.fullHeight;
-					} catch (const std::exception& e) {
-						obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
-					} catch (...) {
-						obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference unknown error, falling back to CPU");
+if (modelSnap) {
+	#ifdef _WIN32
+				bool gpuPathDone = false;
+
+				// 1) CUDA/TRT D3D11 interop path
+				if (!gpuPathDone && filter->useGpuTextureInference &&
+				    modelSnap->isGpuTextureSupported()) {
+					int ridx = filter->cudaReadyIdx.exchange(-1, std::memory_order_acq_rel);
+					if (ridx >= 0 && ridx < 2 && filter->cudaTexSlots[ridx].valid &&
+					    filter->cudaTexSlots[ridx].d3d11Tex) {
+auto slot = filter->cudaTexSlots[ridx];
+							filter->cudaTexSlots[ridx].valid = false;
+							try {
+								newDetections = modelSnap->inferenceFromTexture(
+									slot.d3d11Tex,
+									slot.cropX, slot.cropY, slot.cropW, slot.cropH,
+									slot.fullW, slot.fullH);
+							// empty dets still counts as a successful GPU path
+							gpuPathDone = true;
+							filter->cudaDirectFrames.fetch_add(1, std::memory_order_relaxed);
+							cropX = slot.cropX;
+							cropY = slot.cropY;
+							cropWidth = slot.cropW;
+							cropHeight = slot.cropH;
+							fullWidth = slot.fullW;
+							fullHeight = slot.fullH;
+						} catch (const std::exception& e) {
+							obs_log(LOG_WARNING, "[YOLO Filter] CUDA texture inference failed: %s", e.what());
+							filter->cudaFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+						} catch (...) {
+							obs_log(LOG_WARNING, "[YOLO Filter] CUDA texture inference unknown error");
+							filter->cudaFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+						}
 					}
 				}
-			}
-			if (dmlSucceeded) {
-				filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
-				cropX = dmlFrame.cropX;
-				cropY = dmlFrame.cropY;
-				cropWidth = dmlFrame.srcWidth;
-				cropHeight = dmlFrame.srcHeight;
-				fullWidth = dmlFrame.fullWidth;
-				fullHeight = dmlFrame.fullHeight;
-			} else if (dmlAttempted) {
-				filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+
+				// 2) DML float-buffer path
+	#ifdef HAVE_ONNXRUNTIME_DML_EP
+				if (!gpuPathDone && filter->useGpuTextureInference &&
+				    modelSnap->isDmlTextureSupported()) {
+					int ridx = filter->dmlReadyIdx.exchange(-1, std::memory_order_acq_rel);
+					if (ridx >= 0 && ridx < 2 && filter->dmlPreprocessedFrames[ridx].valid()) {
+						DmlPreprocessedFrame& pre = filter->dmlPreprocessedFrames[ridx];
+						try {
+							newDetections = modelSnap->inferenceFromTextureDml(
+								pre, pre.srcWidth, pre.srcHeight);
+							gpuPathDone = true;
+							filter->dmlDirectFrames.fetch_add(1, std::memory_order_relaxed);
+							cropX = pre.cropX;
+							cropY = pre.cropY;
+							cropWidth = pre.srcWidth;
+							cropHeight = pre.srcHeight;
+							fullWidth = pre.fullWidth;
+							fullHeight = pre.fullHeight;
+						} catch (const std::exception& e) {
+							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
+							filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+						} catch (...) {
+							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference unknown error, falling back to CPU");
+							filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+						}
+					}
+				}
+	#endif
+				// 3) CPU Mat fallback
+				if (!gpuPathDone) {
+					newDetections = modelSnap->inference(inferenceFrame);
+				}
+	#else
 				newDetections = modelSnap->inference(inferenceFrame);
-			} else {
-				newDetections = modelSnap->inference(inferenceFrame);
+	#endif
 			}
-#else
-			newDetections = modelSnap->inference(inferenceFrame);
-#endif
-#else
-			newDetections = modelSnap->inference(inferenceFrame);
-#endif
-		}
 
 		// 推理完成后再释放输入 slot，渲染线程可覆写
 		filter->bufferState[readIdx].store(0, std::memory_order_release);
@@ -6153,16 +6208,50 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 			gs_blend_state_pop();
 			gs_texrender_end(tf->texrender);
 
-			gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
-			if (tex) {
-#if defined(HAVE_ONNXRUNTIME_DML_EP)
-			// GPU???????DML???BGRA?DmlPreprocessor?DmlPreprocessedFrame?
-			// ??????stagesurface map??????
+gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
+				if (tex) {
+#ifdef _WIN32
+					// CUDA/TRT: publish D3D11 texture pointer for interop (no stage yet)
+					if (tf->useGpuTextureInference &&
+					    (tf->useGPU == "cuda" || tf->useGPU == "tensorrt") &&
+					    tf->yoloModel && tf->yoloModel->isGpuTextureSupported()) {
+						void* d3dObj = gs_texture_get_obj(tex);
+						if (d3dObj) {
+							int cX = 0, cY = 0;
+							int cW = static_cast<int>(width);
+							int cH = static_cast<int>(height);
+							if (tf->useRegion) {
+								cX = std::max(0, tf->regionX);
+								cY = std::max(0, tf->regionY);
+								cW = std::min(tf->regionWidth, static_cast<int>(width) - cX);
+								cH = std::min(tf->regionHeight, static_cast<int>(height) - cY);
+								if (cW <= 0 || cH <= 0) {
+									cX = 0; cY = 0;
+									cW = static_cast<int>(width);
+									cH = static_cast<int>(height);
+								}
+							}
+							int widx = tf->cudaWriteIdx.load(std::memory_order_relaxed) & 1;
+							auto& slot = tf->cudaTexSlots[widx];
+							slot.d3d11Tex = d3dObj;
+							slot.cropX = cX;
+							slot.cropY = cY;
+							slot.cropW = cW;
+							slot.cropH = cH;
+							slot.fullW = static_cast<int>(width);
+							slot.fullH = static_cast<int>(height);
+							slot.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+								std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+							slot.valid = true;
+							tf->cudaReadyIdx.store(widx, std::memory_order_release);
+							tf->cudaWriteIdx.store(widx ^ 1, std::memory_order_relaxed);
+						}
+					}
 #endif
-				
-				if (!tf->stagesurface || 
-				    gs_stagesurface_get_width(tf->stagesurface) != width || 
-				    gs_stagesurface_get_height(tf->stagesurface) != height) {
+					
+					if (!tf->stagesurface || 
+					    gs_stagesurface_get_width(tf->stagesurface) != width || 
+					    gs_stagesurface_get_height(tf->stagesurface) != height) {
 					if (tf->stagesurface) {
 						gs_stagesurface_destroy(tf->stagesurface);
 					}

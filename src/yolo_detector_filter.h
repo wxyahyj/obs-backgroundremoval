@@ -24,6 +24,7 @@
 #include <opencv2/core.hpp>
 
 #include "FilterData.h"
+#include "models/IYoloModel.h"
 #include "models/ModelYOLO.h"
 #include "models/Detection.h"
 #include "KalmanFilter.hpp"
@@ -50,9 +51,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	yolo_detector_filter(yolo_detector_filter&&) = default;
 	yolo_detector_filter& operator=(yolo_detector_filter&&) = default;
 
-	std::shared_ptr<ModelYOLO> yoloModel;
+	std::shared_ptr<IYoloModel> yoloModel;
 	std::mutex yoloModelMutex;
-	ModelYOLO::Version modelVersion;
+	IYoloModel::Version modelVersion;
 
 	std::vector<Detection> detections;
 	std::mutex detectionsMutex;

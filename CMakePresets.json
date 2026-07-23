@@ -101,6 +101,7 @@
       "inherits": ["windows-x64-local"],
       "cacheVariables": {
         "GPU": "ON",
+        "DIRECTML": "OFF",
         "CMAKE_CUDA_COMPILER": "D:/CUDATool/bin/nvcc.exe",
         "CUDAToolkit_ROOT": "D:/CUDATool"
       }

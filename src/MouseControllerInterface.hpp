@@ -12,7 +12,10 @@ enum class ControllerType {
     MAKCU,
     LogiDriver,
     GvInput,
-    TencInput
+    TencInput,
+    NtUserSendInput,
+    NtUserInjectMouse,
+    NtUserInjectPointer
 };
 
 

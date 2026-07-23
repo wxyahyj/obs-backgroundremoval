@@ -147,9 +147,12 @@ public:
         InferenceLatency* outLatency = nullptr) = 0;
 
     // CUDA 纹理推理（仅 ORT+CUDA 后端支持）
+    // d3d11Texture: ID3D11Texture2D* (full frame). crop* is ROI in full-texture pixels.
+    // originalWidth/Height = full frame size for restoring normalized coords.
     virtual bool isGpuTextureSupported() const = 0;
     virtual std::vector<Detection> inferenceFromTexture(
-        void* d3d11Texture, int width, int height,
+        void* d3d11Texture,
+        int cropX, int cropY, int cropW, int cropH,
         int originalWidth, int originalHeight,
         InferenceLatency* outLatency = nullptr) = 0;
 

@@ -9,5 +9,6 @@ constexpr const char *USEGPU_MIGRAPHX = "migraphx";
 constexpr const char *USEGPU_TENSORRT = "tensorrt";
 constexpr const char *USEGPU_COREML = "coreml";
 constexpr const char *USEGPU_DML = "dml";
+constexpr const char *USEGPU_NCNN = "ncnn";
 
 #endif /* CONSTS_H */

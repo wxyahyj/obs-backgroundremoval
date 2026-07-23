@@ -9,6 +9,9 @@
 #include "MAKCUMouseController.hpp"
 #include "LogiDriverMouseController.hpp"
 #include "GvInputMouseController.hpp"
+#include "NtUserSendInputMouseController.hpp"
+#include "NtUserInjectMouseController.hpp"
+#include "NtUserInjectPointerController.hpp"
 
 class MouseControllerFactory {
 public:
