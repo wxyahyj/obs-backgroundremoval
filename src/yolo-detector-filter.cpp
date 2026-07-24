@@ -175,10 +175,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::atomic<bool> isInferencing;
 
 	// 异步推理统计
-	std::atomic<int> framesSubmitted{0};
-	std::atomic<int> framesInferred{0};
-	std::atomic<int> framesConsumed{0};
-	std::atomic<int> framesDropped{0};
+std::atomic<int> framesSubmitted{0};
+		std::atomic<int> framesInferred{0};
+		std::atomic<int> framesConsumed{0};
+		std::atomic<int> framesDropped{0};
+		// Render-side capture throttle aligned with inferenceIntervalFrames
+		std::atomic<int> renderCaptureCounter{0};
 
 	// === 四缓冲区异步推理 ===
 	static constexpr int BUFFER_COUNT = 4;
@@ -204,16 +206,24 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	// 缓冲区状态：0=空闲, 1=有数据待推理, 2=正在推理, 3=推理完成
 	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
 
-	// === 原子指针数据传递（替代输出缓冲区） ===
-	struct InferenceResult {
-		std::vector<Detection> detections;
-		std::vector<Detection> trackedTargets;
-		int frameWidth = 0;
-		int frameHeight = 0;
-		int cropX = 0;
-		int cropY = 0;
-		int64_t timestamp = 0;
-	};
+// === 原子指针数据传递（替代输出缓冲区） ===
+		struct InferenceResult {
+			std::vector<Detection> detections;
+			std::vector<Detection> trackedTargets;
+			int frameWidth = 0;
+			int frameHeight = 0;
+			int cropX = 0;
+			int cropY = 0;
+			// Steady-clock ms for age gate (not wall clock)
+			int64_t timestampMs = 0;
+			// Monotonic generation so consumers can detect "new result"
+			uint64_t generation = 0;
+		};
+		std::atomic<uint64_t> resultGeneration_{0};
+		// Last generation already applied to detections (video_tick)
+		uint64_t lastConsumedGeneration_ = 0;
+		// Max age of a detection result before clearing (ms)
+		static constexpr int64_t kMaxResultAgeMs = 200;
 	// 使用 mutex 保护的 shared_ptr 替代 atomic<shared_ptr>（MSVC兼容性）
 	std::shared_ptr<InferenceResult> inferenceResultPtr_{nullptr};
 	mutable std::mutex inferenceResultMutex_;
@@ -520,8 +530,8 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 			pGainRampDuration = 0.5f;
 			predictionWeightX = 0.3f;
 		predictionWeightY = 0.1f;
-			useDerivativePredictor = true;
-			maxPredictionTime = 0.1f;
+useDerivativePredictor = false;
+				maxPredictionTime = 0.1f;
 			// Smith预估器默认值
 			smithPredictorEnabled = false;
 			smithModelGain = 1.0f;
@@ -1101,29 +1111,24 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_group(props, propName, "导数预测器", OBS_GROUP_CHECKABLE, derivPredProps);
 	}
 
-	// Smith预估器分组（可折叠）
-	for (int i = 0; i < 5; i++) {
-		char propName[64];
-		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
-		obs_properties_t *smithProps = obs_properties_create();
+// Smith预估器分组（CHECKABLE 组勾选即启用，无内层冗余 enabled）
+		for (int i = 0; i < 5; i++) {
+			char propName[64];
+			obs_properties_t *smithProps = obs_properties_create();
 
-		snprintf(propName, sizeof(propName), "smith_enabled_%d", i);
-		obs_property_t *smithEnabledProp = obs_properties_add_bool(smithProps, propName, "Smith预估器(纯滞后补偿)");
-		obs_property_set_long_description(smithEnabledProp, "用过程模型从反馈回路剔除YOLO推理延迟，使PID可用更高增益而不振荡");
+			snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
+			obs_property_t *smithGainProp = obs_properties_add_float_slider(smithProps, propName, "模型增益K", 0.1f, 5.0f, 0.1f);
+			obs_property_set_long_description(smithGainProp, "被控对象静态增益，默认1.0。勾选组标题启用Smith");
 
-		snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
-		obs_property_t *smithGainProp = obs_properties_add_float_slider(smithProps, propName, "模型增益K", 0.1f, 5.0f, 0.1f);
-		obs_property_set_long_description(smithGainProp, "被控对象静态增益，默认1.0即可");
+			snprintf(propName, sizeof(propName), "smith_model_tau_%d", i);
+			obs_property_t *smithTauProp = obs_properties_add_float_slider(smithProps, propName, "预估纯滞后τ(秒)", 0.005f, 0.2f, 0.005f);
+			obs_property_set_long_description(smithTauProp, "手动指定纯滞后时间。若开启自动τ则忽略此值");
 
-		snprintf(propName, sizeof(propName), "smith_model_tau_%d", i);
-		obs_property_t *smithTauProp = obs_properties_add_float_slider(smithProps, propName, "预估纯滞后τ(秒)", 0.005f, 0.2f, 0.005f);
-		obs_property_set_long_description(smithTauProp, "手动指定纯滞后时间。若开启自动τ则忽略此值");
+			snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
+			obs_property_t *smithAutoTauProp = obs_properties_add_bool(smithProps, propName, "自动τ(使用实测推理延迟)");
+			obs_property_set_long_description(smithAutoTauProp, "自动用 avgInferenceTimeMs 作为纯滞后τ，推荐开启");
 
-		snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
-		obs_property_t *smithAutoTauProp = obs_properties_add_bool(smithProps, propName, "自动τ(使用实测推理延迟)");
-		obs_property_set_long_description(smithAutoTauProp, "自动用 avgInferenceTimeMs 作为纯滞后τ，推荐开启");
-
-snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+			snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
 			obs_properties_add_group(props, propName, "Smith预估器", OBS_GROUP_CHECKABLE, smithProps);
 		}
 
@@ -2244,18 +2249,23 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_int(settings, propName, 16);
 		snprintf(propName, sizeof(propName), "recoil_pid_gain_scale_%d", i);
 		obs_data_set_default_double(settings, propName, 0.3);
-		// DerivativePredictor参数默认值
-		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
-		obs_data_set_default_bool(settings, propName, true);
-		snprintf(propName, sizeof(propName), "prediction_weight_x_%d", i);
-		obs_data_set_default_double(settings, propName, 0.5);
-		snprintf(propName, sizeof(propName), "prediction_weight_y_%d", i);
-		obs_data_set_default_double(settings, propName, 0.1);
-snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
-		obs_data_set_default_double(settings, propName, 0.1);
-		// IMM 交互多模型默认值（键名必须带 _%d，与 UI/读取一致）
-		snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
-		obs_data_set_default_bool(settings, propName, false);
+// DerivativePredictor参数默认值（不重复写 prediction_weight，沿用上面 0.3/0.1）
+			snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
+			obs_data_set_default_bool(settings, propName, false); // 默认关，避免与 Smith/PID 叠加重
+			snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
+			obs_data_set_default_double(settings, propName, 0.1);
+			// Smith 默认值（组 CHECKABLE 默认关）
+			snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
+			obs_data_set_default_bool(settings, propName, false);
+			snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
+			obs_data_set_default_double(settings, propName, 1.0);
+			snprintf(propName, sizeof(propName), "smith_model_tau_%d", i);
+			obs_data_set_default_double(settings, propName, 0.02);
+			snprintf(propName, sizeof(propName), "smith_auto_tau_%d", i);
+			obs_data_set_default_bool(settings, propName, true);
+			// IMM 交互多模型默认值（键名必须带 _%d，与 UI/读取一致）
+			snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
+			obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "imm_process_noise_pos_%d", i);
 		obs_data_set_default_double(settings, propName, 0.1);
 		snprintf(propName, sizeof(propName), "imm_process_noise_vel_%d", i);
@@ -4541,44 +4551,56 @@ void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Async inference thread started (4-buffer mode)");
 
-	// 提高线程优先级以减少延迟
-	#ifdef _WIN32
-	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-	#endif
+// 默认正常优先级，避免与游戏抢 CPU（低 FPS 时 HIGHEST 更伤流畅度）
+		#ifdef _WIN32
+		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+		#endif
 
-	int inferenceFrameCounter = 0;
-	// 从UI配置读取推理间隔，0表示每帧都推理
-	int inferenceInterval = filter->inferenceIntervalFrames <= 0 ? 1 : filter->inferenceIntervalFrames;
+int inferenceFrameCounter = 0;
 
-	while (filter->inferenceRunning) {
-		if (!filter->isInferencing) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			continue;
-		}
-
-		// 帧间隔控制：不是每帧都推理
-		inferenceFrameCounter++;
-		if (inferenceFrameCounter < inferenceInterval) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			continue;
-		}
-		inferenceFrameCounter = 0;
-
-		// 无锁获取待推理帧
-		int readIdx = -1;
-		int startIdx = filter->inputReadIdx.load(std::memory_order_acquire);
-		
-		for (int i = 0; i < filter->BUFFER_COUNT; i++) {
-			int checkIdx = (startIdx + i) % filter->BUFFER_COUNT;
-			uint8_t expected = 1;  // 期望状态为"有数据待推理"
-			
-			if (filter->bufferState[checkIdx].compare_exchange_strong(
-				expected, 2, std::memory_order_acq_rel)) {
-				readIdx = checkIdx;
-				filter->inputReadIdx.store(checkIdx, std::memory_order_release);
-				break;
+		while (filter->inferenceRunning) {
+			if (!filter->isInferencing) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				continue;
 			}
-		}
+
+			// Re-read interval each loop so UI changes take effect without restart
+			int inferenceInterval = filter->inferenceIntervalFrames <= 0
+				? 1 : filter->inferenceIntervalFrames;
+
+			// 帧间隔控制：不是每帧都推理
+			inferenceFrameCounter++;
+			if (inferenceFrameCounter < inferenceInterval) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				continue;
+			}
+			inferenceFrameCounter = 0;
+
+			// Prefer LATEST ready frame (scan newest-first) to cut lag under load
+			int readIdx = -1;
+			int startIdx = filter->inputWriteIdx.load(std::memory_order_acquire);
+			
+			for (int i = 0; i < filter->BUFFER_COUNT; i++) {
+				// Walk backwards from write index: most recently published first
+				int checkIdx = (startIdx - 1 - i + filter->BUFFER_COUNT * 2) % filter->BUFFER_COUNT;
+				uint8_t expected = 1;  // 期望状态为"有数据待推理"
+				
+				if (filter->bufferState[checkIdx].compare_exchange_strong(
+					expected, 2, std::memory_order_acq_rel)) {
+					readIdx = checkIdx;
+					filter->inputReadIdx.store(checkIdx, std::memory_order_release);
+					// Drop any older pending slots so we don't process stale backlog
+					for (int j = 0; j < filter->BUFFER_COUNT; j++) {
+						if (j == checkIdx) continue;
+						uint8_t exp = 1;
+						if (filter->bufferState[j].compare_exchange_strong(
+							exp, 0, std::memory_order_acq_rel)) {
+							filter->framesDropped.fetch_add(1, std::memory_order_relaxed);
+						}
+					}
+					break;
+				}
+			}
 		
 		if (readIdx == -1) {
 			std::unique_lock<std::mutex> lk(filter->inputFramesMutex);
@@ -4933,33 +4955,35 @@ if (modelSnap) {
 			}
 		}
 
-		// 写入共享指针（替代四缓冲区）
-		{
-			auto result = std::make_shared<yolo_detector_filter::InferenceResult>();
+// 写入共享指针（替代四缓冲区）
 			{
-				std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
-				result->detections = filter->trackedTargets;
-				result->trackedTargets = filter->trackedTargets;
+				auto result = std::make_shared<yolo_detector_filter::InferenceResult>();
+				{
+					std::lock_guard<std::mutex> trackLock(filter->trackedTargetsMutex);
+					result->detections = filter->trackedTargets;
+					result->trackedTargets = filter->trackedTargets;
+				}
+				result->frameWidth = fullWidth;
+				result->frameHeight = fullHeight;
+				result->cropX = cropX;
+				result->cropY = cropY;
+				const auto nowSteady = std::chrono::steady_clock::now();
+				result->timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+					nowSteady.time_since_epoch()).count();
+				result->generation = filter->resultGeneration_.fetch_add(1, std::memory_order_relaxed) + 1;
+				
+				std::lock_guard<std::mutex> resultLock(filter->inferenceResultMutex_);
+				filter->inferenceResultPtr_ = result;
 			}
-			result->frameWidth = fullWidth;
-			result->frameHeight = fullHeight;
-			result->cropX = cropX;
-			result->cropY = cropY;
-			result->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-				std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-			
-			std::lock_guard<std::mutex> resultLock(filter->inferenceResultMutex_);
-			filter->inferenceResultPtr_ = result;
-		}
 
-		// 更新统计信息
-		filter->inferenceCount++;
-		filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
-		filter->framesInferred.fetch_add(1, std::memory_order_relaxed);
+			// 更新统计信息
+			filter->inferenceCount++;
+			filter->avgInferenceTimeMs = (filter->avgInferenceTimeMs * (filter->inferenceCount - 1) + duration) / filter->inferenceCount;
+			filter->framesInferred.fetch_add(1, std::memory_order_relaxed);
 
-		// 更新最后有结果的时刻
-		filter->lastResultTimestamp.store(std::chrono::duration_cast<std::chrono::milliseconds>(
-			std::chrono::high_resolution_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
+			// 更新最后有结果的时刻（steady_clock ms for age gate）
+			filter->lastResultTimestamp.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
 
 		// 导出坐标（如果有检测结果）
 		if (filter->exportCoordinates && !newDetections.empty()) {
@@ -5608,37 +5632,53 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		tf->lastFpsTime = now;
 	}
 
-	// === 共享指针：消费推理结果 ===
-	std::shared_ptr<yolo_detector_filter::InferenceResult> inferenceResult;
-	{
-		std::lock_guard<std::mutex> resultLock(tf->inferenceResultMutex_);
-		inferenceResult = tf->inferenceResultPtr_;
-	}
-	if (inferenceResult) {
+// === 共享指针：消费推理结果（带 age gate + generation） ===
+		std::shared_ptr<yolo_detector_filter::InferenceResult> inferenceResult;
 		{
-			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-			tf->detections = inferenceResult->detections;
+			std::lock_guard<std::mutex> resultLock(tf->inferenceResultMutex_);
+			inferenceResult = tf->inferenceResultPtr_;
 		}
-		{
-			std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
-			tf->inferenceFrameWidth = inferenceResult->frameWidth;
-			tf->inferenceFrameHeight = inferenceResult->frameHeight;
-			tf->cropOffsetX = inferenceResult->cropX;
-			tf->cropOffsetY = inferenceResult->cropY;
+		const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count();
+		bool resultValid = false;
+		if (inferenceResult) {
+			const int64_t ageMs = nowMs - inferenceResult->timestampMs;
+			if (ageMs >= 0 && ageMs <= yolo_detector_filter::kMaxResultAgeMs) {
+				resultValid = true;
+				// Always refresh detections from the latest valid result (same gen is OK —
+				// controller needs current boxes each tick). Age gate handles staleness.
+				{
+					std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+					tf->detections = inferenceResult->detections;
+				}
+				{
+					std::lock_guard<std::mutex> sizeLock(tf->inferenceFrameSizeMutex);
+					tf->inferenceFrameWidth = inferenceResult->frameWidth;
+					tf->inferenceFrameHeight = inferenceResult->frameHeight;
+					tf->cropOffsetX = inferenceResult->cropX;
+					tf->cropOffsetY = inferenceResult->cropY;
+				}
+				if (inferenceResult->generation != tf->lastConsumedGeneration_) {
+					tf->lastConsumedGeneration_ = inferenceResult->generation;
+					tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
+				}
+			} else {
+				// Stale result: drop pointer so we don't keep steering on old targets
+				std::lock_guard<std::mutex> resultLock(tf->inferenceResultMutex_);
+				if (tf->inferenceResultPtr_ == inferenceResult) {
+					tf->inferenceResultPtr_.reset();
+				}
+			}
 		}
-		tf->framesConsumed.fetch_add(1, std::memory_order_relaxed);
-	} else {
-		// 没有结果，检查是否超时需要清空
-		auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-			std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-		int64_t lastTs = tf->lastResultTimestamp.load(std::memory_order_acquire);
-		
-		// 超过500ms没有新结果，自动清空检测框
-		if (nowMs - lastTs > 500 && !tf->detections.empty()) {
-			std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
-			tf->detections.clear();
+		if (!resultValid) {
+			// 超过 age 或没有结果：清空检测，避免旧目标继续驱动鼠标
+			int64_t lastTs = tf->lastResultTimestamp.load(std::memory_order_acquire);
+			if ((lastTs == 0 || nowMs - lastTs > yolo_detector_filter::kMaxResultAgeMs)
+				&& !tf->detections.empty()) {
+				std::lock_guard<std::mutex> detLock(tf->detectionsMutex);
+				tf->detections.clear();
+			}
 		}
-	}
 
 #ifdef _WIN32
 	// === 准星检测：吸管取色 + HSV检测管线 ===
@@ -6146,12 +6186,22 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 		return;
 	}
 
-	bool needShowLabels = tf->showLabel || tf->showConfidence;
-	bool needCapture = tf->showFloatingWindow || tf->isInferencing || needShowLabels
-#ifdef _WIN32
-		|| tf->crosshairConfig.enabled
-#endif
-		;
+bool needShowLabels = tf->showLabel || tf->showConfidence;
+		// Align capture with inference interval: skip stage/map on non-infer frames
+		// when capture is only needed for inference (saves GPU→CPU cost under low FPS)
+		bool needInferCapture = tf->isInferencing;
+		if (needInferCapture) {
+			int interval = tf->inferenceIntervalFrames <= 0 ? 1 : tf->inferenceIntervalFrames;
+			int c = tf->renderCaptureCounter.fetch_add(1, std::memory_order_relaxed);
+			if ((c % interval) != 0) {
+				needInferCapture = false;
+			}
+		}
+		bool needCapture = tf->showFloatingWindow || needInferCapture || needShowLabels
+	#ifdef _WIN32
+			|| tf->crosshairConfig.enabled
+	#endif
+			;
 
 	// 捕获原始帧（用于推理、悬浮窗和标签显示）
 	cv::Mat originalImage;
@@ -6216,42 +6266,61 @@ gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 							}
 						}
 
-						for (int i = 0; i < tf->BUFFER_COUNT; i++) {
-							int checkIdx = (currentWrite + i) % tf->BUFFER_COUNT;
-							uint8_t expected = 0;  // 期望状态为空闲
-							
-							if (tf->bufferState[checkIdx].compare_exchange_strong(
-								expected, 1, std::memory_order_acq_rel)) {
-								// 成功获取空闲槽位，写入数据
-								// 加锁保护 inputFrames 的重新分配和写入，防止分辨率变化时的竞态条件
+// Fill-then-publish: write frame under lock, THEN mark state=1.
+							// Prefer free slots; if none, overwrite oldest pending (state=1).
+							int freeIdx = -1;
+							int pendingIdx = -1;
+							for (int i = 0; i < tf->BUFFER_COUNT; i++) {
+								int checkIdx = (currentWrite + i) % tf->BUFFER_COUNT;
+								uint8_t st = tf->bufferState[checkIdx].load(std::memory_order_acquire);
+								if (st == 0 && freeIdx < 0) freeIdx = checkIdx;
+								else if (st == 1 && pendingIdx < 0) pendingIdx = checkIdx;
+							}
+							int targetIdx = (freeIdx >= 0) ? freeIdx : pendingIdx;
+							if (targetIdx >= 0) {
+								// If overwriting pending, count as drop of old frame
+								if (freeIdx < 0) {
+									uint8_t exp = 1;
+									if (!tf->bufferState[targetIdx].compare_exchange_strong(
+										exp, 0, std::memory_order_acq_rel)) {
+										targetIdx = -1; // lost race, skip this frame
+									} else {
+										tf->framesDropped.fetch_add(1, std::memory_order_relaxed);
+									}
+								} else {
+									uint8_t exp = 0;
+									if (!tf->bufferState[targetIdx].compare_exchange_strong(
+										exp, 0, std::memory_order_acq_rel)) {
+										// race: someone else grabbed it; leave for next frame
+										targetIdx = -1;
+									}
+								}
+							}
+							if (targetIdx >= 0) {
 								{
 									std::lock_guard<std::mutex> lock(tf->inputFramesMutex);
-									if (tf->inputFrames[checkIdx].rows != height || 
-										tf->inputFrames[checkIdx].cols != width) {
-										tf->inputFrames[checkIdx] = cv::Mat(height, width, CV_8UC4);
+									if (tf->inputFrames[targetIdx].rows != height ||
+										tf->inputFrames[targetIdx].cols != width) {
+										tf->inputFrames[targetIdx] = cv::Mat(height, width, CV_8UC4);
 									}
-									temp.copyTo(tf->inputFrames[checkIdx]);
+									temp.copyTo(tf->inputFrames[targetIdx]);
+									tf->inputFrameWidths[targetIdx] = width;
+									tf->inputFrameHeights[targetIdx] = height;
+									tf->inputCropX[targetIdx] = frameCropX;
+									tf->inputCropY[targetIdx] = frameCropY;
+									tf->inputCropWidth[targetIdx] = frameCropWidth;
+									tf->inputCropHeight[targetIdx] = frameCropHeight;
 								}
-								
-								// 记录帧信息和裁切区域
-								tf->inputFrameWidths[checkIdx] = width;
-								tf->inputFrameHeights[checkIdx] = height;
-								tf->inputCropX[checkIdx] = frameCropX;
-								tf->inputCropY[checkIdx] = frameCropY;
-								tf->inputCropWidth[checkIdx] = frameCropWidth;
-								tf->inputCropHeight[checkIdx] = frameCropHeight;
-								
-								// 更新写入索引
-								tf->inputWriteIdx.store((checkIdx + 1) % tf->BUFFER_COUNT, std::memory_order_release);
+								// Publish only after data is fully written
+								tf->bufferState[targetIdx].store(1, std::memory_order_release);
+								tf->inputWriteIdx.store((targetIdx + 1) % tf->BUFFER_COUNT, std::memory_order_release);
 								tf->framesSubmitted.fetch_add(1, std::memory_order_relaxed);
 								tf->frameReadyCv.notify_one();
 								submitted = true;
-								break;
 							}
-						}
 
-						if (!submitted) {
-							tf->framesDropped.fetch_add(1, std::memory_order_relaxed);
+							if (!submitted) {
+								tf->framesDropped.fetch_add(1, std::memory_order_relaxed);
 						}
 						
 						// 只在悬浮窗开启时才克隆裁切后的区域

@@ -142,7 +142,7 @@ struct MouseControllerConfig {
     float pGainRampInitialScale = 0.6f;
     float pGainRampDuration = 0.5f;
     // DerivativePredictor配置
-    bool useDerivativePredictor = true;
+    bool useDerivativePredictor = false; // 默认关，避免与 Smith/AdaptivePID 叠加
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
     float maxPredictionTime = 0.1f;

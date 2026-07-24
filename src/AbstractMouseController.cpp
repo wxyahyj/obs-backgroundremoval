@@ -329,7 +329,8 @@ void AbstractMouseController::tick()
     }
 
     auto now = std::chrono::steady_clock::now();
-    deltaTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime).count() / 1000.0f;
+    // High-resolution dt in seconds (do NOT truncate to whole milliseconds)
+    deltaTime = std::chrono::duration<float>(now - lastTickTime).count();
     deltaTime = std::max(0.001f, std::min(deltaTime, 0.05f));
     lastTickTime = now;
 
@@ -337,9 +338,16 @@ void AbstractMouseController::tick()
     if (!target) {
         if (isMoving) {
             isMoving = false;
-            // 目标丢失时只重置预测器，不重置积分项
-            // 这样积分可以继续累积，PI控制才能真正发挥作用
+            // 目标丢失：清空预测/滤波/Smith，避免旧目标状态污染新目标
+            // 积分仍由 resetPidState 在热键松开时彻底清零
             predictor.reset();
+            immFilter.reset();
+            oneEuroX_.reset();
+            oneEuroY_.reset();
+            oneEuroLockedTrackId_ = -1;
+            smithPredictor.reset();
+            adaptivePidX_.reset();
+            adaptivePidY_.reset();
             resetMotionState();
         }
         // 目标丢失时重置自动扳机
@@ -1204,8 +1212,9 @@ void AbstractMouseController::tick()
             adaptiveErrorY += predWY * derivPredictedY;
         }
 
-        moveX = adaptivePidX_.update(adaptiveErrorX);
-        moveY = adaptivePidY_.update(adaptiveErrorY);
+        // dt-aware AdaptivePID (I*dt, D/dt, time-normalized adapt rate)
+        moveX = adaptivePidX_.update(adaptiveErrorX, deltaTime);
+        moveY = adaptivePidY_.update(adaptiveErrorY, deltaTime);
 
         if (pidDataCallback_) {
             PidDebugData data;
@@ -1313,21 +1322,24 @@ void AbstractMouseController::tick()
         }
     }
 
-    // 压枪补偿
+    // 时间相关移动：只缩放 PID/控制输出（位移/参考帧）
+    // 注意：AdaptivePID 内部已用 dt 做 I/D，此处 timeFactor 仍按「60Hz 参考位移」兼容，
+    // 不要在 PID 内再乘 dt 输出。
     float finalMoveX = moveX;
     float finalMoveY = moveY;
 
-    if (config.autoRecoilControlEnabled && firing) {
-        float recoilPerMs = config.recoilStrength / static_cast<float>(config.recoilSpeed);
-        float recoilThisFrame = recoilPerMs * deltaTime * 1000.0f;
-        finalMoveY += recoilThisFrame;
-    }
-
-    // 时间相关移动：应用帧率补偿，确保移动速度不受帧率波动影响
     if (config.enableTimeBasedMovement && deltaTime > 0.0f) {
         float timeFactor = deltaTime * config.targetFrameRate;
         finalMoveX *= timeFactor;
         finalMoveY *= timeFactor;
+    }
+
+    // 压枪补偿：连续速率 (strength/speed 视为像素/秒)，只乘一次 dt
+    // 必须在 timeFactor 之后加入，避免低 FPS 时 recoil 被双重放大
+    if (config.autoRecoilControlEnabled && firing) {
+        // recoilSpeed is ms per full strength unit → rate = strength / (speed/1000) px/s
+        float recoilPerSecond = config.recoilStrength / (static_cast<float>(config.recoilSpeed) / 1000.0f);
+        finalMoveY += recoilPerSecond * deltaTime;
     }
 
     previousMoveX = finalMoveX;
@@ -1444,6 +1456,15 @@ Detection* AbstractMouseController::selectTarget()
         pendingTargetTrackId = -1;
         currentTargetScore = bestScore;
         pendingTargetScore = 0.0f;
+        // 新目标：重启 P-gain ramp，并清 Smith/IMM 等旧状态
+        targetLockStartTime = std::chrono::steady_clock::now();
+        smithPredictor.reset();
+        immFilter.reset();
+        oneEuroX_.reset();
+        oneEuroY_.reset();
+        oneEuroLockedTrackId_ = lockedTrackId;
+        adaptivePidX_.reset();
+        adaptivePidY_.reset();
         float pixelX = bestTarget->centerX * frameWidth;
         float pixelY = bestTarget->centerY * frameHeight;
         float dx = pixelX - fovCenterX;

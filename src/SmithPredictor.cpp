@@ -73,19 +73,21 @@ std::pair<float, float> SmithPredictor::correct(
     delayBufHead_ = (delayBufHead_ + 1) % MAX_DELAY_SAMPLES;
     delayBufCount_ = std::min(delayBufCount_ + 1, MAX_DELAY_SAMPLES);
 
-    // 取 u(t-τ)
-    size_t delaySteps = static_cast<size_t>(
-        std::ceil(config_.delayTau / std::max(dt, 0.001f))
-    );
-    delaySteps = std::min(delaySteps, delayBufCount_);
-
-    float uDelayedX = 0.0f;
-    float uDelayedY = 0.0f;
-    if (delaySteps > 0 && delayBufCount_ > delaySteps) {
-        size_t idx = (delayBufHead_ + MAX_DELAY_SAMPLES - delaySteps - 1) % MAX_DELAY_SAMPLES;
-        if (idx < delayBuf_.size()) {
-            uDelayedX = delayBuf_[idx].first;
-            uDelayedY = delayBuf_[idx].second;
+    // 取 u(t-τ). tau≈0 ⇒ pure delay is zero, delayed input = current input
+    // (old code used 0 when delaySteps==0, creating a false correction)
+    float uDelayedX = pidOutputX;
+    float uDelayedY = pidOutputY;
+    if (config_.delayTau > 1e-6f) {
+        size_t delaySteps = static_cast<size_t>(
+            std::ceil(config_.delayTau / std::max(dt, 0.001f))
+        );
+        delaySteps = std::min(delaySteps, delayBufCount_);
+        if (delaySteps > 0 && delayBufCount_ > delaySteps) {
+            size_t idx = (delayBufHead_ + MAX_DELAY_SAMPLES - delaySteps - 1) % MAX_DELAY_SAMPLES;
+            if (idx < delayBuf_.size()) {
+                uDelayedX = delayBuf_[idx].first;
+                uDelayedY = delayBuf_[idx].second;
+            }
         }
     }
 

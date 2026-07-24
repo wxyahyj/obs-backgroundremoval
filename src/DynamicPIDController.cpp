@@ -1,5 +1,9 @@
 #ifdef _WIN32
 
+// NOTE: DynamicPIDAxis is dt-aware and compiled, but NOT wired into AlgorithmType dispatch.
+// Current UI "dynamic_kp/ki/kd" settings are not consumed by any active controller path.
+// Do not use for production until connected via MouseControllerInterface enum.
+
 #include "DynamicPIDController.hpp"
 #include <cmath>
 #include <algorithm>
@@ -18,119 +22,59 @@ float DynamicPIDAxis::controlLoop(float currentError, float timeInterval, float 
     float widthRatio = recentTargetWidth / imageSize;
     float dynamicCoeff = minCoefficient + (maxCoefficient - minCoefficient) /
         (1.0f + std::exp(-transitionSharpness * (widthRatio - dynamicTransitionMidpoint)));
-    dynamicJudgmentThreshold = dynamicCoeff * recentTargetWidth;
 
-    // 1. 正常达标入口（误差极小）
-    if (!hasReached && std::abs(currentError) < targetThreshold) {
-        hasReached = true;
-    }
-    // 2. 严重偏离目标：直接退出积分状态
-    else if (std::abs(currentError) >= dynamicJudgmentThreshold) {
-        hasReached = false;
-        integralAccum = 0.0f;
-        stableCount = 0;
-    }
-    // 3. 模糊区域：可能已经"差不多稳定"但误差还大
-    else if (!hasReached && std::abs(currentError) >= targetThreshold && std::abs(currentError) <= dynamicJudgmentThreshold) {
-        float diff = std::abs(currentError - previousError);
-
-        if (diff < errorChangeTolerance) {
-            stableCount++;
-        } else {
-            stableCount = 0;
-        }
-
-        if (stableCount >= minDataPoints) {
-            hasReached = true;
-            stableCount = 0;
-            integralAccum = 0.0f;
-        }
+    // 输入死区
+    if (std::abs(currentError) < dynamicCoeff * dynamicThresholdBase) {
+        currentError = 0.0f;
     }
 
-    if (timeInterval <= 0.0f) {
-        return totalOutput;  // 避免除零
-    }
+    // 积分计算（时间域）
+    integral += currentError * timeInterval;
+    integral = std::clamp(integral, -integralLimit, integralLimit);
 
-    errorChangeRate = (currentError - previousError) / timeInterval;
+    // 微分计算（时间域）
+    float derivative = (currentError - lastError) / timeInterval;
 
-    if (hasReached) {
-        integralAccum += currentError * timeInterval;
-        integralTerm = ki * integralAccum;
-        proportionalTerm = kp * currentError;
-        derivativeTerm = kd * errorChangeRate;
-        derivativeOutput = derivativeTerm;
-    } else {
-        integralAccum += (currentError * 0.5f) * timeInterval;
-        integralTerm = ki * integralAccum;
-        proportionalTerm = (kp * 0.5f) * currentError;
-        derivativeTerm = kd * errorChangeRate;
-        derivativeOutput = derivativeTerm;
-    }
+    float P = kp * currentError;
+    float I = ki * integral;
+    float D = kd * derivative;
 
-    // 原始 PID 输出
-    float rawOutput = proportionalTerm + integralTerm + derivativeOutput;
+    lastError = currentError;
 
-    // 输出平滑处理
-    totalOutput = smoothingFactor * rawOutput;
-    previousSmoothedOutput = totalOutput;
+    // 输出限幅
+    float output = P + I + D;
+    output = std::clamp(output, -outputLimit, outputLimit);
 
-    if (hasReached) {
-        float newVelocity = ((currentError - previousError) / timeInterval) + (rawOutput / timeInterval) * speedMultiplier;
-        currentVelocity = newVelocity;
-        previousVelocity = newVelocity;
-    } else {
-        currentVelocity = 0.0f;
-        previousVelocity = 0.0f;
-    }
-
-    previousError = currentError;
-
-    return totalOutput;
-}
-
-void DynamicPIDAxis::setBottomParams(float targetThreshold_, float speedMultiplier_, float minCoeff_, float maxCoeff_,
-                                     float sharpness_, float midpoint_, int minDataPoints_, float errorTolerance_)
-{
-    targetThreshold = targetThreshold_;
-    speedMultiplier = speedMultiplier_;
-    minCoefficient = minCoeff_;
-    maxCoefficient = maxCoeff_;
-    transitionSharpness = sharpness_;
-    dynamicTransitionMidpoint = midpoint_;
-    minDataPoints = minDataPoints_;
-    errorChangeTolerance = errorTolerance_;
-}
-
-void DynamicPIDAxis::updateParams(float kp_, float ki_, float kd_)
-{
-    kp = kp_;
-    ki = ki_;
-    kd = kd_;
-}
-
-void DynamicPIDAxis::setSmoothingFactor(float alpha)
-{
-    smoothingFactor = std::clamp(alpha, 0.0f, 1.0f);
-}
-
-float DynamicPIDAxis::getVelocity() const
-{
-    return currentVelocity;
+    return output;
 }
 
 void DynamicPIDAxis::reset()
 {
-    totalOutput = 0.0f;
-    previousError = 0.0f;
-    previousSmoothedOutput = 0.0f;
-    integralAccum = 0.0f;
+    integral = 0.0f;
+    lastError = 0.0f;
     frameCount = 0;
-    currentVelocity = 0.0f;
-    errorChangeRate = 0.0f;
-    previousVelocity = 0.0f;
-    hasReached = false;
-    dynamicJudgmentThreshold = 0.0f;
-    stableCount = 0;
 }
 
-#endif // _WIN32
+void DynamicPIDAxis::setGains(float p, float i, float d)
+{
+    kp = p;
+    ki = i;
+    kd = d;
+}
+
+void DynamicPIDAxis::setThresholdParams(float baseThreshold, float minCoef, float maxCoef, float sharpness, float midpoint)
+{
+    dynamicThresholdBase = baseThreshold;
+    minCoefficient = minCoef;
+    maxCoefficient = maxCoef;
+    transitionSharpness = sharpness;
+    dynamicTransitionMidpoint = midpoint;
+}
+
+void DynamicPIDAxis::setLimits(float integralLim, float outputLim)
+{
+    integralLimit = integralLim;
+    outputLimit = outputLim;
+}
+
+#endif
