@@ -2039,7 +2039,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "model_path", "");
 	obs_data_set_default_int(settings, "model_version", static_cast<int>(IYoloModel::Version::YOLOv8));
-	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
+	obs_data_set_default_string(settings, "use_gpu", USEGPU_DML);
 #ifdef _WIN32
 	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
 #endif
@@ -2544,17 +2544,16 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 			tf->useGpuTextureInference = false;
 		}
 		if (tf->useGpuTextureInference) {
-			if (tf->useGPU == "dml") {
-	#ifdef HAVE_ONNXRUNTIME_DML_EP
-				tf->dmlPreprocessor.initialize();
-				obs_log(LOG_INFO, "[YOLO Filter] GPU纹理推理: DML float-buffer 路径");
-	#endif
-			} else if (tf->useGPU == "cuda" || tf->useGPU == "tensorrt") {
-				obs_log(LOG_INFO, "[YOLO Filter] GPU纹理推理: CUDA D3D11 interop 路径 (device=%s)",
+			// Safe path for all EPs: render-thread CPU letterbox → float CHW → ORT EP.
+			// D3D11 cudaGraphics interop is disabled (causes DXGI device-removed / TDR).
+			tf->dmlPreprocessor.initialize();
+			if (tf->useGPU == "cuda" || tf->useGPU == "tensorrt") {
+				obs_log(LOG_INFO, "[YOLO Filter] GPU纹理推理: float-buffer 路径 (device=%s, 无D3D11 interop)",
 					tf->useGPU.c_str());
+			} else if (tf->useGPU == "dml") {
+				obs_log(LOG_INFO, "[YOLO Filter] GPU纹理推理: DML float-buffer 路径");
 			}
 		} else {
-			// invalidate pending slots when disabled
 			tf->cudaReadyIdx.store(-1, std::memory_order_release);
 			tf->dmlReadyIdx.store(-1, std::memory_order_release);
 		}
@@ -4658,42 +4657,8 @@ if (modelSnap) {
 	#ifdef _WIN32
 				bool gpuPathDone = false;
 
-				// 1) CUDA/TRT D3D11 interop path
-				if (!gpuPathDone && filter->useGpuTextureInference &&
-				    modelSnap->isGpuTextureSupported()) {
-					int ridx = filter->cudaReadyIdx.exchange(-1, std::memory_order_acq_rel);
-					if (ridx >= 0 && ridx < 2 && filter->cudaTexSlots[ridx].valid &&
-					    filter->cudaTexSlots[ridx].d3d11Tex) {
-auto slot = filter->cudaTexSlots[ridx];
-							filter->cudaTexSlots[ridx].valid = false;
-							try {
-								newDetections = modelSnap->inferenceFromTexture(
-									slot.d3d11Tex,
-									slot.cropX, slot.cropY, slot.cropW, slot.cropH,
-									slot.fullW, slot.fullH);
-							// empty dets still counts as a successful GPU path
-							gpuPathDone = true;
-							filter->cudaDirectFrames.fetch_add(1, std::memory_order_relaxed);
-							cropX = slot.cropX;
-							cropY = slot.cropY;
-							cropWidth = slot.cropW;
-							cropHeight = slot.cropH;
-							fullWidth = slot.fullW;
-							fullHeight = slot.fullH;
-						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] CUDA texture inference failed: %s", e.what());
-							filter->cudaFallbackFrames.fetch_add(1, std::memory_order_relaxed);
-						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] CUDA texture inference unknown error");
-							filter->cudaFallbackFrames.fetch_add(1, std::memory_order_relaxed);
-						}
-					}
-				}
-
-				// 2) DML float-buffer path
-	#ifdef HAVE_ONNXRUNTIME_DML_EP
-				if (!gpuPathDone && filter->useGpuTextureInference &&
-				    modelSnap->isDmlTextureSupported()) {
+				// Float-buffer path (DML / CUDA / TensorRT). D3D11 interop disabled.
+				if (filter->useGpuTextureInference && modelSnap->isDmlTextureSupported()) {
 					int ridx = filter->dmlReadyIdx.exchange(-1, std::memory_order_acq_rel);
 					if (ridx >= 0 && ridx < 2 && filter->dmlPreprocessedFrames[ridx].valid()) {
 						DmlPreprocessedFrame& pre = filter->dmlPreprocessedFrames[ridx];
@@ -4709,16 +4674,17 @@ auto slot = filter->cudaTexSlots[ridx];
 							fullWidth = pre.fullWidth;
 							fullHeight = pre.fullHeight;
 						} catch (const std::exception& e) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference failed: %s, falling back to CPU", e.what());
+							obs_log(LOG_WARNING, "[YOLO Filter] Preprocessed inference failed: %s, fallback CPU", e.what());
 							filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
 						} catch (...) {
-							obs_log(LOG_WARNING, "[YOLO Filter] DML direct inference unknown error, falling back to CPU");
+							obs_log(LOG_WARNING, "[YOLO Filter] Preprocessed inference unknown error, fallback CPU");
 							filter->dmlFallbackFrames.fetch_add(1, std::memory_order_relaxed);
 						}
 					}
 				}
-	#endif
-				// 3) CPU Mat fallback
+				// Drain any stale D3D11 slots without using them
+				filter->cudaReadyIdx.store(-1, std::memory_order_release);
+
 				if (!gpuPathDone) {
 					newDetections = modelSnap->inference(inferenceFrame);
 				}
@@ -6210,44 +6176,8 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 
 gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 				if (tex) {
-#ifdef _WIN32
-					// CUDA/TRT: publish D3D11 texture pointer for interop (no stage yet)
-					if (tf->useGpuTextureInference &&
-					    (tf->useGPU == "cuda" || tf->useGPU == "tensorrt") &&
-					    tf->yoloModel && tf->yoloModel->isGpuTextureSupported()) {
-						void* d3dObj = gs_texture_get_obj(tex);
-						if (d3dObj) {
-							int cX = 0, cY = 0;
-							int cW = static_cast<int>(width);
-							int cH = static_cast<int>(height);
-							if (tf->useRegion) {
-								cX = std::max(0, tf->regionX);
-								cY = std::max(0, tf->regionY);
-								cW = std::min(tf->regionWidth, static_cast<int>(width) - cX);
-								cH = std::min(tf->regionHeight, static_cast<int>(height) - cY);
-								if (cW <= 0 || cH <= 0) {
-									cX = 0; cY = 0;
-									cW = static_cast<int>(width);
-									cH = static_cast<int>(height);
-								}
-							}
-							int widx = tf->cudaWriteIdx.load(std::memory_order_relaxed) & 1;
-							auto& slot = tf->cudaTexSlots[widx];
-							slot.d3d11Tex = d3dObj;
-							slot.cropX = cX;
-							slot.cropY = cY;
-							slot.cropW = cW;
-							slot.cropH = cH;
-							slot.fullW = static_cast<int>(width);
-							slot.fullH = static_cast<int>(height);
-							slot.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-								std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-							slot.valid = true;
-							tf->cudaReadyIdx.store(widx, std::memory_order_release);
-							tf->cudaWriteIdx.store(widx ^ 1, std::memory_order_relaxed);
-						}
-					}
-#endif
+					// D3D11 CUDA interop disabled (cross-thread register → device removed).
+					// GPU texture path uses stagesurface BGRA → float letterbox below.
 					
 					if (!tf->stagesurface || 
 					    gs_stagesurface_get_width(tf->stagesurface) != width || 
@@ -6361,27 +6291,28 @@ gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 							tf->crosshairCropOffsetY = y0;
 						}
 						
-								// === DML ?? BGRA->DmlPreprocessor->float CHW buffer ===
-								#ifdef HAVE_ONNXRUNTIME_DML_EP
-								if (tf->useGpuTextureInference && tf->yoloModel && tf->yoloModel->isDmlTextureSupported()) {
-									int dstW = (tf->inputResolution > 0) ? tf->inputResolution : 640;
-									int dstH = dstW;
-									// ??? CPU ?? ???? crop ?? (useRegion ????)??DML ?????? crop ??? BGRA??
-									int dmlCropX = 0, dmlCropY = 0;
-									int dmlCropW = static_cast<int>(width);
-									int dmlCropH = static_cast<int>(height);
-									if (tf->useRegion) {
-										dmlCropX = std::max(0, tf->regionX);
-										dmlCropY = std::max(0, tf->regionY);
-										dmlCropW = std::min(tf->regionWidth, static_cast<int>(width) - dmlCropX);
-										dmlCropH = std::min(tf->regionHeight, static_cast<int>(height) - dmlCropY);
-										if (dmlCropW <= 0 || dmlCropH <= 0) {
-											dmlCropX = 0; dmlCropY = 0;
-											dmlCropW = static_cast<int>(width);
-											dmlCropH = static_cast<int>(height);
+// GPU texture path: BGRA → letterbox float CHW (render thread), for DML/CUDA/TRT
+									if (tf->useGpuTextureInference && tf->yoloModel &&
+									    tf->yoloModel->isDmlTextureSupported()) {
+										int dstW = tf->yoloModel->getInputWidth();
+										int dstH = tf->yoloModel->getInputHeight();
+										if (dstW <= 0) dstW = (tf->inputResolution > 0) ? tf->inputResolution : 640;
+										if (dstH <= 0) dstH = dstW;
+										int dmlCropX = 0, dmlCropY = 0;
+										int dmlCropW = static_cast<int>(width);
+										int dmlCropH = static_cast<int>(height);
+										if (tf->useRegion) {
+											dmlCropX = std::max(0, tf->regionX);
+											dmlCropY = std::max(0, tf->regionY);
+											dmlCropW = std::min(tf->regionWidth, static_cast<int>(width) - dmlCropX);
+											dmlCropH = std::min(tf->regionHeight, static_cast<int>(height) - dmlCropY);
+											if (dmlCropW <= 0 || dmlCropH <= 0) {
+												dmlCropX = 0; dmlCropY = 0;
+												dmlCropW = static_cast<int>(width);
+												dmlCropH = static_cast<int>(height);
+											}
 										}
-									}
-									const uint8_t* srcPtr = video_data + dmlCropY * static_cast<int>(linesize) + dmlCropX * 4;
+										const uint8_t* srcPtr = video_data + dmlCropY * static_cast<int>(linesize) + dmlCropX * 4;
 										int widx = tf->dmlWriteIdx.load(std::memory_order_relaxed) & 1;
 										DmlPreprocessedFrame& tmpFrame = tf->dmlPreprocessedFrames[widx];
 										if (tf->dmlPreprocessor.preprocessFromBgra(
@@ -6398,8 +6329,7 @@ gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 											tf->dmlReadyIdx.store(widx, std::memory_order_release);
 											tf->dmlWriteIdx.store(widx ^ 1, std::memory_order_relaxed);
 										}
-								}
-								#endif
+									}
 						gs_stagesurface_unmap(tf->stagesurface);
 					}
 				}

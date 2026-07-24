@@ -66,6 +66,8 @@ public:
     int getNumClasses() const override { return numClasses_; }
     const std::vector<std::string>& getClassNames() const override { return classNames_; }
     DmlPreprocessor* getDmlPreprocessor() const override { return dmlPreprocessor_.get(); }
+    /** Runtime device label: cpu | cuda | dml | tensorrt | cuda+cpu_pre (EP ok, preprocess CPU) */
+    const std::string &getRuntimeDevice() const { return currentDevice_; }
 
 private:
     struct LetterboxInfo {
@@ -95,10 +97,23 @@ private:
         const cv::Size& originalImageSize
     );
 
+    /** Resolve numBoxes/numElements from ORT shape + version + layout flag. */
+    void resolveOutputLayout(const std::vector<int64_t>& outputShape, int& numBoxes, int& numElements) const;
+    /** Detect channels-first vs box-major and numClasses from model output dims. */
+    void detectOutputLayoutFromShape(const std::vector<int64_t>& shape);
+
     std::vector<Detection> postprocessYOLOv11(
         const float* rawOutput,
         int numBoxes,
         int numClasses,
+        const LetterboxInfo& letterboxInfo,
+        const cv::Size& originalImageSize
+    );
+
+    /** Ultralytics / RT end2end NMS export: [1, max_det, 6] = x1,y1,x2,y2,conf,cls */
+    std::vector<Detection> postprocessEnd2End(
+        const float* rawOutput,
+        int numBoxes,
         const LetterboxInfo& letterboxInfo,
         const cv::Size& originalImageSize
     );
@@ -140,6 +155,11 @@ private:
     int inputWidth_;
     int inputHeight_;
     int numClasses_;
+    /** true: output [1, C, N] channel-major (standard Ultralytics v8/v11)
+     *  false: output [1, N, C] box-major (v5 / some exports e.g. [1,6300,9]) */
+    bool outputChannelsFirst_ = true;
+    /** true: [1, max_det, 6] already-NMS export (x1 y1 x2 y2 conf cls) e.g. cs2.onnx */
+    bool end2endNmsOutput_ = false;
 
     std::vector<std::string> classNames_;
 
@@ -168,14 +188,15 @@ private:
     std::vector<int64_t> outputShapeCache_;
     size_t outputElementCount_ = 0;
     std::unique_ptr<Ort::MemoryInfo> cpuMemInfo_;   // 持久 CPU MemoryInfo
-    Ort::Value cpuInputTensor_{nullptr};           // 复用，缓冲指针不变则不重建
-    Ort::Value cpuOutputTensor_{nullptr};
+    // Heap Ort::Value — NEVER construct Ort::Value in ModelYOLO ctor (can AV if ORT not ready)
+    std::unique_ptr<Ort::Value> cpuInputTensor_;
+    std::unique_ptr<Ort::Value> cpuOutputTensor_;
     bool cpuInputTensorFp16_ = false;
     bool cpuOutputTensorFp16_ = false;
     size_t cpuInputTensorElems_ = 0;
     size_t cpuOutputTensorElems_ = 0;
-    bool useIOBinding_;
-    bool isFp16Model_;  // 是否为FP16模型
+    bool useIOBinding_ = false;
+    bool isFp16Model_ = false;
     bool isFp16Output_ = false;
 
     void ensureCpuMemInfo();
@@ -191,27 +212,26 @@ private:
     int letterboxLastPadY_ = -1;
     
     // === 阶段1：GPU持久内存 ===
-    bool useGpuMemory_;
+    bool useGpuMemory_ = false;
     std::string currentDevice_;
     std::unique_ptr<Ort::Allocator> gpuAllocator_;
-    Ort::Value gpuInputTensor_;
-    Ort::Value gpuOutputTensor_;
+    std::unique_ptr<Ort::Value> gpuInputTensor_;
+    std::unique_ptr<Ort::Value> gpuOutputTensor_;
     std::unique_ptr<Ort::MemoryInfo> gpuMemInfo_;
     
-    // === 阶段2：CUDA纹理共享 ===
-    bool cudaInteropInitialized_;
-    void* cudaStream_;
-    // Cached register: only valid while the same ID3D11Texture2D* is live
-    void* cudaRegisteredTex_;                 // last registered ID3D11Texture2D*
-    cudaGraphicsResource_t cudaResource_;
-    void* cudaInputBuffer_;                   // device float CHW (cudaMalloc)
-    size_t cudaInputBufferBytes_;
-    void* cudaOutputBuffer_;                  // device float output (optional)
-    size_t cudaOutputBufferBytes_;
-    void* cudaBgraStaging_;                   // device BGRA for host fallback
-    size_t cudaBgraStagingBytes_;
-    std::unique_ptr<Ort::MemoryInfo> cudaMemInfo_; // "Cuda" device MemoryInfo
-    Ort::Value cudaInputTensor_{nullptr};     // wraps cudaInputBuffer_
+    // === 阶段2：CUDA纹理共享（DML build may leave unused） ===
+    bool cudaInteropInitialized_ = false;
+    void* cudaStream_ = nullptr;
+    void* cudaRegisteredTex_ = nullptr;
+    cudaGraphicsResource_t cudaResource_ = nullptr;
+    void* cudaInputBuffer_ = nullptr;
+    size_t cudaInputBufferBytes_ = 0;
+    void* cudaOutputBuffer_ = nullptr;
+    size_t cudaOutputBufferBytes_ = 0;
+    void* cudaBgraStaging_ = nullptr;
+    size_t cudaBgraStagingBytes_ = 0;
+    std::unique_ptr<Ort::MemoryInfo> cudaMemInfo_;
+    std::unique_ptr<Ort::Value> cudaInputTensor_;
     
     // === DML纹理共享 ===
     bool dmlInteropInitialized_;

@@ -128,6 +128,7 @@ LetterboxParams calculateLetterboxParams(
     int dstWidth,
     int dstHeight
 ) {
+    // Align with AiMod / ModelYOLO: round unpad + round pad
     LetterboxParams params;
     params.srcWidth = srcWidth;
     params.srcHeight = srcHeight;
@@ -138,11 +139,17 @@ LetterboxParams calculateLetterboxParams(
     float scaleY = static_cast<float>(dstHeight) / srcHeight;
     params.scale = (scaleX < scaleY) ? scaleX : scaleY;
 
-    int newWidth = static_cast<int>(srcWidth * params.scale);
-    int newHeight = static_cast<int>(srcHeight * params.scale);
+    int newWidth = static_cast<int>(srcWidth * params.scale + 0.5f);
+    int newHeight = static_cast<int>(srcHeight * params.scale + 0.5f);
+    if (newWidth < 1) newWidth = 1;
+    if (newHeight < 1) newHeight = 1;
+    if (newWidth > dstWidth) newWidth = dstWidth;
+    if (newHeight > dstHeight) newHeight = dstHeight;
 
-    params.padX = (dstWidth - newWidth) / 2;
-    params.padY = (dstHeight - newHeight) / 2;
+    float dw = (dstWidth - newWidth) * 0.5f;
+    float dh = (dstHeight - newHeight) * 0.5f;
+    params.padX = static_cast<int>(dw - 0.1f + 0.5f);
+    params.padY = static_cast<int>(dh - 0.1f + 0.5f);
 
     return params;
 }

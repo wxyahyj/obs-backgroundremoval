@@ -1413,7 +1413,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "model_path", "");
 	obs_data_set_default_int(settings, "model_version", static_cast<int>(IYoloModel::Version::YOLOv8));
-	obs_data_set_default_string(settings, "use_gpu", USEGPU_CPU);
+	obs_data_set_default_string(settings, "use_gpu", USEGPU_DML);
 #ifdef _WIN32
 	obs_data_set_default_bool(settings, "use_gpu_texture_inference", false);
 #endif

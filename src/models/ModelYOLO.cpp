@@ -2,6 +2,7 @@
 #include <plugin-support.h>
 #include <onnxruntime_cxx_api.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <numeric>
 
@@ -98,33 +99,34 @@ static void convertHalfBufferToFloat(const Ort::Float16_t* src, float* dst, size
 
 
 ModelYOLO::LetterboxInfo ModelYOLO::calculateLetterboxParams(int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
+    // Align with AiMod: scale + round unpad + round pad (training/export consistent)
     LetterboxInfo info;
     
     float scaleX = static_cast<float>(dstWidth) / srcWidth;
     float scaleY = static_cast<float>(dstHeight) / srcHeight;
     info.scale = std::min(scaleX, scaleY);
     
-    int newWidth = static_cast<int>(srcWidth * info.scale);
-    int newHeight = static_cast<int>(srcHeight * info.scale);
+    int newWidth = static_cast<int>(std::round(srcWidth * info.scale));
+    int newHeight = static_cast<int>(std::round(srcHeight * info.scale));
+    newWidth = std::max(1, std::min(newWidth, dstWidth));
+    newHeight = std::max(1, std::min(newHeight, dstHeight));
     
-    info.padX = (dstWidth - newWidth) / 2;
-    info.padY = (dstHeight - newHeight) / 2;
+    float dw = (dstWidth - newWidth) * 0.5f;
+    float dh = (dstHeight - newHeight) * 0.5f;
+    info.padX = static_cast<int>(std::round(dw - 0.1f));
+    info.padY = static_cast<int>(std::round(dh - 0.1f));
     
     return info;
 }
 
 ModelYOLO::LetterboxInfo ModelYOLO::letterbox(const cv::Mat& input, cv::Mat& output) {
-    LetterboxInfo info;
+    // Same AiMod letterbox math as calculateLetterboxParams (must match postprocess inverse)
+    LetterboxInfo info = calculateLetterboxParams(input.cols, input.rows, inputWidth_, inputHeight_);
     
-    float scaleX = static_cast<float>(inputWidth_) / input.cols;
-    float scaleY = static_cast<float>(inputHeight_) / input.rows;
-    info.scale = std::min(scaleX, scaleY);
-    
-    int newWidth = static_cast<int>(input.cols * info.scale);
-    int newHeight = static_cast<int>(input.rows * info.scale);
-    
-    info.padX = (inputWidth_ - newWidth) / 2;
-    info.padY = (inputHeight_ - newHeight) / 2;
+    int newWidth = static_cast<int>(std::round(input.cols * info.scale));
+    int newHeight = static_cast<int>(std::round(input.rows * info.scale));
+    newWidth = std::max(1, std::min(newWidth, inputWidth_));
+    newHeight = std::max(1, std::min(newHeight, inputHeight_));
     
     if (resizedBuffer_.rows != newHeight || resizedBuffer_.cols != newWidth || resizedBuffer_.type() != input.type()) {
         resizedBuffer_.create(newHeight, newWidth, input.type());
@@ -159,66 +161,13 @@ ModelYOLO::ModelYOLO(Version version)
       inputHeight_(640),
       numClasses_(80),
       inputBufferSize_(0),
-      useIOBinding_(false),
-      useGpuMemory_(false),
-      gpuAllocator_(nullptr),
-      gpuMemInfo_(nullptr),
-      cudaInteropInitialized_(false),
-      cudaStream_(nullptr),
-      cudaRegisteredTex_(nullptr),
-      cudaResource_(nullptr),
-      cudaInputBuffer_(nullptr),
-      cudaInputBufferBytes_(0),
-      cudaOutputBuffer_(nullptr),
-      cudaOutputBufferBytes_(0),
-      cudaBgraStaging_(nullptr),
-      cudaBgraStagingBytes_(0),
       dmlInteropInitialized_(false),
-      dmlPreprocessor_(nullptr),
-      lastLatencyLogTime_(std::chrono::steady_clock::now()),
-      inferenceThreadRunning_(false),
-      isFp16Model_(false)
+      inferenceThreadRunning_(false)
 {
-    obs_log(LOG_INFO, "[ModelYOLO] Initialized (Version: %d)", static_cast<int>(version));
-    
-    try {
-        std::string instanceName{"YOLOModel"};
-        env_ = std::make_unique<Ort::Env>(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, instanceName.c_str());
-    } catch (const std::exception& e) {
-        obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize ORT: %s", e.what());
-    }
-    
-    // 启动推理线程
-    inferenceThreadRunning_ = true;
-    inferenceThread_ = std::thread([this]() {
-        while (inferenceThreadRunning_) {
-            std::unique_ptr<InferenceTask> task;
-            
-            {
-                std::unique_lock<std::mutex> lock(inferenceTasksMutex_);
-                inferenceTasksCV_.wait(lock, [this]() { 
-                    return !inferenceThreadRunning_ || !inferenceTasks_.empty(); 
-                });
-                
-                if (!inferenceThreadRunning_) break;
-                
-                if (!inferenceTasks_.empty()) {
-                    task = std::move(inferenceTasks_.front());
-                    inferenceTasks_.pop();
-                }
-            }
-            
-            if (task) {
-                try {
-                    std::vector<Detection> results = doInference(task->input);
-                    task->promise.set_value(results);
-                } catch (const std::exception& e) {
-                    obs_log(LOG_ERROR, "[ModelYOLO] Async inference error: %s", e.what());
-                    task->promise.set_value({});
-                }
-            }
-        }
-    });
+    // Minimal ctor: no Ort::Env, no Ort::Value members, no worker thread.
+    // Ort::Env + worker start in loadModel().
+    lastLatencyLogTime_ = std::chrono::steady_clock::now();
+    obs_log(LOG_INFO, "[ModelYOLO] Constructed (Version: %d)", static_cast<int>(version));
 }
 
 ModelYOLO::~ModelYOLO() {
@@ -246,14 +195,65 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
     
     std::string currentUseGPU = useGPU;
     bool gpuFailed = false;
+
+    // Lazy Ort::Env
+    if (!env_) {
+        try {
+            env_ = std::make_unique<Ort::Env>(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, "YOLOModel");
+            obs_log(LOG_INFO, "[ModelYOLO] Ort::Env created");
+        } catch (const std::exception& e) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create Ort::Env: %s", e.what());
+            return;
+        } catch (...) {
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to create Ort::Env (unknown)");
+            return;
+        }
+    }
+
+    // Lazy async inference worker
+    if (!inferenceThreadRunning_) {
+        inferenceThreadRunning_ = true;
+        inferenceThread_ = std::thread([this]() {
+            while (inferenceThreadRunning_) {
+                std::unique_ptr<InferenceTask> task;
+                {
+                    std::unique_lock<std::mutex> lock(inferenceTasksMutex_);
+                    inferenceTasksCV_.wait(lock, [this]() {
+                        return !inferenceThreadRunning_ || !inferenceTasks_.empty();
+                    });
+                    if (!inferenceThreadRunning_) break;
+                    if (!inferenceTasks_.empty()) {
+                        task = std::move(inferenceTasks_.front());
+                        inferenceTasks_.pop();
+                    }
+                }
+                if (task) {
+                    try {
+                        task->promise.set_value(doInference(task->input));
+                    } catch (const std::exception& e) {
+                        obs_log(LOG_ERROR, "[ModelYOLO] Async inference error: %s", e.what());
+                        task->promise.set_value({});
+                    } catch (...) {
+                        task->promise.set_value({});
+                    }
+                }
+            }
+        });
+    }
     
     try {
         Ort::SessionOptions sessionOptions;
-        sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        // AiMod: DML uses BASIC; ALL can hurt DML stability. Other EPs keep ALL.
+        if (currentUseGPU == "dml") {
+            sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
+        } else {
+            sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        }
         
         obs_log(LOG_INFO, "[ModelYOLO] Using device: %s", currentUseGPU.c_str());
         
         if (currentUseGPU != "cpu") {
+            // AiMod pattern: DisableMemPattern + SEQUENTIAL for DML/GPU EPs
             sessionOptions.DisableMemPattern();
             sessionOptions.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
             
@@ -265,24 +265,35 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
             sessionOptions.SetIntraOpNumThreads(numThreads);
         }
         
-	#ifdef HAVE_ONNXRUNTIME_CUDA_EP
-	        if (currentUseGPU == "cuda") {
-	            obs_log(LOG_INFO, "[ModelYOLO] Attempting to enable CUDA execution provider...");
-	            try {
-	                obs_log(LOG_INFO, "[ModelYOLO] Loading CUDA execution provider with device ID 0");
-	                // 通过 Ort::GetApi 运行时 API 表调用, 不依赖 .lib 导出
-	                OrtCUDAProviderOptions cuda_options{};
-	                cuda_options.device_id = 0;
-	                Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA(
-	                    static_cast<OrtSessionOptions*>(sessionOptions), &cuda_options);
-	                obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled successfully");
-	            } catch (const std::exception& e) {
-	                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
-	                gpuFailed = true;
-	                currentUseGPU = "cpu";
-	            }
-	        }
-	#endif
+		#ifdef HAVE_ONNXRUNTIME_CUDA_EP
+		        if (currentUseGPU == "cuda") {
+		            obs_log(LOG_INFO, "[ModelYOLO] Attempting to enable CUDA execution provider...");
+		            try {
+		                obs_log(LOG_INFO, "[ModelYOLO] Loading CUDA execution provider with device ID 0");
+		                // 通过 Ort::GetApi 运行时 API 表调用, 不依赖 .lib 导出
+		                OrtCUDAProviderOptions cuda_options{};
+		                cuda_options.device_id = 0;
+		                // MUST check OrtStatus — missing cudnn DLL often returns FAIL without C++ throw
+		                OrtStatus *st = Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA(
+		                    static_cast<OrtSessionOptions *>(sessionOptions), &cuda_options);
+		                if (st != nullptr) {
+		                    const char *msg = Ort::GetApi().GetErrorMessage(st);
+		                    obs_log(LOG_WARNING,
+		                            "[ModelYOLO] Failed to enable CUDA EP: %s, falling back to CPU",
+		                            msg ? msg : "(null)");
+		                    Ort::GetApi().ReleaseStatus(st);
+		                    gpuFailed = true;
+		                    currentUseGPU = "cpu";
+		                } else {
+		                    obs_log(LOG_INFO, "[ModelYOLO] CUDA execution provider enabled successfully");
+		                }
+		            } catch (const std::exception &e) {
+		                obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable CUDA: %s, falling back to CPU", e.what());
+		                gpuFailed = true;
+		                currentUseGPU = "cpu";
+		            }
+		        }
+		#endif
 #ifdef HAVE_ONNXRUNTIME_ROCM_EP
         if (currentUseGPU == "rocm" && !gpuFailed) {
             try {
@@ -349,9 +360,21 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
 
 #ifdef HAVE_ONNXRUNTIME_DML_EP
         if (currentUseGPU == "dml" && !gpuFailed) {
+            // AiMod-style: C API status check (does not rely on C++ exception alone)
             try {
-                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
-                obs_log(LOG_INFO, "[ModelYOLO] DirectML execution provider enabled");
+                OrtStatus* st = OrtSessionOptionsAppendExecutionProvider_DML(
+                    static_cast<OrtSessionOptions*>(sessionOptions), 0);
+                if (st != nullptr) {
+                    const char* msg = Ort::GetApi().GetErrorMessage(st);
+                    obs_log(LOG_WARNING,
+                            "[ModelYOLO] Failed to enable DirectML: %s, falling back to CPU",
+                            msg ? msg : "(null)");
+                    Ort::GetApi().ReleaseStatus(st);
+                    gpuFailed = true;
+                    currentUseGPU = "cpu";
+                } else {
+                    obs_log(LOG_INFO, "[ModelYOLO] DirectML execution provider enabled (AiMod-style)");
+                }
             } catch (const std::exception& e) {
                 obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable DirectML: %s, falling back to CPU", e.what());
                 gpuFailed = true;
@@ -419,37 +442,18 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                               inputTensor_, outputTensor_);
         
         if (!outputDims_.empty()) {
-            auto shape = outputDims_[0];
-            obs_log(LOG_INFO, "[ModelYOLO] Output shape size: %zu", shape.size());
-            for (size_t i = 0; i < shape.size(); ++i) {
-                obs_log(LOG_INFO, "[ModelYOLO] Output shape[%zu]: %lld", i, shape[i]);
-            }
-            obs_log(LOG_INFO, "[ModelYOLO] Model version: %d", static_cast<int>(version_));
-            
-            int detectedClasses = 80; // default COCO classes
-            
-            if (version_ == Version::YOLOv5 && shape.size() >= 3) {
-                int64_t lastDim = shape[2];
-                if (lastDim > 5) {
-                    detectedClasses = static_cast<int>(lastDim - 5);
+            obs_log(LOG_INFO, "[ModelYOLO] Num graph outputs: %zu", outputDims_.size());
+            for (size_t oi = 0; oi < outputDims_.size(); ++oi) {
+                const auto &shape = outputDims_[oi];
+                obs_log(LOG_INFO, "[ModelYOLO] Output[%zu] rank=%zu", oi, shape.size());
+                for (size_t i = 0; i < shape.size(); ++i) {
+                    obs_log(LOG_INFO, "[ModelYOLO]   shape[%zu]=%lld", i, (long long)shape[i]);
                 }
-                obs_log(LOG_INFO, "[ModelYOLO] YOLOv5 mode: lastDim=%lld, detectedClasses=%d", lastDim, detectedClasses);
-            } else if (shape.size() >= 3) {
-                int64_t elementsDim = shape[1];
-                if (elementsDim > 4) {
-                    detectedClasses = static_cast<int>(elementsDim - 4);
-                }
-                obs_log(LOG_INFO, "[ModelYOLO] YOLOv8/v11 mode: elementsDim=%lld, detectedClasses=%d", elementsDim, detectedClasses);
             }
-            
-            // 验证 detectedClasses 是否合理（一般不会超过 1000 个类别）
-            if (detectedClasses > 0 && detectedClasses < 1000) {
-                numClasses_ = detectedClasses;
-                obs_log(LOG_INFO, "[ModelYOLO] Using numClasses: %d (valid range)", numClasses_);
-            } else {
-                obs_log(LOG_WARNING, "[ModelYOLO] Detected numClasses %d is invalid, using default: 80", detectedClasses);
-                numClasses_ = 80;
-            }
+            obs_log(LOG_INFO, "[ModelYOLO] Model version (user): %d", static_cast<int>(version_));
+            // Layout detection may override version_ (e.g. [1,6300,9]+heads → YOLOv5)
+            detectOutputLayoutFromShape(outputDims_[0]);
+            obs_log(LOG_INFO, "[ModelYOLO] Model version (effective): %d", static_cast<int>(version_));
         }
         
         // 预分配输入缓冲区 + 热路径缓存
@@ -466,59 +470,69 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
         inputBuffer_.resize(inputBufferSize_);
         obs_log(LOG_INFO, "[ModelYOLO] Allocated input buffer size: %zu", inputBufferSize_);
         
-        // 初始化IOBinding（仅GPU模式）
-        if (currentUseGPU != "cpu") {
+        currentDevice_ = currentUseGPU;
+
+        // Pre-allocate host output buffer for postprocess
+        if (!outputDims_.empty()) {
+            size_t outputSize = 1;
+            for (auto dim : outputDims_[0]) {
+                if (dim > 0) outputSize *= static_cast<size_t>(dim);
+            }
+            outputBuffer_.resize(outputSize);
+        }
+
+        // ---- AiMod-style DML path: NO IoBinding, host float blob + session.Run ----
+        if (currentUseGPU == "dml") {
+            useIOBinding_ = false;
+            ioBinding_.reset();
+            // Float preprocess (render-thread letterbox) still useful
+            if (initializeDmlPreprocessor()) {
+                obs_log(LOG_INFO, "[ModelYOLO] AiMod-style DML path: host CreateTensor+Run, float preprocess ON");
+            } else {
+                obs_log(LOG_WARNING, "[ModelYOLO] DML float preprocess init failed (Mat path still works)");
+            }
+        } else if (currentUseGPU != "cpu") {
+            // Non-DML GPU EPs: keep IoBinding optional for later
             try {
                 ioBinding_ = std::make_unique<Ort::IoBinding>(*session_);
-                
-                // 预分配输出缓冲区
-                size_t outputSize = 1;
-                for (auto dim : outputDims_[0]) {
-                    outputSize *= dim;
-                }
-                outputBuffer_.resize(outputSize);
-                
                 useIOBinding_ = true;
-                
-                // 阶段1：初始化GPU持久内存
-                currentDevice_ = currentUseGPU;
                 if (initializeGpuMemory()) {
-                    obs_log(LOG_INFO, "[ModelYOLO] GPU persistent memory initialized successfully");
-                    
-                    // 阶段2：初始化CUDA纹理共享（仅CUDA模式）
+                    obs_log(LOG_INFO, "[ModelYOLO] GPU persistent memory initialized");
                     if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
                         if (initializeCudaInterop()) {
-                            obs_log(LOG_INFO, "[ModelYOLO] CUDA texture interop initialized");
-                        } else {
-                            obs_log(LOG_WARNING, "[ModelYOLO] CUDA interop init failed, texture sharing disabled");
+                            obs_log(LOG_INFO, "[ModelYOLO] CUDA device path ready");
                         }
                     }
-                    
-                    // 初始化DML预处理器（仅DML模式）
-                    if (currentDevice_ == "dml") {
-                        if (initializeDmlPreprocessor()) {
-                            obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized");
-                        } else {
-                            obs_log(LOG_WARNING, "[ModelYOLO] DML preprocessor init failed, texture sharing disabled");
-                        }
+                    if (initializeDmlPreprocessor()) {
+                        obs_log(LOG_INFO, "[ModelYOLO] Preprocessed float path enabled for %s",
+                                currentDevice_.c_str());
                     }
                 } else {
-                    obs_log(LOG_WARNING, "[ModelYOLO] GPU memory init failed, using CPU fallback");
+                    obs_log(LOG_WARNING, "[ModelYOLO] GPU memory init failed (EP may still run)");
+                    if (currentUseGPU == "cuda" || currentUseGPU == "tensorrt") {
+                        currentDevice_ = currentUseGPU + "+cpu_pre";
+                    }
                 }
-                
                 obs_log(LOG_INFO, "[ModelYOLO] IOBinding enabled for GPU optimization");
             } catch (const std::exception& e) {
-                obs_log(LOG_WARNING, "[ModelYOLO] Failed to initialize IOBinding: %s, using standard inference", e.what());
+                obs_log(LOG_WARNING, "[ModelYOLO] IOBinding init failed: %s", e.what());
                 useIOBinding_ = false;
             }
+        } else {
+            currentDevice_ = "cpu";
+            useIOBinding_ = false;
         }
         
         name = "YOLO";
+        // Prefer composite currentDevice_ when set (e.g. cuda+cpu_pre); else currentUseGPU
+        if (currentDevice_.empty())
+            currentDevice_ = currentUseGPU;
         
         obs_log(LOG_INFO, "[ModelYOLO] Model loaded successfully");
         obs_log(LOG_INFO, "  Input size: %dx%d", inputWidth_, inputHeight_);
         obs_log(LOG_INFO, "  Num classes: %d", numClasses_);
-        obs_log(LOG_INFO, "  Device: %s", currentUseGPU.c_str());
+        obs_log(LOG_INFO, "  Device requested/effective EP: %s  runtime=%s", currentUseGPU.c_str(),
+               currentDevice_.c_str());
         
     } catch (const std::exception& e) {
         obs_log(LOG_ERROR, "[ModelYOLO] Failed to load model: %s", e.what());
@@ -633,13 +647,15 @@ void ModelYOLO::ensureCpuInputTensor()
         return;
     }
     if (wantFp16) {
-        cpuInputTensor_ = Ort::Value::CreateTensor<Ort::Float16_t>(
-            *cpuMemInfo_, inputBufferFp16_.data(), elems,
-            inputShapeCache_.data(), inputShapeCache_.size());
+        cpuInputTensor_ = std::make_unique<Ort::Value>(
+            Ort::Value::CreateTensor<Ort::Float16_t>(
+                *cpuMemInfo_, inputBufferFp16_.data(), elems,
+                inputShapeCache_.data(), inputShapeCache_.size()));
     } else {
-        cpuInputTensor_ = Ort::Value::CreateTensor<float>(
-            *cpuMemInfo_, inputBuffer_.data(), elems,
-            inputShapeCache_.data(), inputShapeCache_.size());
+        cpuInputTensor_ = std::make_unique<Ort::Value>(
+            Ort::Value::CreateTensor<float>(
+                *cpuMemInfo_, inputBuffer_.data(), elems,
+                inputShapeCache_.data(), inputShapeCache_.size()));
     }
     cpuInputTensorElems_ = elems;
     cpuInputTensorFp16_ = wantFp16;
@@ -689,13 +705,15 @@ void ModelYOLO::ensureCpuOutputTensor()
         return;
     }
     if (isFp16Output_) {
-        cpuOutputTensor_ = Ort::Value::CreateTensor<Ort::Float16_t>(
-            *cpuMemInfo_, outputBufferFp16_.data(), elems,
-            outputShapeCache_.data(), outputShapeCache_.size());
+        cpuOutputTensor_ = std::make_unique<Ort::Value>(
+            Ort::Value::CreateTensor<Ort::Float16_t>(
+                *cpuMemInfo_, outputBufferFp16_.data(), elems,
+                outputShapeCache_.data(), outputShapeCache_.size()));
     } else {
-        cpuOutputTensor_ = Ort::Value::CreateTensor<float>(
-            *cpuMemInfo_, outputBuffer_.data(), elems,
-            outputShapeCache_.data(), outputShapeCache_.size());
+        cpuOutputTensor_ = std::make_unique<Ort::Value>(
+            Ort::Value::CreateTensor<float>(
+                *cpuMemInfo_, outputBuffer_.data(), elems,
+                outputShapeCache_.data(), outputShapeCache_.size()));
     }
     cpuOutputTensorElems_ = elems;
     cpuOutputTensorFp16_ = isFp16Output_;
@@ -734,44 +752,43 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     
     try {
         auto preprocessStartTime = std::chrono::high_resolution_clock::now();
-        
+
+        // AiMod path: letterbox (round pad) → CHW float host blob → CreateTensor → Run
         cv::Mat letterboxed;
         LetterboxInfo letterboxInfo = letterbox(input, letterboxed);
-        
+        if (inputBuffer_.size() < inputBufferSize_)
+            inputBuffer_.resize(inputBufferSize_);
         preprocessInput(letterboxed, inputBuffer_.data());
-        
-        auto preprocessEndTime = std::chrono::high_resolution_clock::now();
-        latency.preprocessMs = std::chrono::duration<double, std::milli>(preprocessEndTime - preprocessStartTime).count();
-        
-        try {
-            if (isFp16Model_) {
-                if (inputBufferFp16_.size() < inputBufferSize_)
-                    inputBufferFp16_.resize(inputBufferSize_);
-                convertFloatBufferToHalf(inputBuffer_.data(), inputBufferFp16_.data(), inputBufferSize_);
-            }
+        if (isFp16Model_) {
+            if (inputBufferFp16_.size() < inputBufferSize_)
+                inputBufferFp16_.resize(inputBufferSize_);
+            convertFloatBufferToHalf(inputBuffer_.data(), inputBufferFp16_.data(), inputBufferSize_);
+        }
+
+        // AiMod-style for DML (and when IoBinding off): skip persistent Ort::Value
+        const bool aimodSimpleRun = (currentDevice_.find("dml") != std::string::npos) || !useIOBinding_;
+        if (!aimodSimpleRun) {
             ensureCpuInputTensor();
             ensureCpuOutputTensor();
-        } catch (const std::exception& e) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to prepare tensors: %s", e.what());
-            return {};
         }
+
+        auto preprocessEndTime = std::chrono::high_resolution_clock::now();
+        latency.preprocessMs =
+            std::chrono::duration<double, std::milli>(preprocessEndTime - preprocessStartTime)
+                .count();
 
         auto inferenceStartTime = std::chrono::high_resolution_clock::now();
         Ort::RunOptions runOptions;
         std::vector<Ort::Value> outputTensors;
         bool usedBoundOutput = false;
         try {
-            if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()
-                && cpuInputTensor_ && cpuOutputTensor_) {
-                ioBinding_->ClearBoundInputs();
-                ioBinding_->ClearBoundOutputs();
-                ioBinding_->BindInput(inputNamesChar_[0], cpuInputTensor_);
-                ioBinding_->BindOutput(outputNamesChar_[0], cpuOutputTensor_);
-                session_->Run(runOptions, *ioBinding_);
-                usedBoundOutput = true;
-            } else {
-                // fallback: 临时 CreateTensor 视图（仍用成员缓冲）
+            // AiMod-style (DML): host CreateTensor + session.Run, no IoBinding
+            if (aimodSimpleRun || !(useIOBinding_ && ioBinding_ && cpuInputTensor_ && cpuOutputTensor_)) {
                 ensureCpuMemInfo();
+                if (inputShapeCache_.size() != 4) {
+                    inputShapeCache_ = {1, 3, static_cast<int64_t>(inputHeight_),
+                                        static_cast<int64_t>(inputWidth_)};
+                }
                 Ort::Value inT{nullptr};
                 if (isFp16Model_) {
                     inT = Ort::Value::CreateTensor<Ort::Float16_t>(
@@ -785,13 +802,15 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
                 std::vector<Ort::Value> inputTensors;
                 inputTensors.push_back(std::move(inT));
                 outputTensors = session_->Run(
-                    runOptions,
-                    inputNamesChar_.data(),
-                    inputTensors.data(),
-                    inputTensors.size(),
-                    outputNamesChar_.data(),
-                    outputNamesChar_.size()
-                );
+                    runOptions, inputNamesChar_.data(), inputTensors.data(), inputTensors.size(),
+                    outputNamesChar_.data(), outputNamesChar_.size());
+            } else {
+                ioBinding_->ClearBoundInputs();
+                ioBinding_->ClearBoundOutputs();
+                ioBinding_->BindInput(inputNamesChar_[0], *cpuInputTensor_);
+                ioBinding_->BindOutput(outputNamesChar_[0], *cpuOutputTensor_);
+                session_->Run(runOptions, *ioBinding_);
+                usedBoundOutput = true;
             }
         } catch (const Ort::Exception& e) {
             cpuInputTensorElems_ = 0;
@@ -862,15 +881,8 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         }
         
         int numBoxes = 0, numElements = 0;
-        
         try {
-            if (version_ == Version::YOLOv5) {
-                numBoxes = static_cast<int>(outputShape[1]);
-                numElements = static_cast<int>(outputShape[2]);
-            } else {
-                numBoxes = static_cast<int>(outputShape[2]);
-                numElements = static_cast<int>(outputShape[1]);
-            }
+            resolveOutputLayout(outputShape, numBoxes, numElements);
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Failed to parse output shape: %s", e.what());
             return {};
@@ -880,6 +892,12 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
             obs_log(LOG_ERROR, "[ModelYOLO] Invalid output parameters: numBoxes=%d, numElements=%d", numBoxes, numElements);
             return {};
         }
+
+        // Runtime re-detect end2end if shape is [?, max_det, 6]
+        if (!end2endNmsOutput_ && !outputChannelsFirst_ && numElements == 6 && numBoxes <= 1000) {
+            end2endNmsOutput_ = true;
+            obs_log(LOG_INFO, "[ModelYOLO] Runtime promote to end2end-NMS (boxes=%d elems=6)", numBoxes);
+        }
         
         cv::Size originalSize(input.cols, input.rows);
         
@@ -888,19 +906,23 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         std::vector<Detection> detections;
         
         try {
-            switch (version_) {
-                case Version::YOLOv5:
-                    detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, 
-                                                  letterboxInfo, originalSize);
-                    break;
-                case Version::YOLOv8:
-                    detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, 
-                                                  letterboxInfo, originalSize);
-                    break;
-                case Version::YOLOv11:
-                    detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, 
-                                                   letterboxInfo, originalSize);
-                    break;
+            if (end2endNmsOutput_ && numElements == 6) {
+                detections = postprocessEnd2End(outputData, numBoxes, letterboxInfo, originalSize);
+            } else {
+                switch (version_) {
+                    case Version::YOLOv5:
+                        detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, 
+                                                      letterboxInfo, originalSize);
+                        break;
+                    case Version::YOLOv8:
+                        detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, 
+                                                      letterboxInfo, originalSize);
+                        break;
+                    case Version::YOLOv11:
+                        detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, 
+                                                       letterboxInfo, originalSize);
+                        break;
+                }
             }
         } catch (const std::exception& e) {
             obs_log(LOG_ERROR, "[ModelYOLO] Postprocessing exception: %s", e.what());
@@ -913,16 +935,36 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
         // 计算总延迟
         auto totalEndTime = std::chrono::high_resolution_clock::now();
         latency.totalMs = std::chrono::duration<double, std::milli>(totalEndTime - totalStartTime).count();
-        latency.isGpuPath = false;
-        
-        // 添加到统计器
+        {
+            const std::string &dev = currentDevice_;
+            const bool epGpu = dev.find("cuda") != std::string::npos ||
+                               dev.find("tensorrt") != std::string::npos ||
+                               dev.find("dml") != std::string::npos ||
+                               dev.find("rocm") != std::string::npos;
+            latency.isGpuPath = epGpu;
+        }
+
         latencyStats_.addSample(latency);
-        
-        // 定期输出延迟日志
+
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLatencyLogTime_).count() >= LATENCY_LOG_INTERVAL_MS) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLatencyLogTime_).count() >=
+            LATENCY_LOG_INTERVAL_MS) {
             lastLatencyLogTime_ = now;
-            obs_log(LOG_INFO, "[ModelYOLO] 延迟统计 (CPU路径):\n%s", latencyStats_.getSummary().c_str());
+            const std::string &dev = currentDevice_;
+            const char *pathLabel = "CPU EP";
+            if (dev.find("cuda") != std::string::npos || dev.find("tensorrt") != std::string::npos) {
+                // After HAVE_CUDA: preprocess may be GPU (no +cpu_pre) or still CPU
+                if (dev.find("cpu_pre") != std::string::npos)
+                    pathLabel = "CUDA EP · 预处理CPU";
+                else if (useGpuMemory_)
+                    pathLabel = "CUDA EP · 预处理GPU";
+                else
+                    pathLabel = "CUDA EP";
+            } else if (dev.find("dml") != std::string::npos) {
+                pathLabel = "DML EP";
+            }
+            obs_log(LOG_INFO, "[ModelYOLO] 延迟统计 (%s) device=%s:\n%s", pathLabel, dev.c_str(),
+                    latencyStats_.getSummary().c_str());
         }
         
         return detections;
@@ -936,6 +978,110 @@ std::vector<Detection> ModelYOLO::doInference(const cv::Mat& input) {
     } catch (...) {
         obs_log(LOG_ERROR, "[ModelYOLO] Unknown inference exception");
         return {};
+    }
+}
+
+void ModelYOLO::detectOutputLayoutFromShape(const std::vector<int64_t>& shape)
+{
+    // Version is decided by the user's model_version setting (passed into the
+    // constructor as Version), NOT guessed from the output shape. Guessing caused
+    // mis-decodes (e.g. a YOLOv5 objectness model treated as v8 -> objectness read
+    // as class0 -> thousands of air boxes). We only infer layout + numClasses here.
+    outputChannelsFirst_ = true; // default Ultralytics export [1, 4+nc, N]
+    end2endNmsOutput_ = false;
+    int detectedClasses = 80;
+
+    if (shape.size() < 3) {
+        numClasses_ = 80;
+        obs_log(LOG_WARNING, "[ModelYOLO] Output rank < 3, default numClasses=80 channels-first");
+        return;
+    }
+
+    const int64_t d1 = shape[1];
+    const int64_t d2 = shape[2];
+
+    // --- End2end NMS export: [1, max_det, 6] (x1,y1,x2,y2,conf,cls) ---
+    if (d2 == 6 && d1 >= 1 && d1 <= 1000) {
+        end2endNmsOutput_ = true;
+        outputChannelsFirst_ = false;
+        detectedClasses = 80;
+        numClasses_ = detectedClasses;
+        obs_log(LOG_INFO,
+                "[ModelYOLO] end2end-NMS export [1, max_det=%lld, 6] - skip anchor decode",
+                (long long)d1);
+        return;
+    }
+
+    // --- Layout: box-major [1,N,C] vs channels-first [1,C,N] ---
+    // Decide by dimension magnitude only (no version heuristic).
+    const bool looksBoxMajor = (d1 > d2 && d2 >= 5 && d2 <= 512);
+    const bool looksChFirst = (d2 > d1 && d1 >= 5 && d1 <= 512);
+    if (looksBoxMajor) {
+        outputChannelsFirst_ = false;
+    } else if (looksChFirst) {
+        outputChannelsFirst_ = true;
+    } else {
+        // ambiguous (e.g. square dims) - default Ultralytics channels-first
+        outputChannelsFirst_ = true;
+    }
+
+    // --- numClasses from shape, per user-chosen version ---
+    if (!outputChannelsFirst_) {
+        // box-major [1, N, C]
+        detectedClasses = (version_ == Version::YOLOv5)
+                              ? static_cast<int>(d2 - 5)  // 4 xywh + 1 objectness + nc
+                              : static_cast<int>(d2 - 4); // v8/v11: 4 xywh + nc
+    } else {
+        // channels-first [1, C, N]
+        detectedClasses = (version_ == Version::YOLOv5)
+                              ? static_cast<int>(d1 - 5)
+                              : static_cast<int>(d1 - 4);
+    }
+
+    // --- Multi-output raw heads [1,3,H,W,C] are strong evidence of v5/v7 anchor
+    // heads. If present, force v5 regardless of user selection (the raw head
+    // layout is unambiguous). ---
+    if (outputDims_.size() >= 2) {
+        for (size_t oi = 1; oi < outputDims_.size(); ++oi) {
+            const auto &s = outputDims_[oi];
+            if (s.size() == 5 && s[1] == 3 && s[4] >= 6) {
+                version_ = Version::YOLOv5;
+                outputChannelsFirst_ = false;
+                detectedClasses = static_cast<int>(s[4] - 5);
+                obs_log(LOG_WARNING,
+                        "[ModelYOLO] Raw YOLOv5 heads detected (out[%zu] rank5 anchors=3 C=%lld) "
+                        "-> force v5 postprocess nc=%d",
+                        oi, (long long)s[4], detectedClasses);
+                break;
+            }
+        }
+    }
+
+    if (detectedClasses > 0 && detectedClasses < 1000) {
+        numClasses_ = detectedClasses;
+    } else {
+        obs_log(LOG_WARNING, "[ModelYOLO] Detected numClasses %d invalid, default 80", detectedClasses);
+        numClasses_ = 80;
+    }
+    obs_log(LOG_INFO,
+            "[ModelYOLO] version=%d (user-selected) layout=%s N=%lld C=%lld nc=%d",
+            static_cast<int>(version_), outputChannelsFirst_ ? "channels-first" : "box-major",
+            outputChannelsFirst_ ? (long long)d2 : (long long)d1,
+            outputChannelsFirst_ ? (long long)d1 : (long long)d2, numClasses_);
+}
+
+void ModelYOLO::resolveOutputLayout(const std::vector<int64_t>& outputShape, int& numBoxes, int& numElements) const
+{
+    numBoxes = 0;
+    numElements = 0;
+    if (outputShape.size() < 3)
+        return;
+    if (outputChannelsFirst_) {
+        numElements = static_cast<int>(outputShape[1]);
+        numBoxes = static_cast<int>(outputShape[2]);
+    } else {
+        numBoxes = static_cast<int>(outputShape[1]);
+        numElements = static_cast<int>(outputShape[2]);
     }
 }
 
@@ -996,6 +1142,7 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         float w = detection[2];
         float h = detection[3];
 
+        // Same as OBS: boxes are letterbox-pixel xywh (v5)
         float x1 = (cx - w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
         float y1 = (cy - h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
         float x2 = (cx + w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
@@ -1011,7 +1158,8 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         classIds.push_back(maxClassId);
     }
 
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
+    // AiMod/OBS v5: class-aware NMS when classIds provided
+    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
 
     for (int idx : nmsIndices) {
         Detection det;
@@ -1042,80 +1190,160 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
     const LetterboxInfo& letterboxInfo,
     const cv::Size& originalImageSize
 ) {
+    // Pipeline aligned with reference AiMod yolodml (YoloV8/V11):
+    //   1) GenerateProposals in LETTERBOX pixel space
+    //   2) Class-aware NMS (only same label suppresses)  ← key vs class-agnostic
+    //   3) ScaleBoxes: remove pad / scale → original image
+    //   4) Normalize 0..1 for aim/UI
+    // Layout: channels-first [1,C,N] (AiMod/OBS standard) OR box-major [1,N,C]
+    //         auto-detected at load (your [1,6300,9] is box-major).
     std::vector<Detection> detections;
-    std::vector<cv::Rect2f> boxes;
+    std::vector<cv::Rect2f> boxes; // letterbox-pixel xywh for NMS
     std::vector<float> scores;
     std::vector<int> classIds;
 
+    const int stride = 4 + numClasses;
+    const bool chFirst = outputChannelsFirst_;
+    const float lbW = static_cast<float>(inputWidth_ > 0 ? inputWidth_ : 640);
+    const float lbH = static_cast<float>(inputHeight_ > 0 ? inputHeight_ : 640);
+
     for (int i = 0; i < numBoxes; ++i) {
-        float cx = rawOutput[0 * numBoxes + i];
-        float cy = rawOutput[1 * numBoxes + i];
-        float w = rawOutput[2 * numBoxes + i];
-        float h = rawOutput[3 * numBoxes + i];
-
+        float cx, cy, w, h;
         int maxClassId = 0;
-        float maxClassProb = rawOutput[4 * numBoxes + i];
+        float maxClassProb;
 
-        for (int c = 1; c < numClasses; ++c) {
-            float prob = rawOutput[(4 + c) * numBoxes + i];
-            if (prob > maxClassProb) {
-                maxClassProb = prob;
-                maxClassId = c;
+        float secondBest = 0.f;
+        if (chFirst) {
+            // AiMod YoloV8/V11: ptr[c * num_detections + d]
+            cx = rawOutput[0 * numBoxes + i];
+            cy = rawOutput[1 * numBoxes + i];
+            w = rawOutput[2 * numBoxes + i];
+            h = rawOutput[3 * numBoxes + i];
+            maxClassProb = rawOutput[4 * numBoxes + i];
+            maxClassId = 0;
+            for (int c = 1; c < numClasses; ++c) {
+                float prob = rawOutput[(4 + c) * numBoxes + i];
+                if (prob > maxClassProb) {
+                    secondBest = maxClassProb;
+                    maxClassProb = prob;
+                    maxClassId = c;
+                } else if (prob > secondBest) {
+                    secondBest = prob;
+                }
+            }
+        } else {
+            // box-major row: [cx,cy,w,h,cls0..]
+            const float *row = rawOutput + static_cast<size_t>(i) * static_cast<size_t>(stride);
+            cx = row[0];
+            cy = row[1];
+            w = row[2];
+            h = row[3];
+            maxClassProb = row[4];
+            maxClassId = 0;
+            for (int c = 1; c < numClasses; ++c) {
+                float prob = row[4 + c];
+                if (prob > maxClassProb) {
+                    secondBest = maxClassProb;
+                    maxClassProb = prob;
+                    maxClassId = c;
+                } else if (prob > secondBest) {
+                    secondBest = prob;
+                }
             }
         }
 
-        float confidence = maxClassProb;
-
-        if (confidence < confidenceThreshold_) {
+        const float confidence = maxClassProb;
+        if (confidence < confidenceThreshold_)
             continue;
+        // Reject ambiguous peaks (flat class scores → typical empty-region noise)
+        if (numClasses > 1) {
+            const float margin = confidence - secondBest;
+            if (margin < 0.05f)
+                continue;
         }
 
-        bool isTargetClass = false;
-        if (targetClassId_ >= 0) {
+        // Optional class filter (empty = all classes, same as AiMod/OBS default)
+        bool isTargetClass = true;
+        if (targetClassId_ >= 0)
             isTargetClass = (maxClassId == targetClassId_);
-        } else if (!targetClasses_.empty()) {
-            isTargetClass = targetClasses_.count(maxClassId);
-        } else {
-            isTargetClass = true;
-        }
-        
-        if (!isTargetClass) {
+        else if (!targetClasses_.empty())
+            isTargetClass = targetClasses_.count(maxClassId) != 0;
+        if (!isTargetClass)
             continue;
+
+        // AiMod: keep boxes in letterbox pixel space for NMS (left/top/w/h)
+        float lcx = cx, lcy = cy, lw = w, lh = h;
+        // Some exports normalize 0..1 to input size
+        if (std::max(std::max(std::fabs(cx), std::fabs(cy)), std::max(std::fabs(w), std::fabs(h))) <=
+            2.0f) {
+            lcx = cx * lbW;
+            lcy = cy * lbH;
+            lw = w * lbW;
+            lh = h * lbH;
         }
+        // Clamp to letterbox canvas — unclamped ghosts often sit just outside pad
+        lcx = std::max(0.f, std::min(lcx, lbW));
+        lcy = std::max(0.f, std::min(lcy, lbH));
+        lw = std::max(1.f, std::min(lw, lbW));
+        lh = std::max(1.f, std::min(lh, lbH));
+        const float left = lcx - lw * 0.5f;
+        const float top = lcy - lh * 0.5f;
+        if (lw < 1.f || lh < 1.f)
+            continue;
 
-        float x1 = (cx - w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
-        float y1 = (cy - h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
-        float x2 = (cx + w / 2.0f - letterboxInfo.padX) / letterboxInfo.scale;
-        float y2 = (cy + h / 2.0f - letterboxInfo.padY) / letterboxInfo.scale;
-
-        x1 = std::max(0.0f, std::min(x1, static_cast<float>(originalImageSize.width)));
-        y1 = std::max(0.0f, std::min(y1, static_cast<float>(originalImageSize.height)));
-        x2 = std::max(0.0f, std::min(x2, static_cast<float>(originalImageSize.width)));
-        y2 = std::max(0.0f, std::min(y2, static_cast<float>(originalImageSize.height)));
-
-        boxes.push_back(cv::Rect2f(x1, y1, x2 - x1, y2 - y1));
+        boxes.emplace_back(left, top, lw, lh);
         scores.push_back(confidence);
         classIds.push_back(maxClassId);
     }
 
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_);
+    // AiMod NMSBoxes: class-aware (pass classIds)
+    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
+
+    const float scale = std::max(letterboxInfo.scale, 1e-6f);
+    const float padX = static_cast<float>(letterboxInfo.padX);
+    const float padY = static_cast<float>(letterboxInfo.padY);
+    const float imgW = static_cast<float>(std::max(1, originalImageSize.width));
+    const float imgH = static_cast<float>(std::max(1, originalImageSize.height));
 
     for (int idx : nmsIndices) {
+        // AiMod ScaleBoxes: (x - pad) / scale
+        float x = (boxes[idx].x - padX) / scale;
+        float y = (boxes[idx].y - padY) / scale;
+        float w = boxes[idx].width / scale;
+        float h = boxes[idx].height / scale;
+
+        // clamp to image
+        float x2 = x + w;
+        float y2 = y + h;
+        x = std::max(0.f, std::min(x, imgW));
+        y = std::max(0.f, std::min(y, imgH));
+        x2 = std::max(0.f, std::min(x2, imgW));
+        y2 = std::max(0.f, std::min(y2, imgH));
+        w = x2 - x;
+        h = y2 - y;
+        if (w < 1.f || h < 1.f)
+            continue;
+        // Drop tiny noise / full-frame garbage after scale (pixel space)
+        const float areaFrac = (w * h) / (imgW * imgH);
+        if (areaFrac < 0.0008f || areaFrac > 0.85f)
+            continue;
+
         Detection det;
         det.classId = classIds[idx];
-        det.className = (det.classId < classNames_.size())
-                        ? classNames_[det.classId]
-                        : "Class_" + std::to_string(det.classId);
+        det.className = (det.classId < static_cast<int>(classNames_.size()))
+                            ? classNames_[static_cast<size_t>(det.classId)]
+                            : "Class_" + std::to_string(det.classId);
         det.confidence = scores[idx];
-
-        det.x = boxes[idx].x / originalImageSize.width;
-        det.y = boxes[idx].y / originalImageSize.height;
-        det.width = boxes[idx].width / originalImageSize.width;
-        det.height = boxes[idx].height / originalImageSize.height;
-
-        det.centerX = det.x + det.width / 2.0f;
-        det.centerY = det.y + det.height / 2.0f;
-
+        det.x = x / imgW;
+        det.y = y / imgH;
+        det.width = w / imgW;
+        det.height = h / imgH;
+        det.centerX = det.x + det.width * 0.5f;
+        det.centerY = det.y + det.height * 0.5f;
+        // Keep box fully inside [0,1]
+        if (det.x < 0.f || det.y < 0.f || det.x + det.width > 1.02f ||
+            det.y + det.height > 1.02f)
+            continue;
         detections.push_back(det);
     }
 
@@ -1132,6 +1360,124 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv11(
     return postprocessYOLOv8(rawOutput, numBoxes, numClasses, letterboxInfo, originalImageSize);
 }
 
+std::vector<Detection> ModelYOLO::postprocessEnd2End(
+    const float* rawOutput,
+    int numBoxes,
+    const LetterboxInfo& letterboxInfo,
+    const cv::Size& originalImageSize
+) {
+    // Ultralytics / Bing_TF / cs2.onnx style:
+    //   [1, max_det, 6] rows = x1, y1, x2, y2, conf, class_id  (already NMS'd)
+    // Coords are in letterbox pixel space of the model input (320 or 640).
+    std::vector<Detection> detections;
+    if (!rawOutput || numBoxes <= 0)
+        return detections;
+
+    const float scale = std::max(letterboxInfo.scale, 1e-6f);
+    const float padX = static_cast<float>(letterboxInfo.padX);
+    const float padY = static_cast<float>(letterboxInfo.padY);
+    const float imgW = static_cast<float>(std::max(1, originalImageSize.width));
+    const float imgH = static_cast<float>(std::max(1, originalImageSize.height));
+    const float lbW = static_cast<float>(inputWidth_ > 0 ? inputWidth_ : 640);
+    const float lbH = static_cast<float>(inputHeight_ > 0 ? inputHeight_ : 640);
+
+    detections.reserve(static_cast<size_t>(std::min(numBoxes, 300)));
+
+    for (int i = 0; i < numBoxes; ++i) {
+        const float *row = rawOutput + static_cast<size_t>(i) * 6u;
+        float x1 = row[0];
+        float y1 = row[1];
+        float x2 = row[2];
+        float y2 = row[3];
+        float conf = row[4];
+        int classId = static_cast<int>(std::lround(row[5]));
+
+        // Padded / empty slots
+        if (conf < confidenceThreshold_)
+            continue;
+        if (conf < 1e-6f)
+            continue;
+
+        // Class filter (empty = all)
+        bool isTargetClass = true;
+        if (targetClassId_ >= 0)
+            isTargetClass = (classId == targetClassId_);
+        else if (!targetClasses_.empty())
+            isTargetClass = targetClasses_.count(classId) != 0;
+        if (!isTargetClass)
+            continue;
+
+        // Some exports use xywh instead of xyxy — detect if x2,y2 look like w,h
+        // Heuristic: if x2 < x1 or y2 < y1, or (x2,y2) much smaller than typical xyxy max
+        bool looksXywh = (x2 < x1) || (y2 < y1);
+        if (!looksXywh) {
+            // also: if both x2,y2 are small relative to center and x2~w style
+            // Prefer xyxy when x2>x1 && y2>y1 (cs2 / Bing_TF confirmed xyxy)
+            looksXywh = false;
+        }
+
+        float bx1, by1, bw, bh;
+        if (looksXywh) {
+            // treat as cx,cy,w,h
+            const float cx = x1, cy = y1, w = x2, h = y2;
+            bx1 = cx - w * 0.5f;
+            by1 = cy - h * 0.5f;
+            bw = w;
+            bh = h;
+        } else {
+            bx1 = x1;
+            by1 = y1;
+            bw = x2 - x1;
+            bh = y2 - y1;
+        }
+
+        if (bw < 1.f || bh < 1.f)
+            continue;
+
+        // If coords look normalized 0..1, scale to letterbox pixels first
+        if (std::max(std::max(std::fabs(bx1), std::fabs(by1)),
+                     std::max(std::fabs(bw), std::fabs(bh))) <= 2.0f) {
+            bx1 *= lbW;
+            by1 *= lbH;
+            bw *= lbW;
+            bh *= lbH;
+        }
+
+        // Letterbox inverse → original image pixels (AiMod ScaleBoxes)
+        float ox = (bx1 - padX) / scale;
+        float oy = (by1 - padY) / scale;
+        float ow = bw / scale;
+        float oh = bh / scale;
+
+        float ox2 = ox + ow;
+        float oy2 = oy + oh;
+        ox = std::max(0.f, std::min(ox, imgW));
+        oy = std::max(0.f, std::min(oy, imgH));
+        ox2 = std::max(0.f, std::min(ox2, imgW));
+        oy2 = std::max(0.f, std::min(oy2, imgH));
+        ow = ox2 - ox;
+        oh = oy2 - oy;
+        if (ow < 1.f || oh < 1.f)
+            continue;
+
+        Detection det;
+        det.classId = classId;
+        det.className = (classId >= 0 && classId < static_cast<int>(classNames_.size()))
+                            ? classNames_[static_cast<size_t>(classId)]
+                            : "Class_" + std::to_string(classId);
+        det.confidence = conf;
+        det.x = ox / imgW;
+        det.y = oy / imgH;
+        det.width = ow / imgW;
+        det.height = oh / imgH;
+        det.centerX = det.x + det.width * 0.5f;
+        det.centerY = det.y + det.height * 0.5f;
+        detections.push_back(det);
+    }
+
+    return detections;
+}
+
 std::vector<int> ModelYOLO::performNMS(
     const std::vector<cv::Rect2f>& boxes,
     const std::vector<float>& scores,
@@ -1146,6 +1492,22 @@ std::vector<int> ModelYOLO::performNMS(
 
     std::vector<int> keep;
     std::vector<bool> suppressed(boxes.size(), false);
+    // AiMod NMSBoxes: only suppress boxes of the SAME class (label).
+    // When classIds empty → class-agnostic (legacy OBS path).
+    const bool useClass = !classIds.empty() && classIds.size() == boxes.size();
+
+    // Same-class "ghost" boxes next to a real target often have LOW IoU (side-by-side
+    // partials / multi-anchor). Pure IoU NMS keeps them even at nms=0.05.
+    // Also suppress if centers are very close relative to box size (soft-NMS style merge).
+    auto centerDist2 = [](const cv::Rect2f &a, const cv::Rect2f &b) {
+        const float acx = a.x + a.width * 0.5f;
+        const float acy = a.y + a.height * 0.5f;
+        const float bcx = b.x + b.width * 0.5f;
+        const float bcy = b.y + b.height * 0.5f;
+        const float dx = acx - bcx;
+        const float dy = acy - bcy;
+        return dx * dx + dy * dy;
+    };
 
     for (size_t i = 0; i < indices.size(); ++i) {
         int idx = indices[i];
@@ -1156,6 +1518,14 @@ std::vector<int> ModelYOLO::performNMS(
 
         keep.push_back(idx);
 
+        const cv::Rect2f &bi = boxes[idx];
+        // Merge radius: fraction of larger box diagonal (letterbox pixels)
+        const float diag =
+            std::sqrt(bi.width * bi.width + bi.height * bi.height);
+        // 0.45 * diag → kill near-duplicates that barely overlap
+        const float mergeR = std::max(8.f, 0.45f * diag);
+        const float mergeR2 = mergeR * mergeR;
+
         for (size_t j = i + 1; j < indices.size(); ++j) {
             int idx2 = indices[j];
 
@@ -1163,10 +1533,32 @@ std::vector<int> ModelYOLO::performNMS(
                 continue;
             }
 
-            float iou = this->calculateIoU(boxes[idx], boxes[idx2]);
+            // AiMod: if (objects[j].label != label_i) skip
+            if (useClass && classIds[idx] != classIds[idx2]) {
+                continue;
+            }
 
+            const cv::Rect2f &bj = boxes[idx2];
+            float iou = this->calculateIoU(bi, bj);
+
+            // IoU suppress (standard)
             if (iou > nmsThreshold) {
                 suppressed[idx2] = true;
+                continue;
+            }
+
+            // Center-distance suppress for same-class ghosts (IoU may be ~0)
+            if (centerDist2(bi, bj) <= mergeR2) {
+                // Prefer keeping larger / higher-score box (idx already higher score)
+                // Only merge if sizes are comparable (don't swallow a tiny head into body)
+                const float ai = bi.width * bi.height;
+                const float aj = bj.width * bj.height;
+                const float ratio = (ai > 1e-3f && aj > 1e-3f)
+                                       ? (std::min(ai, aj) / std::max(ai, aj))
+                                       : 0.f;
+                if (ratio > 0.25f) { // similar size → ghost duplicate
+                    suppressed[idx2] = true;
+                }
             }
         }
     }
@@ -1188,6 +1580,7 @@ float ModelYOLO::calculateIoU(const cv::Rect2f& a, const cv::Rect2f& b) {
     float areaA = a.width * a.height;
     float areaB = b.width * b.height;
     float unionArea = areaA + areaB - intersection;
+    if (unionArea <= 1e-6f) return 0.f;
 
     return intersection / unionArea;
 }
@@ -1219,9 +1612,14 @@ void ModelYOLO::loadClassNames(const std::string& namesFile) {
         }
     }
 
-    numClasses_ = static_cast<int>(classNames_.size());
+    // Only overwrite numClasses_ if we detected more classes from file,
+    // or if the model hasn't been parsed yet (still default 80).
+    const int fileCount = static_cast<int>(classNames_.size());
+    if (fileCount > numClasses_ || numClasses_ == 80) {
+        numClasses_ = fileCount;
+    }
 
-    obs_log(LOG_INFO, "[ModelYOLO] Loaded %d class names", numClasses_);
+    obs_log(LOG_INFO, "[ModelYOLO] Loaded %d class names (numClasses=%d)", fileCount, numClasses_);
 }
 
 void ModelYOLO::setConfidenceThreshold(float threshold) {
@@ -1273,6 +1671,19 @@ bool ModelYOLO::initializeGpuMemory() {
         if (currentDevice_ == "cuda" || currentDevice_ == "tensorrt") {
 #ifdef HAVE_ONNXRUNTIME_CUDA_EP
 #ifdef HAVE_CUDA
+            // MUST set device before any cudaMalloc / ORT Cuda MemoryInfo
+            {
+                int devCount = 0;
+                if (cudaGetDeviceCount(&devCount) != cudaSuccess || devCount <= 0) {
+                    obs_log(LOG_ERROR, "[ModelYOLO] No CUDA devices for GPU memory");
+                    return false;
+                }
+                if (cudaSetDevice(0) != cudaSuccess) {
+                    obs_log(LOG_ERROR, "[ModelYOLO] cudaSetDevice(0) failed in initializeGpuMemory");
+                    return false;
+                }
+            }
+
             // Real CUDA device memory (NOT CreateCpu — that was a bug).
             cudaMemInfo_ = std::make_unique<Ort::MemoryInfo>(
                 "Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault
@@ -1286,7 +1697,7 @@ bool ModelYOLO::initializeGpuMemory() {
                 cudaFree(cudaInputBuffer_);
                 cudaInputBuffer_ = nullptr;
                 cudaInputBufferBytes_ = 0;
-                cudaInputTensor_ = Ort::Value(nullptr);
+                cudaInputTensor_.reset();
             }
             if (!cudaInputBuffer_) {
                 if (cudaMalloc(&cudaInputBuffer_, inputBytes) != cudaSuccess) {
@@ -1299,13 +1710,14 @@ bool ModelYOLO::initializeGpuMemory() {
 
             std::vector<int64_t> inputShape = {1, 3, inputHeight_, inputWidth_};
             inputShapeCache_ = inputShape;
-            cudaInputTensor_ = Ort::Value::CreateTensor<float>(
-                *cudaMemInfo_,
-                static_cast<float*>(cudaInputBuffer_),
-                inputBytes / sizeof(float),
-                inputShape.data(),
-                inputShape.size()
-            );
+            cudaInputTensor_ = std::make_unique<Ort::Value>(
+                Ort::Value::CreateTensor<float>(
+                    *cudaMemInfo_,
+                    static_cast<float*>(cudaInputBuffer_),
+                    inputBytes / sizeof(float),
+                    inputShape.data(),
+                    inputShape.size()
+                ));
 
             // Optional device output buffer for IoBinding
             if (!outputDims_.empty()) {
@@ -1318,23 +1730,24 @@ bool ModelYOLO::initializeGpuMemory() {
                     cudaFree(cudaOutputBuffer_);
                     cudaOutputBuffer_ = nullptr;
                     cudaOutputBufferBytes_ = 0;
-                    gpuOutputTensor_ = Ort::Value(nullptr);
+                    gpuOutputTensor_.reset();
                 }
                 if (!cudaOutputBuffer_ && outElems > 0) {
                     if (cudaMalloc(&cudaOutputBuffer_, outBytes) == cudaSuccess) {
                         cudaOutputBufferBytes_ = outBytes;
-                        gpuOutputTensor_ = Ort::Value::CreateTensor<float>(
-                            *cudaMemInfo_,
-                            static_cast<float*>(cudaOutputBuffer_),
-                            outElems,
-                            outputDims_[0].data(),
-                            outputDims_[0].size()
-                        );
+                        gpuOutputTensor_ = std::make_unique<Ort::Value>(
+                            Ort::Value::CreateTensor<float>(
+                                *cudaMemInfo_,
+                                static_cast<float*>(cudaOutputBuffer_),
+                                outElems,
+                                outputDims_[0].data(),
+                                outputDims_[0].size()
+                            ));
                     }
                 }
             }
 
-            gpuInputTensor_ = Ort::Value(nullptr); // prefer cudaInputTensor_
+            gpuInputTensor_.reset(); // prefer cudaInputTensor_
             useGpuMemory_ = true;
             obs_log(LOG_INFO, "[ModelYOLO] CUDA device memory allocated: input %dx%d (%zu bytes)",
                     inputWidth_, inputHeight_, inputBytes);
@@ -1371,9 +1784,9 @@ bool ModelYOLO::initializeGpuMemory() {
 }
 
 void ModelYOLO::releaseGpuMemory() {
-    cudaInputTensor_ = Ort::Value(nullptr);
-    gpuInputTensor_ = Ort::Value(nullptr);
-    gpuOutputTensor_ = Ort::Value(nullptr);
+    cudaInputTensor_.reset();
+    gpuInputTensor_.reset();
+    gpuOutputTensor_.reset();
 
     if (gpuAllocator_) {
         gpuAllocator_.reset();
@@ -1419,14 +1832,33 @@ void ModelYOLO::releaseGpuMemory() {
 bool ModelYOLO::initializeCudaInterop() {
 #ifdef HAVE_CUDA
     if (!useGpuMemory_ || !cudaInputBuffer_) {
-        obs_log(LOG_WARNING, "[ModelYOLO] Cannot init CUDA interop: device input buffer not ready");
+        obs_log(LOG_WARNING, "[ModelYOLO] Cannot init CUDA path: device input buffer not ready");
         return false;
     }
     
     try {
+        // Bind CUDA to device 0 (must match ORT CUDA EP device_id and OBS D3D adapter).
+        // Do NOT call cudaGraphicsD3D11RegisterResource on OBS texrender textures from
+        // the inference thread — that causes invalid device ordinal + DXGI device-removed.
+        int devCount = 0;
+        cudaError_t err = cudaGetDeviceCount(&devCount);
+        if (err != cudaSuccess || devCount <= 0) {
+            obs_log(LOG_ERROR, "[ModelYOLO] No CUDA devices: %s",
+                    err != cudaSuccess ? cudaGetErrorString(err) : "count=0");
+            return false;
+        }
+        err = cudaSetDevice(0);
+        if (err != cudaSuccess) {
+            obs_log(LOG_ERROR, "[ModelYOLO] cudaSetDevice(0) failed: %s", cudaGetErrorString(err));
+            return false;
+        }
+        int cur = -1;
+        cudaGetDevice(&cur);
+        obs_log(LOG_INFO, "[ModelYOLO] CUDA active device=%d (count=%d)", cur, devCount);
+
         if (!cudaStream_) {
             cudaStream_t stream;
-            cudaError_t err = cudaStreamCreate(&stream);
+            err = cudaStreamCreate(&stream);
             if (err != cudaSuccess) {
                 obs_log(LOG_ERROR, "[ModelYOLO] Failed to create CUDA stream: %s",
                         cudaGetErrorString(err));
@@ -1436,16 +1868,19 @@ bool ModelYOLO::initializeCudaInterop() {
         }
 
         cudaRegisteredTex_ = nullptr;
-        // cudaResource_ registered lazily on first texture
+        if (cudaResource_) {
+            cudaGraphicsUnregisterResource(cudaResource_);
+            cudaResource_ = nullptr;
+        }
         cudaInteropInitialized_ = true;
-        obs_log(LOG_INFO, "[ModelYOLO] CUDA D3D11 interop initialized (lazy register)");
+        obs_log(LOG_INFO, "[ModelYOLO] CUDA path ready (D3D11 interop disabled; use float-buffer path)");
         return true;
     } catch (const std::exception& e) {
-        obs_log(LOG_ERROR, "[ModelYOLO] CUDA interop init failed: %s", e.what());
+        obs_log(LOG_ERROR, "[ModelYOLO] CUDA path init failed: %s", e.what());
         return false;
     }
 #else
-    obs_log(LOG_WARNING, "[ModelYOLO] CUDA not available for texture interop");
+    obs_log(LOG_WARNING, "[ModelYOLO] CUDA not available");
     return false;
 #endif
 }
@@ -1469,51 +1904,41 @@ void ModelYOLO::releaseCudaInterop() {
 }
 
 bool ModelYOLO::initializeDmlPreprocessor() {
-#ifdef HAVE_ONNXRUNTIME_DML_EP
+    // Name is historical: this enables the float CHW preprocessed path used by
+    // filter GPU-texture mode for DML and CUDA/TRT (CPU letterbox on render thread).
     if (dmlInteropInitialized_) {
         return true;
     }
     
     try {
-        // DmlPreprocessor不再需要传入D3D11设备
-        // 它会从输入纹理动态获取OBS的D3D11设备
         dmlPreprocessor_ = std::make_unique<DmlPreprocessor>();
         if (!dmlPreprocessor_->initialize()) {
-            obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize DML preprocessor");
+            obs_log(LOG_ERROR, "[ModelYOLO] Failed to initialize float preprocessor");
             dmlPreprocessor_.reset();
-
             return false;
         }
         
         dmlInteropInitialized_ = true;
-        obs_log(LOG_INFO, "[ModelYOLO] DML preprocessor initialized successfully");
+        obs_log(LOG_INFO, "[ModelYOLO] Float preprocess path initialized successfully");
         return true;
         
     } catch (const std::exception& e) {
-        obs_log(LOG_ERROR, "[ModelYOLO] DML preprocessor init exception: %s", e.what());
+        obs_log(LOG_ERROR, "[ModelYOLO] Float preprocessor init exception: %s", e.what());
         if (dmlPreprocessor_) {
             dmlPreprocessor_.reset();
-
         }
         return false;
     }
-#else
-    obs_log(LOG_WARNING, "[ModelYOLO] DML not supported in this build");
-    return false;
-#endif
 }
 
 void ModelYOLO::releaseDmlInterop() {
-#ifdef HAVE_ONNXRUNTIME_DML_EP
     if (dmlPreprocessor_) {
         dmlPreprocessor_->release();
-            dmlPreprocessor_.reset();
-
+        dmlPreprocessor_.reset();
     }
     
     dmlInteropInitialized_ = false;
-    obs_log(LOG_INFO, "[ModelYOLO] DML interop released");
-#endif
+    obs_log(LOG_INFO, "[ModelYOLO] Float preprocess path released");
 }
 
 std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
@@ -1623,13 +2048,14 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
                 "Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault);
         }
         if (!cudaInputTensor_) {
-            cudaInputTensor_ = Ort::Value::CreateTensor<float>(
-                *cudaMemInfo_,
-                static_cast<float*>(cudaInputBuffer_),
-                requiredBytes / sizeof(float),
-                inputShapeCache_.data(),
-                inputShapeCache_.size()
-            );
+            cudaInputTensor_ = std::make_unique<Ort::Value>(
+                Ort::Value::CreateTensor<float>(
+                    *cudaMemInfo_,
+                    static_cast<float*>(cudaInputBuffer_),
+                    requiredBytes / sizeof(float),
+                    inputShapeCache_.data(),
+                    inputShapeCache_.size()
+                ));
         }
 
         // FP16 models: D2H convert then CPU tensor (device FP16 path not wired yet)
@@ -1667,9 +2093,9 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
             try {
                 ioBinding_->ClearBoundInputs();
                 ioBinding_->ClearBoundOutputs();
-                ioBinding_->BindInput(inputNamesChar_[0], cudaInputTensor_);
+                ioBinding_->BindInput(inputNamesChar_[0], *cudaInputTensor_);
                 if (gpuOutputTensor_) {
-                    ioBinding_->BindOutput(outputNamesChar_[0], gpuOutputTensor_);
+                    ioBinding_->BindOutput(outputNamesChar_[0], *gpuOutputTensor_);
                 } else {
                     // Let ORT allocate CPU output
                     ensureCpuMemInfo();
@@ -1776,9 +2202,9 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
 
         if (!outputData || outputShape.size() < 3) return {};
 
-        int numBoxes = (version_ == Version::YOLOv5)
-            ? static_cast<int>(outputShape[1])
-            : static_cast<int>(outputShape[2]);
+        int numBoxes = 0, numElements = 0;
+        resolveOutputLayout(outputShape, numBoxes, numElements);
+        if (numBoxes <= 0) return {};
 
         auto postprocessStartTime = std::chrono::high_resolution_clock::now();
         // Letterbox was computed on crop region
@@ -1786,17 +2212,23 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
         // Postprocess in crop-local space; filter remaps using cropX/Y + full size
         cv::Size originalSize(cropW, cropH);
 
-        switch (version_) {
-            case Version::YOLOv5:
-                detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
-                break;
-            case Version::YOLOv8:
-                detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
-                break;
-            case Version::YOLOv11:
-                detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
-                break;
+        if (end2endNmsOutput_ || (!outputChannelsFirst_ && numElements == 6 && numBoxes <= 1000)) {
+            end2endNmsOutput_ = true;
+            detections = postprocessEnd2End(outputData, numBoxes, letterboxInfo, originalSize);
+        } else {
+            switch (version_) {
+                case Version::YOLOv5:
+                    detections = postprocessYOLOv5(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                    break;
+                case Version::YOLOv8:
+                    detections = postprocessYOLOv8(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                    break;
+                case Version::YOLOv11:
+                    detections = postprocessYOLOv11(outputData, numBoxes, numClasses_, letterboxInfo, originalSize);
+                    break;
+            }
         }
+        (void)numElements;
 
         auto postprocessEndTime = std::chrono::high_resolution_clock::now();
         latency.postprocessMs = std::chrono::duration<double, std::milli>(postprocessEndTime - postprocessStartTime).count();
@@ -1831,19 +2263,19 @@ std::vector<Detection> ModelYOLO::inferenceFromTexture(void* d3d11Texture,
 std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedFrame& preprocessedFrame,
                                                           int originalWidth, int originalHeight,
                                                           InferenceLatency* outLatency) {
-#ifdef HAVE_ONNXRUNTIME_DML_EP
+    // AiMod-style: preprocessed host CHW float → CreateTensor → Run (no IoBinding for DML)
     auto totalStartTime = std::chrono::high_resolution_clock::now();
     InferenceLatency latency;
     latency.isGpuPath = true;
     latency.preprocessMs = 0.0;  // preprocessing already done on render thread
     
     if (!session_) {
-        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: session not initialized");
+        obs_log(LOG_ERROR, "[ModelYOLO] Preprocessed inference: session not initialized");
         return {};
     }
     
     if (!preprocessedFrame.valid()) {
-        obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid preprocessed frame");
+        obs_log(LOG_ERROR, "[ModelYOLO] Preprocessed inference: invalid frame");
         return {};
     }
     
@@ -1854,6 +2286,14 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
                 inputWidth_, inputHeight_);
         return {};
     }
+
+    if (inputNamesChar_.empty() || outputNamesChar_.empty()) {
+        inputNamesChar_.clear();
+        outputNamesChar_.clear();
+        for (const auto& name : inputNames_) inputNamesChar_.push_back(name.get());
+        for (const auto& name : outputNames_) outputNamesChar_.push_back(name.get());
+        if (inputNamesChar_.empty() || outputNamesChar_.empty()) return {};
+    }
     
     std::vector<Detection> detections;
     
@@ -1862,7 +2302,6 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
         
         size_t dataSize = preprocessedFrame.data.size();
         if (dataSize != inputBufferSize_) {
-            // 尺寸异常时退回按实际大小（仍写成员缓冲）
             inputBufferSize_ = dataSize;
             cpuInputTensorElems_ = 0;
         }
@@ -1873,22 +2312,20 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
             if (inputBuffer_.size() < dataSize) inputBuffer_.resize(dataSize);
             std::memcpy(inputBuffer_.data(), preprocessedFrame.data.data(), dataSize * sizeof(float));
         }
-        ensureCpuInputTensor();
-        ensureCpuOutputTensor();
+
+        ensureCpuMemInfo();
+        if (inputShapeCache_.size() != 4) {
+            inputShapeCache_ = {1, 3, static_cast<int64_t>(inputHeight_),
+                                static_cast<int64_t>(inputWidth_)};
+        }
 
         Ort::RunOptions runOptions;
         std::vector<Ort::Value> outputTensors;
         bool usedBoundOutput = false;
-        if (useIOBinding_ && ioBinding_ && !inputNamesChar_.empty() && !outputNamesChar_.empty()
-            && cpuInputTensor_ && cpuOutputTensor_) {
-            ioBinding_->ClearBoundInputs();
-            ioBinding_->ClearBoundOutputs();
-            ioBinding_->BindInput(inputNamesChar_[0], cpuInputTensor_);
-            ioBinding_->BindOutput(outputNamesChar_[0], cpuOutputTensor_);
-            session_->Run(runOptions, *ioBinding_);
-            usedBoundOutput = true;
-        } else {
-            ensureCpuMemInfo();
+
+        // Prefer AiMod simple Run for DML; optional IoBinding only if explicitly enabled
+        const bool aimodSimple = (currentDevice_.find("dml") != std::string::npos) || !useIOBinding_;
+        if (aimodSimple || !(ioBinding_ && cpuInputTensor_ && cpuOutputTensor_)) {
             Ort::Value inT{nullptr};
             if (isFp16Model_) {
                 inT = Ort::Value::CreateTensor<Ort::Float16_t>(
@@ -1909,6 +2346,15 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
                 outputNamesChar_.data(),
                 outputNamesChar_.size()
             );
+        } else {
+            ensureCpuInputTensor();
+            ensureCpuOutputTensor();
+            ioBinding_->ClearBoundInputs();
+            ioBinding_->ClearBoundOutputs();
+            ioBinding_->BindInput(inputNamesChar_[0], *cpuInputTensor_);
+            ioBinding_->BindOutput(outputNamesChar_[0], *cpuOutputTensor_);
+            session_->Run(runOptions, *ioBinding_);
+            usedBoundOutput = true;
         }
 
         auto inferenceEndTime = std::chrono::high_resolution_clock::now();
@@ -1962,29 +2408,37 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
             preprocessedFrame.srcWidth, preprocessedFrame.srcHeight,
             inputWidth_, inputHeight_);
         
-        int numBoxes = 0;
-        if (version_ == Version::YOLOv5) {
-            numBoxes = static_cast<int>(outputShape[1]);
+        int numBoxes = 0, numElements = 0;
+        resolveOutputLayout(outputShape, numBoxes, numElements);
+        if (numBoxes <= 0) {
+            obs_log(LOG_ERROR, "[ModelYOLO] DML inference: invalid numBoxes from shape");
+            return {};
+        }
+        if (end2endNmsOutput_ || (!outputChannelsFirst_ && numElements == 6 && numBoxes <= 1000)) {
+            end2endNmsOutput_ = true;
+            detections = postprocessEnd2End(
+                outputData, numBoxes, letterboxInfo,
+                cv::Size(originalWidth, originalHeight));
+        } else if (version_ == Version::YOLOv5) {
             detections = postprocessYOLOv5(
                 outputData, numBoxes, numClasses_,
                 letterboxInfo,
                 cv::Size(originalWidth, originalHeight)
             );
         } else if (version_ == Version::YOLOv8) {
-            numBoxes = static_cast<int>(outputShape[2]);
             detections = postprocessYOLOv8(
                 outputData, numBoxes, numClasses_,
                 letterboxInfo,
                 cv::Size(originalWidth, originalHeight)
             );
         } else if (version_ == Version::YOLOv11) {
-            numBoxes = static_cast<int>(outputShape[2]);
             detections = postprocessYOLOv11(
                 outputData, numBoxes, numClasses_,
                 letterboxInfo,
                 cv::Size(originalWidth, originalHeight)
             );
         }
+        (void)numElements;
         
         auto postprocessEndTime = std::chrono::high_resolution_clock::now();
         latency.postprocessMs = std::chrono::duration<double, std::milli>(postprocessEndTime - postprocessStartTime).count();
@@ -2005,18 +2459,10 @@ std::vector<Detection> ModelYOLO::inferenceFromTextureDml(const DmlPreprocessedF
         return detections;
         
     } catch (const Ort::Exception& e) {
-        obs_log(LOG_ERROR, "[ModelYOLO] DML ONNX Runtime error: %s", e.what());
+        obs_log(LOG_ERROR, "[ModelYOLO] Preprocessed ONNX Runtime error: %s", e.what());
         return {};
     } catch (const std::exception& e) {
-        obs_log(LOG_ERROR, "[ModelYOLO] DML inference error: %s", e.what());
+        obs_log(LOG_ERROR, "[ModelYOLO] Preprocessed inference error: %s", e.what());
         return {};
     }
-#else
-    (void)preprocessedFrame;
-    (void)originalWidth;
-    (void)originalHeight;
-    (void)outLatency;
-    obs_log(LOG_WARNING, "[ModelYOLO] DML not supported in this build");
-    return {};
-#endif
 }

@@ -29,16 +29,21 @@ void DmlPreprocessor::release()
 DmlPreprocessParams DmlPreprocessor::calculateParams(
     int srcWidth, int srcHeight, int dstWidth, int dstHeight)
 {
+    // Align with AiMod LetterBox: round unpad + round pad
     DmlPreprocessParams params;
     params.srcWidth = srcWidth; params.srcHeight = srcHeight;
     params.dstWidth = dstWidth; params.dstHeight = dstHeight;
     float scaleX = static_cast<float>(dstWidth) / srcWidth;
     float scaleY = static_cast<float>(dstHeight) / srcHeight;
     params.scale = std::min(scaleX, scaleY);
-    int newWidth = static_cast<int>(srcWidth * params.scale);
-    int newHeight = static_cast<int>(srcHeight * params.scale);
-    params.padX = (dstWidth - newWidth) / 2;
-    params.padY = (dstHeight - newHeight) / 2;
+    int newWidth = static_cast<int>(std::round(srcWidth * params.scale));
+    int newHeight = static_cast<int>(std::round(srcHeight * params.scale));
+    newWidth = std::max(1, std::min(newWidth, dstWidth));
+    newHeight = std::max(1, std::min(newHeight, dstHeight));
+    float dw = (dstWidth - newWidth) * 0.5f;
+    float dh = (dstHeight - newHeight) * 0.5f;
+    params.padX = static_cast<int>(std::round(dw - 0.1f));
+    params.padY = static_cast<int>(std::round(dh - 0.1f));
     return params;
 }
 
@@ -80,8 +85,8 @@ bool DmlPreprocessor::preprocessFromBgra(
     outFrame.srcWidth = srcWidth;
     outFrame.srcHeight = srcHeight;
 
-    const int newWidth = static_cast<int>(srcWidth * params.scale);
-    const int newHeight = static_cast<int>(srcHeight * params.scale);
+    const int newWidth = static_cast<int>(std::round(srcWidth * params.scale));
+    const int newHeight = static_cast<int>(std::round(srcHeight * params.scale));
     const float invScale = (params.scale > 1e-8f) ? (1.0f / params.scale) : 0.0f;
     const float inv255 = 1.0f / 255.0f;
 
