@@ -1,4 +1,4 @@
-/* YoloAim WebUI — SPA:状态轮询 + 自动表单渲染配置 */
+/* YoloAim WebUI — SPA:状态轮询 + OBS 分类中文配置 */
 "use strict";
 
 const api = {
@@ -30,6 +30,12 @@ function setMsg(text, cls) {
   m.className = "msg" + (cls ? " " + cls : "");
 }
 
+function setVal(id, text, color) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  if (color) el.style.color = color;
+}
+
 async function refreshStatus() {
   try {
     const s = await api.get("/api/status");
@@ -39,13 +45,7 @@ async function refreshStatus() {
     setVal("st-infer", s.infer_ms.toFixed(2) + " ms");
     setVal("st-slot", s.aim.slot >= 0 ? "槽 " + s.aim.slot : "-");
     setVal("st-ctrl", s.aim.controller_ok ? "OK" : "失败", s.aim.controller_ok ? "var(--ok)" : "var(--danger)");
-  } catch (e) { /* 服务器未启动 */ }
-}
-
-function setVal(id, text, color) {
-  const el = document.getElementById(id);
-  el.textContent = text;
-  if (color) el.style.color = color;
+  } catch (e) {}
 }
 
 async function refreshDets() {
@@ -91,33 +91,99 @@ document.getElementById("btn-test-ctrl").addEventListener("click", async () => {
 setInterval(refreshStatus, 1000);
 setInterval(refreshDets, 2000);
 
-/* ---------- 配置页:自动表单 ---------- */
+/* ---------- 配置页:OBS 分类 + 中文 ---------- */
 let configDoc = null;
+let currentPage = 0;
 
 async function loadConfig() {
   try {
     const r = await api.get("/api/config");
-    configDoc = r.config || {};
+    configDoc = r.config || r;
     renderConfig();
   } catch (e) {
     setMsg("配置加载失败", "err");
   }
 }
 
-// 字段友好名(蛇形 → 空格)
-function fieldLabel(key) {
-  return key.replace(/_/g, " ");
+// 沿路径取配置值;{i} 已被调用方替换
+function getByPath(doc, path) {
+  let node = doc;
+  for (const k of path) {
+    if (node === null || node === undefined) return undefined;
+    node = node[k];
+  }
+  return node;
 }
 
-// 递归渲染对象 → 折叠 section + 字段
-function renderSection(container, obj, path, title) {
+function setByPath(doc, path, value) {
+  let node = doc;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (node[path[i]] === null || node[path[i]] === undefined ||
+        typeof node[path[i]] !== "object") node[path[i]] = {};
+    node = node[path[i]];
+  }
+  node[path[path.length - 1]] = value;
+}
+
+function renderConfig() {
+  const root = document.getElementById("config-root");
+  root.innerHTML = "";
+
+  // 页 tab
+  const tabs = document.createElement("div");
+  tabs.className = "page-tabs";
+  OBS_PAGES.forEach((page, idx) => {
+    const b = document.createElement("button");
+    b.className = "page-tab" + (idx === currentPage ? " active" : "");
+    b.textContent = page.name;
+    b.addEventListener("click", () => {
+      currentPage = idx;
+      renderConfig();
+    });
+    tabs.appendChild(b);
+  });
+  root.appendChild(tabs);
+
+  const page = OBS_PAGES[currentPage];
+  const body = document.createElement("div");
+  body.className = "page-body";
+
+  // 槽页:当前槽选择器
+  if (page.slot) {
+    const slotBar = document.createElement("div");
+    slotBar.className = "slot-bar";
+    slotBar.appendChild(document.createTextNode("当前配置: "));
+    for (let i = 0; i < 5; i++) {
+      const b = document.createElement("button");
+      b.className = "btn" + (i === currentSlot() ? " primary" : "");
+      b.textContent = "配置 " + i;
+      b.addEventListener("click", () => {
+        const doc = collectConfig();
+        setByPath(doc, ["aim", "config_select"], i);
+        api.put("/api/config", doc).then((r) => { if (r.ok) loadConfig(); });
+      });
+      slotBar.appendChild(b);
+    }
+    body.appendChild(slotBar);
+  }
+
+  // 组
+  page.groups.forEach((group) => renderGroup(body, group));
+  root.appendChild(body);
+}
+
+function currentSlot() {
+  const v = getByPath(configDoc, ["aim", "config_select"]);
+  return typeof v === "number" && v >= 0 && v < 5 ? v : 0;
+}
+
+function renderGroup(container, group) {
   const sec = document.createElement("div");
   sec.className = "section";
-
   const head = document.createElement("div");
   head.className = "sec-head";
   const span = document.createElement("span");
-  span.textContent = title || fieldLabel(path.split(".").pop());
+  span.textContent = group.name;
   const caret = document.createElement("span");
   caret.className = "caret";
   caret.textContent = "▾";
@@ -131,95 +197,60 @@ function renderSection(container, obj, path, title) {
 
   const body = document.createElement("div");
   body.className = "sec-body";
-  buildFields(body, obj, path);
+  group.fields.forEach(([obsKey, path]) => renderField(body, obsKey, path));
   sec.appendChild(body);
   container.appendChild(sec);
 }
 
-function buildFields(container, obj, path) {
-  for (const [key, val] of Object.entries(obj)) {
-    const full = path ? path + "." + key : key;
-    if (val === null || val === undefined) continue;
-    if (typeof val === "object") {
-      if (Array.isArray(val)) {
-        // 数组:每个元素一个子 section
-        val.forEach((item, i) => {
-          if (item && typeof item === "object") {
-            renderSection(container, item, full + "." + i, key + "[" + i + "]");
-          } else {
-            renderTextarea(container, full + "." + i, JSON.stringify(item), key + "[" + i + "]");
-          }
-        });
-      } else {
-        renderSection(container, val, full, key);
-      }
-      continue;
-    }
-    renderField(container, key, val, full);
-  }
-}
+function renderField(container, obsKey, pathTemplate) {
+  // 槽路径替换当前槽 + 补 aim/slots 前缀
+  const slot = currentSlot();
+  const path = pathTemplate[0] === "{i}"
+    ? ["aim", "slots", slot, ...pathTemplate.slice(1)]
+    : pathTemplate.map((p) => (p === "{i}" ? slot : p));
+  const val = getByPath(configDoc, path);
 
-function renderField(container, key, val, path) {
   const div = document.createElement("div");
+  const label = document.createElement("label");
+  label.textContent = fieldLabel(obsKey);
+
   if (typeof val === "boolean") {
     div.className = "field checkbox";
-    const label = document.createElement("label");
-    label.textContent = fieldLabel(key);
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.dataset.path = path;
     input.checked = val;
+    input.dataset.path = path.join(".");
     div.appendChild(input);
     div.appendChild(label);
   } else if (typeof val === "number") {
     div.className = "field";
-    const label = document.createElement("label");
-    label.textContent = fieldLabel(key);
     const input = document.createElement("input");
     input.type = "number";
     input.step = "any";
     input.value = val;
-    input.dataset.path = path;
+    input.dataset.path = path.join(".");
+    div.appendChild(label);
+    div.appendChild(input);
+  } else if (Array.isArray(val)) {
+    div.className = "field";
+    const input = document.createElement("textarea");
+    input.value = JSON.stringify(val);
+    input.dataset.path = path.join(".");
     div.appendChild(label);
     div.appendChild(input);
   } else {
     div.className = "field";
-    const label = document.createElement("label");
-    label.textContent = fieldLabel(key);
     const input = document.createElement("input");
     input.type = "text";
-    input.value = String(val);
-    input.dataset.path = path;
+    input.value = String(val === undefined ? "" : val);
+    input.dataset.path = path.join(".");
     div.appendChild(label);
     div.appendChild(input);
   }
   container.appendChild(div);
 }
 
-function renderTextarea(container, path, text, title) {
-  const div = document.createElement("div");
-  div.className = "field";
-  const label = document.createElement("label");
-  label.textContent = title;
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.dataset.path = path;
-  div.appendChild(label);
-  div.appendChild(ta);
-  container.appendChild(div);
-}
-
-function renderConfig() {
-  const root = document.getElementById("config-root");
-  root.innerHTML = "";
-  for (const [key, val] of Object.entries(configDoc)) {
-    if (val && typeof val === "object" && !Array.isArray(val)) {
-      renderSection(root, val, key, key);
-    }
-  }
-}
-
-// 从表单收集 → 嵌套 JSON(只含渲染过的路径)
+// 从表单收集 → 嵌套 JSON(仅渲染过的路径)
 function collectConfig() {
   const out = {};
   document.querySelectorAll("#config-root [data-path]").forEach((el) => {
@@ -287,9 +318,8 @@ document.getElementById("preview-img").addEventListener("click", async (e) => {
 
 document.getElementById("btn-pick-apply").addEventListener("click", async () => {
   if (!pickedColor) return;
-  // 读当前配置 → 改准星字段 → 保存
   const doc = collectConfig();
-  doc.aim = doc.aim || {};
+  if (!doc.aim) doc.aim = {};
   doc.aim.crosshair_manual_r = pickedColor.r;
   doc.aim.crosshair_manual_g = pickedColor.g;
   doc.aim.crosshair_manual_b = pickedColor.b;

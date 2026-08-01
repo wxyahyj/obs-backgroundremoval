@@ -101,6 +101,21 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 500; }
 
+/* ---- 配置页 tab + 槽选择 ---- */
+.page-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+.page-tab {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.page-tab:hover { color: var(--text); }
+.page-tab.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.slot-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+
 /* ---- 配置表单 ---- */
 .section {
   background: var(--card);
