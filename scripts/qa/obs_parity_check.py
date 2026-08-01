@@ -161,20 +161,20 @@ def check_config(cfg: dict) -> list[dict]:
             }
         )
 
-    # OBS parity feature keys
-    required_top = ["capture", "infer", "aim", "tracking", "vision", "prediction", "crosshair"]
+    # OBS parity feature keys(新 ConfigDocument 结构)
+    required_top = ["capture", "infer", "tracker", "vision", "aim"]
     for k in required_top:
         if k not in cfg:
             issues.append({"level": "warn", "id": f"missing_{k}", "msg": f"config missing top-level '{k}'"})
 
     aim = cfg.get("aim") or {}
-    configs = aim.get("configs")
+    configs = aim.get("slots") if "slots" in aim else aim.get("configs")
     if not isinstance(configs, list) or len(configs) < 5:
         issues.append(
             {
                 "level": "error",
                 "id": "aim_slots",
-                "msg": f"aim.configs expected 5 slots, got {type(configs).__name__} len={len(configs) if isinstance(configs, list) else 'n/a'}",
+                "msg": f"aim.slots expected 5 slots, got {type(configs).__name__} len={len(configs) if isinstance(configs, list) else 'n/a'}",
             }
         )
 
@@ -340,6 +340,8 @@ def main() -> int:
 
     st, st_err = safe_get("/api/status")
     cfg, cfg_err = safe_get("/api/config")
+    if isinstance(cfg, dict) and "config" in cfg and isinstance(cfg["config"], dict):
+        cfg = cfg["config"]  # 新版 API 包装 {ok, config}
     dets, dets_err = safe_get("/api/detections")
 
     offline = st is None and cfg is None

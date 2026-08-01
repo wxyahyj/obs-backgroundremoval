@@ -73,20 +73,28 @@ bool Engine::open_capture()
     }
     capture_ = std::make_unique<FrameSource>();
     const CaptureBackend backend = FrameSource::parse_backend(c.backend);
-    bool ok = false;
-    if (c.mode == "region") {
-        ok = capture_->open_region(backend, c.region_x, c.region_y, c.region_width,
-                                   c.region_height);
-    } else if (c.mode == "full") {
-        ok = capture_->open_region(backend, 0, 0, c.region_width, c.region_height);
-    } else {
-        ok = capture_->open_center(backend, c.width, c.height);
-    }
-    if (!ok) {
-        std::fprintf(stderr, "[engine] capture open failed: %s\n",
-                     capture_->last_error().c_str());
-        capture_.reset();
-        return false;
+
+    auto try_open = [&](CaptureBackend b) -> bool {
+        if (c.mode == "region")
+            return capture_->open_region(b, c.region_x, c.region_y, c.region_width,
+                                         c.region_height);
+        if (c.mode == "full")
+            return capture_->open_region(b, 0, 0, c.region_width, c.region_height);
+        return capture_->open_center(b, c.width, c.height);
+    };
+
+    if (!try_open(backend)) {
+        // 回退:DXGI/WGC 失败 → GDI(兼容远程桌面/低端环境)
+        const std::string first_err = capture_->last_error();
+        if (backend != CaptureBackend::Gdi && try_open(CaptureBackend::Gdi)) {
+            std::fprintf(stderr,
+                         "[engine] capture fallback dxgi->gdi (%s)\n", first_err.c_str());
+        } else {
+            std::fprintf(stderr, "[engine] capture open failed: %s\n",
+                         first_err.c_str());
+            capture_.reset();
+            return false;
+        }
     }
     std::fprintf(stderr, "[engine] capture open: backend=%s %dx%d origin=(%d,%d)\n",
                  FrameSource::backend_name(capture_->backend()), capture_->width(),

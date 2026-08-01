@@ -16,6 +16,8 @@ namespace {
 nlohmann::json status_json(const Engine& e)
 {
     const PipelineStats s = e.stats();
+    const auto ci = e.capture_info();
+    const config::ConfigDocument cfg = e.config();
     nlohmann::json j;
     j["running"] = e.running();
     j["fps"] = s.fps;
@@ -25,6 +27,22 @@ nlohmann::json status_json(const Engine& e)
     j["infer_ms"] = s.infer_ms;
     j["post_ms"] = s.post_ms;
     j["last_error"] = s.last_error;
+    // parity 契约字段(OBS 对齐)
+    j["capture_ok"] = ci.width > 0;
+    j["capture_fps"] = s.fps;
+    j["infer_enabled"] = cfg.infer.enabled;
+    j["infer_ok"] = e.running();
+    j["device_requested"] = cfg.infer.device;
+    j["device_actual"] = cfg.infer.device;
+    j["mode"] = cfg.capture.mode;
+    j["use_region"] = cfg.capture.use_region;
+    j["region_x"] = cfg.capture.region_x;
+    j["region_y"] = cfg.capture.region_y;
+    j["region_width"] = cfg.capture.region_width;
+    j["region_height"] = cfg.capture.region_height;
+    j["w"] = ci.width;
+    j["h"] = ci.height;
+    j["origin"] = {ci.origin_x, ci.origin_y};
     j["aim"] = {
         {"slot", s.aim_status.active_slot},
         {"aiming", s.aim_status.aiming},
