@@ -46,6 +46,8 @@ public:
     bool is_open() const;
     int width() const;
     int height() const;
+    int origin_x() const { return origin_x_; }
+    int origin_y() const { return origin_y_; }
     CaptureBackend backend() const { return backend_; }
     const std::string& last_error() const { return last_error_; }
 

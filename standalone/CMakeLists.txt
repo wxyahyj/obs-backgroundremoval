@@ -55,23 +55,17 @@ if(YA_WITH_WGC)
   target_compile_options(yolo_capture PRIVATE /await)
 endif()
 
-# ---- host launcher ----
+# ---- host launcher (M1 new architecture: app/engine, core reuse) ----
 set(HOST_SOURCES
-  ${YA_ROOT}/src/host/main.cpp
-  ${YA_ROOT}/src/host/EngineLoop.cpp
-  ${YA_ROOT}/src/host/FloatingPreview.cpp
-  ${YA_ROOT}/src/web/WebServer.cpp
+  ${YA_ROOT}/src/app/main.cpp
+  ${YA_ROOT}/src/engine/Engine.cpp
   ${YA_ROOT}/src/capture/FrameSource.cpp
-  ${YA_ROOT}/src/aim/AimEngine.cpp
-  ${YA_ROOT}/src/core/ConfigStore.cpp
-  ${YA_ROOT}/src/net/RemoteInferClient.cpp
+  ${YA_ROOT}/src/core/obs_stubs.cpp
 )
 
 if(YA_WITH_INFER)
   list(APPEND HOST_SOURCES
-    ${YA_ROOT}/src/core/obs_stubs.cpp
     ${YA_ROOT}/src/core/InferEngine.cpp
-    ${YA_ROOT}/src/core/TrackerEngine.cpp
     ${YA_PARENT}/src/models/ModelYOLO.cpp
     ${YA_PARENT}/src/models/DmlPreprocessor.cpp
   )
@@ -119,16 +113,15 @@ if(YA_WITH_AIM)
     ${YA_PARENT}/src/GvInputMouseController.cpp
     PROPERTIES COMPILE_DEFINITIONS "UNICODE;_UNICODE"
   )
-  if(NOT YA_WITH_INFER)
-    # obs stubs still required for aim stack logs
-    list(APPEND HOST_SOURCES ${YA_ROOT}/src/core/obs_stubs.cpp)
-  endif()
 endif()
 
 add_executable(yolo_host ${HOST_SOURCES})
 
 target_include_directories(yolo_host PRIVATE
   ${YA_ROOT}/include
+  ${YA_ROOT}/src
+  ${YA_ROOT}/src/app
+  ${YA_ROOT}/src/engine
   ${YA_ROOT}/src/capture
   ${YA_ROOT}/src/host
   ${YA_ROOT}/src/web
