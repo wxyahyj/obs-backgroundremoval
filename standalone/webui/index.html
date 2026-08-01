@@ -47,6 +47,8 @@
     <div class="page-head">
       <h2>配置</h2>
       <div class="page-actions">
+        <button id="btn-import-obs" class="btn">导入 OBS 场景…</button>
+        <input type="file" id="file-import-obs" accept=".json" hidden>
         <button id="btn-save" class="btn primary">保存并应用</button>
         <button id="btn-reload" class="btn">重新载入</button>
       </div>
@@ -56,6 +58,12 @@
 
   <section id="page-preview" class="page">
     <h2>预览</h2>
+    <p class="hint">点击图像取准星颜色 → 自动写入 crosshair_manual 并启用</p>
+    <div id="pick-bar">
+      <span id="pick-swatch"></span>
+      <span id="pick-rgb">-</span>
+      <button id="btn-pick-apply" class="btn" disabled>应用到准星</button>
+    </div>
     <img id="preview-img" alt="预览">
   </section>
 </main>

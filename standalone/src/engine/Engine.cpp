@@ -2,6 +2,9 @@
 
 #include "Engine.hpp"
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -88,6 +91,10 @@ bool Engine::open_capture()
     std::fprintf(stderr, "[engine] capture open: backend=%s %dx%d origin=(%d,%d)\n",
                  FrameSource::backend_name(capture_->backend()), capture_->width(),
                  capture_->height(), capture_->origin_x(), capture_->origin_y());
+    cap_width_.store(capture_->width());
+    cap_height_.store(capture_->height());
+    cap_origin_x_.store(capture_->origin_x());
+    cap_origin_y_.store(capture_->origin_y());
     return true;
 }
 
@@ -218,6 +225,84 @@ std::vector<Detection> Engine::last_detections() const
     return stats_.last_dets;
 }
 
+std::vector<uint8_t> Engine::preview_bmp() const
+{
+    PreviewFrame f;
+    {
+        std::lock_guard<std::mutex> lock(preview_mu_);
+        if (preview_.bgr.empty())
+            return {};
+        f = preview_;
+    }
+    cv::Mat img(f.height, f.width, CV_8UC3, const_cast<uint8_t*>(f.bgr.data()),
+                static_cast<size_t>(f.width) * 3);
+    cv::Mat out = img.clone();
+    for (const auto& d : f.dets) {
+        const cv::Rect box = d.getPixelBBox(f.width, f.height);
+        cv::rectangle(out, box, cv::Scalar(0, 255, 0), 2);
+        char label[64];
+        std::snprintf(label, sizeof(label), "%s %.0f%%", d.className.c_str(),
+                      d.confidence * 100.f);
+        cv::putText(out, label, cv::Point(box.x, box.y > 14 ? box.y - 4 : box.y + 16),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1,
+                    cv::LINE_AA);
+    }
+    std::vector<uint8_t> buf;
+    if (!cv::imencode(".bmp", out, buf))
+        return {};
+    return buf;
+}
+
+Engine::CaptureInfo Engine::capture_info() const
+{
+    CaptureInfo info;
+    info.width = cap_width_.load();
+    info.height = cap_height_.load();
+    info.origin_x = cap_origin_x_.load();
+    info.origin_y = cap_origin_y_.load();
+    return info;
+}
+
+bool Engine::pick_color(double nx, double ny, int& r, int& g, int& b) const
+{
+    PreviewFrame f;
+    {
+        std::lock_guard<std::mutex> lock(preview_mu_);
+        if (preview_.bgr.empty() || preview_.width <= 0 || preview_.height <= 0)
+            return false;
+        f = preview_;
+    }
+    const int cx = static_cast<int>(nx * f.width);
+    const int cy = static_cast<int>(ny * f.height);
+    if (cx < 0 || cy < 0 || cx >= f.width || cy >= f.height)
+        return false;
+
+    // 5x5 邻域均值(抗单点噪)
+    const int radius = 2;
+    long sum_r = 0, sum_g = 0, sum_b = 0;
+    int count = 0;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            const int px = cx + dx;
+            const int py = cy + dy;
+            if (px < 0 || py < 0 || px >= f.width || py >= f.height)
+                continue;
+            const size_t idx = (static_cast<size_t>(py) * f.width + px) * 3;
+            // BGR 存储
+            sum_b += f.bgr[idx + 0];
+            sum_g += f.bgr[idx + 1];
+            sum_r += f.bgr[idx + 2];
+            ++count;
+        }
+    }
+    if (count == 0)
+        return false;
+    r = static_cast<int>(sum_r / count);
+    g = static_cast<int>(sum_g / count);
+    b = static_cast<int>(sum_b / count);
+    return true;
+}
+
 void Engine::capture_loop()
 {
     FramePacket frame;
@@ -244,6 +329,10 @@ void Engine::capture_loop()
             }
             if (ok) {
                 capture_ = std::move(next);
+                cap_width_.store(capture_->width());
+                cap_height_.store(capture_->height());
+                cap_origin_x_.store(capture_->origin_x());
+                cap_origin_y_.store(capture_->origin_y());
                 std::fprintf(stderr, "[engine] capture reopened %dx%d\n",
                              capture_->width(), capture_->height());
             } else {
@@ -328,6 +417,15 @@ void Engine::process_loop()
         const auto t0 = std::chrono::steady_clock::now();
         pipeline_.process(frame);
         const auto t1 = std::chrono::steady_clock::now();
+
+        // 预览缓存(拷贝 BGR + 框)
+        {
+            std::lock_guard<std::mutex> lock(preview_mu_);
+            preview_.bgr = frame.bgr;
+            preview_.width = frame.width;
+            preview_.height = frame.height;
+            preview_.dets = pipeline_.stats().last_dets;
+        }
 
         frames_since_log++;
         infer_accum += pipeline_.stats().infer_ms;

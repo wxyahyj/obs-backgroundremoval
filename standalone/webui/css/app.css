@@ -155,4 +155,14 @@ th { color: var(--muted); font-weight: 500; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #000;
+  cursor: crosshair;
 }
+.hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+#pick-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+#pick-swatch {
+  width: 28px; height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #000;
+}
+#pick-rgb { font-size: 13px; color: var(--muted); font-family: Consolas, monospace; }

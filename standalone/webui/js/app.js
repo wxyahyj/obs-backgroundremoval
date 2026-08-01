@@ -250,7 +250,55 @@ document.getElementById("btn-save").addEventListener("click", async () => {
 });
 document.getElementById("btn-reload").addEventListener("click", loadConfig);
 
+/* ---- OBS 场景导入 ---- */
+document.getElementById("btn-import-obs").addEventListener("click", () => {
+  document.getElementById("file-import-obs").click();
+});
+document.getElementById("file-import-obs").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  const r = await api.put("/api/config/import_obs", text);
+  setMsg(r.ok ? "导入成功: 发现 " + r.filters_imported + " 个滤镜" : "导入失败: " + r.error,
+         r.ok ? "ok" : "err");
+  if (r.ok) loadConfig();
+  e.target.value = "";
+});
+
 /* ---------- 预览页 ---------- */
+let pickedColor = null;
+
+document.getElementById("preview-img").addEventListener("click", async (e) => {
+  const img = e.currentTarget;
+  const rect = img.getBoundingClientRect();
+  const nx = (e.clientX - rect.left) / rect.width;
+  const ny = (e.clientY - rect.top) / rect.height;
+  const r = await api.put("/api/crosshair/pick", { x: nx, y: ny });
+  if (r.ok) {
+    pickedColor = { r: r.r, g: r.g, b: r.b };
+    const sw = document.getElementById("pick-swatch");
+    sw.style.background = `rgb(${r.r},${r.g},${r.b})`;
+    document.getElementById("pick-rgb").textContent =
+      `#${[r.r, r.g, r.b].map((v) => v.toString(16).padStart(2, "0")).join("")} ` +
+      `(r=${r.r} g=${r.g} b=${r.b})`;
+    document.getElementById("btn-pick-apply").disabled = false;
+  }
+});
+
+document.getElementById("btn-pick-apply").addEventListener("click", async () => {
+  if (!pickedColor) return;
+  // 读当前配置 → 改准星字段 → 保存
+  const doc = collectConfig();
+  doc.aim = doc.aim || {};
+  doc.aim.crosshair_manual_r = pickedColor.r;
+  doc.aim.crosshair_manual_g = pickedColor.g;
+  doc.aim.crosshair_manual_b = pickedColor.b;
+  doc.aim.crosshair_enabled = true;
+  const r = await api.put("/api/config", doc);
+  setMsg(r.ok ? "准星颜色已应用" : "应用失败: " + r.error, r.ok ? "ok" : "err");
+  if (r.ok) loadConfig();
+});
+
 setInterval(() => {
   const img = document.getElementById("preview-img");
   if (document.getElementById("page-preview").classList.contains("active")) {

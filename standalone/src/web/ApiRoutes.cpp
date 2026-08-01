@@ -133,6 +133,83 @@ void register_api_routes(HttpServer& srv, ApiContext& ctx)
         return ok_json({{"ok", true}, {"detections", detections_json(engine->last_detections())}});
     });
 
+    srv.route("GET", "/api/preview.bmp", [engine](const HttpRequest&) {
+        const std::vector<uint8_t> bmp = engine->preview_bmp();
+        if (bmp.empty())
+            return HttpResponse::text("no frame", 404);
+        HttpResponse r;
+        r.status = 200;
+        r.content_type = "image/bmp";
+        r.body.assign(bmp.begin(), bmp.end());
+        return r;
+    });
+
+    srv.route("POST", "/api/crosshair/pick", [engine](const HttpRequest& req) {
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(req.body);
+        } catch (...) {
+            return fail_json("bad json");
+        }
+        if (!j.contains("x") || !j.contains("y"))
+            return fail_json("need x,y (normalized 0..1)");
+        int r = 0, g = 0, b = 0;
+        if (!engine->pick_color(j["x"].get<double>(), j["y"].get<double>(), r, g, b))
+            return fail_json("pick failed (no frame or out of range)");
+        return ok_json({{"ok", true}, {"r", r}, {"g", g}, {"b", b}});
+    });
+
+    // 导入 OBS 场景集合 JSON:提取 yolo-detector-filter 滤镜设置 → 扁平键合并
+    srv.route("POST", "/api/config/import_obs", [engine, &ctx](const HttpRequest& req) {
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(req.body);
+        } catch (...) {
+            return fail_json("bad json");
+        }
+        // 收集所有 yolo-detector-filter 的 settings(扁平 obs 键)
+        nlohmann::json flat = nlohmann::json::object();
+        int found = 0;
+        auto collect = [&](const nlohmann::json& node, auto& self) -> void {
+            if (!node.is_object())
+                return;
+            if (node.contains("type") && node["type"].is_string() &&
+                node["type"].get<std::string>().find("yolo-detector-filter") !=
+                    std::string::npos) {
+                if (node.contains("settings") && node["settings"].is_object()) {
+                    for (auto it = node["settings"].begin(); it != node["settings"].end();
+                         ++it)
+                        flat[it.key()] = it.value();
+                    ++found;
+                }
+            }
+            if (node.contains("sources") && node["sources"].is_array()) {
+                for (auto& s : node["sources"])
+                    self(s, self);
+            }
+            if (node.contains("filters") && node["filters"].is_array()) {
+                for (auto& f : node["filters"])
+                    self(f, self);
+            }
+            if (node.contains("scenes") && node["scenes"].is_array()) {
+                for (auto& s : node["scenes"])
+                    self(s, self);
+            }
+        };
+        collect(j, collect);
+        if (found == 0)
+            return fail_json("no yolo-detector-filter found in scene JSON");
+        // 合并到当前配置
+        config::ConfigDocument next = engine->config();
+        std::string err;
+        if (!config::ConfigStore::merge(next, flat, &err))
+            return fail_json(err);
+        engine->update_config(next);
+        if (!ctx.config_path.empty())
+            config::ConfigStore::save_file(ctx.config_path, next, &err);
+        return ok_json({{"ok", true}, {"filters_imported", found}});
+    });
+
     srv.route("POST", "/api/controller/test", [engine](const HttpRequest& req) {
         nlohmann::json j;
         try {

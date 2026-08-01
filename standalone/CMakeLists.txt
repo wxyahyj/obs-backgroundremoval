@@ -66,6 +66,7 @@ set(HOST_SOURCES
   ${YA_ROOT}/src/core/obs_stubs.cpp
   ${YA_ROOT}/src/web/HttpServer.cpp
   ${YA_ROOT}/src/web/ApiRoutes.cpp
+  ${YA_ROOT}/src/overlay/OverlayWindow.cpp
 )
 
 if(YA_WITH_INFER)
@@ -131,6 +132,7 @@ target_include_directories(yolo_host PRIVATE
   ${YA_ROOT}/src/engine
   ${YA_ROOT}/src/config
   ${YA_ROOT}/src/web
+  ${YA_ROOT}/src/overlay
   ${YA_ROOT}/src/capture
   ${YA_ROOT}/src/host
   ${YA_ROOT}/src/web
@@ -220,6 +222,7 @@ if(YA_WITH_INFER)
     onnxruntime::onnxruntime
     OpenCV::opencv_core
     OpenCV::opencv_imgproc
+    OpenCV::opencv_imgcodecs
     d3d11 dxgi
   )
 

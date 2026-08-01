@@ -5,6 +5,7 @@
 
 #include "config/ConfigStore.hpp"
 #include "engine/Engine.hpp"
+#include "overlay/OverlayWindow.hpp"
 #include "web/ApiRoutes.hpp"
 #include "web/HttpServer.hpp"
 
@@ -92,8 +93,37 @@ int main(int argc, char** argv)
     }
 
     std::fprintf(stderr, "[main] running — WebUI http://127.0.0.1:17890 (Ctrl+C to stop)\n");
-    while (!InterlockedCompareExchange(&g_stop, 0, 0))
-        Sleep(200);
+
+    // 叠加层(可选,vision.show_floating_window 开关)
+    ya::OverlayWindow overlay;
+    bool overlay_on = false;
+    while (!InterlockedCompareExchange(&g_stop, 0, 0)) {
+        Sleep(50);
+        const bool want = engine.config().vision.show_floating_window;
+        if (want != overlay_on) {
+            if (want) {
+                const auto ci = engine.capture_info();
+                if (overlay.create(ci.width > 0 ? ci.width : 640,
+                                   ci.height > 0 ? ci.height : 640)) {
+                    overlay.set_position(ci.origin_x, ci.origin_y);
+                    overlay.show();
+                    std::fprintf(stderr, "[overlay] shown %dx%d @(%d,%d)\n", ci.width,
+                                 ci.height, ci.origin_x, ci.origin_y);
+                }
+            } else {
+                overlay.hide();
+            }
+            overlay_on = want;
+        }
+        if (overlay_on) {
+            const auto s = engine.stats();
+            const auto ci = engine.capture_info();
+            overlay.update(engine.last_detections(), ci.width > 0 ? ci.width : 1,
+                           ci.height > 0 ? ci.height : 1, s.aim_status.fov_px,
+                           engine.config().aim.show_fov);
+        }
+        overlay.pump();
+    }
 
     web.stop();
     engine.stop();

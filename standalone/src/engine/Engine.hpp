@@ -52,6 +52,21 @@ public:
     // 最近一次检测(预览/Web 用;线程安全拷贝)
     std::vector<Detection> last_detections() const;
 
+    // 最新带框预览帧(BMP 编码;空 = 无帧)
+    std::vector<uint8_t> preview_bmp() const;
+
+    // 取色:预览帧归一化坐标 (nx,ny) ∈ [0,1) → 5x5 邻域均值 RGB
+    bool pick_color(double nx, double ny, int& r, int& g, int& b) const;
+
+    // 捕获区域信息(叠加层定位用)
+    struct CaptureInfo {
+        int width = 0;
+        int height = 0;
+        int origin_x = 0;
+        int origin_y = 0;
+    };
+    CaptureInfo capture_info() const;
+
 private:
     void capture_loop();
     void process_loop();
@@ -85,6 +100,22 @@ private:
     // 统计
     mutable std::mutex stats_mu_;
     PipelineStats stats_;
+
+    // 预览缓存(process 线程写,Web 线程读)
+    struct PreviewFrame {
+        std::vector<uint8_t> bgr;
+        int width = 0;
+        int height = 0;
+        std::vector<Detection> dets;
+    };
+    mutable std::mutex preview_mu_;
+    PreviewFrame preview_;
+
+    // 捕获区域(atomic 写,capture 线程;读给 overlay/web)
+    std::atomic<int> cap_width_{0};
+    std::atomic<int> cap_height_{0};
+    std::atomic<int> cap_origin_x_{0};
+    std::atomic<int> cap_origin_y_{0};
 };
 
 } // namespace ya
