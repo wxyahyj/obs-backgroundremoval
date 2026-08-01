@@ -1,0 +1,10 @@
+build/
+build_*/
+dist/
+*.user
+*.suo
+.vs/
+models/*.onnx
+models/*.bin
+*.bmp
+*.log

@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YOLO 瞄准 · 控制台</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <!-- no gradient orbs — flat dark shell for irregular / multi-ratio displays -->
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 36 36" width="36" height="36">
+            <defs>
+              <linearGradient id="bm" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#4c9fff"/>
+                <stop offset="100%" stop-color="#7c6cff"/>
+              </linearGradient>
+            </defs>
+            <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#bm)"/>
+            <path d="M10 24 L18 8 L26 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="18" cy="20" r="2.2" fill="#fff"/>
+            <path class="brand-pulse" d="M8 28 H28" stroke="#fff" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/>
+          </svg>
+        </div>
+        <div>
+          <h1>YOLO 瞄准</h1>
+          <p class="sub">独立启动器 · 本地控制台</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="runBadge" class="badge off">离线</span>
+        <button id="btnStart" type="button">启动</button>
+        <button id="btnStop" type="button" class="danger">停止</button>
+        <button id="btnReloadCfg" type="button" class="ghost">刷新</button>
+        <button id="btnApplyAll" type="button" class="ghost" title="已默认改完即应用，此按钮可强制再提交">强制应用</button>
+        <span id="applyMsg" class="msg"></span>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <nav class="sidenav" id="sidenav">
+        <button class="nav-item active" data-page="0" type="button"><span class="n">0</span>模型与检测</button>
+        <button class="nav-item" data-page="1" type="button"><span class="n">1</span>视觉与视野</button>
+        <button class="nav-item" data-page="2" type="button"><span class="n">2</span>鼠标 · 基础</button>
+        <button class="nav-item" data-page="3" type="button"><span class="n">3</span>鼠标 · 控制算法</button>
+        <button class="nav-item" data-page="4" type="button"><span class="n">4</span>扳机 / 后座</button>
+        <button class="nav-item" data-page="5" type="button"><span class="n">5</span>追踪与高级</button>
+        <button class="nav-item" data-page="6" type="button"><span class="n">6</span>预测 / 滤波</button>
+        <button class="nav-item" data-page="7" type="button"><span class="n">7</span>准星</button>
+        <div class="nav-foot">
+          修改控件后自动保存到配置文件<br />
+          关闭页面或程序时会再保存一次<br />
+          模型与截图会自动重载
+        </div>
+      </nav>
+
+      <main class="main-pane">
+        <!-- ========== 0 ========== -->
+        <section class="page active" data-page="0">
+          <div class="page-head">
+            <div>
+              <h2>模型与检测</h2>
+              <p>推理阈值、模型路径、截图后端。置信度/NMS 即时生效；设备与尺寸改后会自动重载。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>检测阈值</h3><span class="tag">即时生效</span></div>
+            <div class="group-grid">
+              <label class="field">
+                <span class="label">置信度阈值</span>
+                <div class="dual-control">
+                  <input type="range" id="confidence" min="0.05" max="0.95" step="0.01" value="0.5" />
+                  <input type="number" data-key="confidence" data-path="infer.confidence" data-obs-alias="confidence_threshold" min="0.05" max="0.95" step="0.01" value="0.5" />
+                  <span class="val" id="confidenceVal">0.5</span>
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">非极大值抑制阈值</span>
+                <div class="dual-control">
+                  <input type="range" id="nms" min="0.05" max="0.95" step="0.01" value="0.45" />
+                  <input type="number" data-key="nms" data-path="infer.nms" data-obs-alias="nms_threshold" min="0.05" max="0.95" step="0.01" value="0.45" />
+                  <span class="val" id="nmsVal">0.45</span>
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">推理间隔帧</span>
+                <div class="dual-control">
+                  <input type="range" min="1" max="30" step="1" value="1" />
+                  <input type="number" data-key="interval_frames" data-path="infer.interval_frames" data-obs-alias="inference_interval_frames" min="1" max="30" value="1" />
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>模型</h3><span class="tag">改后自动重载模型</span></div>
+            <div class="group-grid">
+              <label class="field">
+                <span class="label">推理设备</span>
+                <select data-key="device" data-path="infer.device" data-obs-alias="use_gpu" data-cold="reload_model">
+                  <option value="cpu">处理器 CPU</option>
+                  <option value="cuda">英伟达 CUDA</option>
+                  <option value="dml">微软 DirectML</option>
+                  <option value="tensorrt">英伟达 TensorRT</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">版本</span>
+                <select data-key="model_version" data-path="infer.model_version" data-cold="reload_model">
+                  <option value="0">YOLOv5（含目标置信度）</option>
+                  <option value="1">YOLOv8（端到端抑制会自动识别）</option>
+                  <option value="2">YOLOv11（端到端抑制会自动识别）</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">输入尺寸</span>
+                <input type="number" data-key="input_size" data-path="infer.input_size" data-obs-alias="input_resolution" min="160" max="1280" step="32" value="640" data-cold="reload_model" />
+              </label>
+              <label class="field">
+                <span class="label">线程</span>
+                <input type="number" data-key="num_threads" data-path="infer.num_threads" min="1" max="32" value="4" data-cold="reload_model" />
+              </label>
+              <label class="field">
+                <span class="label">单类别</span>
+                <input type="number" data-key="target_class" data-path="infer.target_class" min="-1" max="80" step="1" value="-1" placeholder="填 -1 表示全部类别" />
+              </label>
+              <label class="field">
+                <span class="label">多类别文本</span>
+                <input type="text" data-key="target_classes_text" data-path="infer.target_classes_text" placeholder="留空=全部；可填 0,1,2（优先于单类别）" value="" />
+              </label>
+              <p class="hint span-2" style="opacity:.85;font-size:12px;margin:0 0 8px">
+                <b>自适应解码（按 ONNX 输出 shape，不必手选准）</b><br/>
+                · <code>[1,300,6]</code> → 端到端 NMS（<b>cs2.onnx / Bing_TF_v26</b>：xyxy+conf+cls，不再二次 NMS）<br/>
+                · <code>[1,N,9]</code> + 多尺度头 → <b>YOLOv5</b>（obj×class，如 cs2j0x1tf2x3t）<br/>
+                · <code>[1,84,N]</code> 等 → <b>YOLOv8/v11</b><br/>
+                输入尺寸请与模型一致（v26/cs2j0=320，cs2.onnx=640）。空类别=全部。
+              </p>
+              <label class="field span-2">
+                <span class="label">模型文件夹（自动识别其中的模型文件）</span>
+                <div class="range-row">
+                  <input type="text" id="modelFolder" placeholder="例如 D:\AI\models" style="flex:1" />
+                  <button type="button" id="btnScanFolder" title="扫描并设为默认搜索目录">扫描文件夹</button>
+                </div>
+              </label>
+              <label class="field check">
+                <input type="checkbox" id="modelRecursive" checked />
+                <span class="label">递归子目录（深度不超过 6）</span>
+              </label>
+              <label class="field span-2">
+                <span class="label">选择模型（从文件夹自动列出）</span>
+                <div class="range-row">
+                  <select id="modelPick" style="flex:1"></select>
+                  <button type="button" id="btnRefresh模式ls" class="ghost">刷新列表</button>
+                </div>
+              </label>
+              <label class="field span-2">
+                <span class="label">当前模型文件</span>
+                <input type="text" id="modelPath" data-key="model_path" data-path="infer.model_path" value="models/yolo.onnx" data-cold="reload_model" />
+              </label>
+              <label class="field span-2">
+                <span class="label">上传模型文件（保存到当前模型文件夹并选用）</span>
+                <input type="file" id="modelUpload" accept=".onnx,.engine,application/octet-stream" />
+              </label>
+            </div>
+            <p class="hint" id="deviceHint" style="margin-top:8px;opacity:.75;font-size:12px">
+              <b>实际设备</b>看右侧状态：<code>CUDA 正常：网络在 GPU 推理，预处理在 CPU</code> = 已选 cuda 且 EP 成功（不是 CPU 推理）。
+              只有显示「已回退到 CPU」才是真正回退。截图默认 「居中裁切」 = 屏幕正中区域裁切后再推理，不是全屏。
+              改设备/模型会自动应用并重载模型。
+            </p>
+            <div class="actions-row" style="margin-top:12px">
+              <button type="button" id="btnReload模式l">立即重载模型</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>渲染 / 导出</h3><span class="tag">即时生效</span></div>
+            <div class="group-grid">
+              <label class="field check">
+                <input type="checkbox" data-key="show_detection_results" data-path="vision.show_detection_results" checked />
+                <span class="label">显示检测结果</span>
+              </label>
+              <label class="field">
+                <span class="label">边界框线宽</span>
+                <input type="number" data-key="bbox_line_width" data-path="vision.bbox_line_width" min="1" max="10" value="2" />
+              </label>
+              <label class="field">
+                <span class="label">标签字体</span>
+                <input type="number" data-key="label_font_scale" data-path="vision.label_font_scale" min="0.2" max="2" step="0.05" value="0.5" />
+              </label>
+              <label class="field check">
+                <input type="checkbox" data-key="export_coordinates" data-path="vision.export_coordinates" />
+                <span class="label">导出坐标文件</span>
+              </label>
+              <label class="field span-2">
+                <span class="label">坐标输出路径</span>
+                <input type="text" data-key="coordinate_output_path" data-path="vision.coordinate_output_path" placeholder="检测坐标输出文件，如 detections.json" value="" />
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>截图</h3><span class="tag">改后自动重开截图</span></div>
+            <div class="group-grid">
+              <label class="field">
+                <span class="label">后端</span>
+                <select data-key="backend" data-path="capture.backend" data-cold="reload_capture">
+                  <option value="dxgi">DXGI 桌面复制</option>
+                  <option value="wgc">WGC 窗口捕获</option>
+                  <option value="gdi">GDI 截图</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">模式</span>
+                <select data-key="mode" data-path="capture.mode" data-cold="reload_capture">
+                  <option value="center">居中裁切（检测区域）</option>
+                  <option value="region">固定区域</option>
+                  <option value="full">全屏捕获（可再裁检测区）</option>
+                </select>
+              </label>
+              <label class="field check">
+                <input type="checkbox" data-key="use_region" data-path="capture.use_region" data-cold="reload_capture" checked />
+                <span class="label">区域检测</span>
+              </label>
+              <label class="field">
+                <span class="label">宽度</span>
+                <input type="number" data-key="width" data-path="capture.width" min="64" max="4096" value="640" data-cold="reload_capture" />
+              </label>
+              <label class="field">
+                <span class="label">高度</span>
+                <input type="number" data-key="height" data-path="capture.height" min="64" max="4096" value="640" data-cold="reload_capture" />
+              </label>
+              <label class="field">
+                <span class="label">区域左上角 X</span>
+                <input type="number" data-key="region_x" data-path="capture.region_x" value="0" data-cold="reload_capture" />
+              </label>
+              <label class="field">
+                <span class="label">区域左上角 Y</span>
+                <input type="number" data-key="region_y" data-path="capture.region_y" value="0" data-cold="reload_capture" />
+              </label>
+              <label class="field">
+                <span class="label">区域宽度</span>
+                <input type="number" data-key="region_width" data-path="capture.region_width" min="64" max="4096" value="640" data-cold="reload_capture" />
+              </label>
+              <label class="field">
+                <span class="label">区域高度</span>
+                <input type="number" data-key="region_height" data-path="capture.region_height" min="64" max="4096" value="640" data-cold="reload_capture" />
+              </label>
+            </div>
+            <p class="hint" style="margin-top:8px;opacity:.75;font-size:12px">
+              <b>截图说明</b>：默认「居中裁切」= 屏幕正中区域截图后再推理（不是全屏）。
+              「固定区域」= 使用左上角坐标与宽高指定截图范围。
+              「全屏」+ 勾选使用区域 = 先全屏截图，再在检测区域内裁切后推理。
+            </p>
+            <div class="actions-row" style="margin-top:12px">
+              <button type="button" id="btnReloadCapture">立即重开截图</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 1 ========== -->
+        <section class="page" data-page="1">
+          <div class="page-head">
+            <div>
+              <h2>视觉与视野</h2>
+              <p>瞄准范围圆、十字线、动态 FOV 收缩。</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>FOV 显示</h3></div>
+            <div class="group-grid">
+              <label class="field check"><input type="checkbox" data-key="show_fov" data-path="aim.show_fov" /><span class="label">显示视野</span></label>
+              <label class="field check"><input type="checkbox" data-key="show_fov_circle" data-path="aim.show_fov_circle" checked /><span class="label">视野圆</span></label>
+              <label class="field check"><input type="checkbox" data-key="show_fov_cross" data-path="aim.show_fov_cross" /><span class="label">视野十字</span></label>
+              <label class="field">
+                <span class="label">视野半径</span>
+                <div class="dual-control">
+                  <input type="range" min="1" max="800" step="1" value="120" />
+                  <input type="number" data-key="fov_radius" data-path="aim.fov_radius" min="1" max="800" value="120" />
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">十字线长度</span>
+                <div class="dual-control">
+                  <input type="range" min="0.1" max="5" step="0.1" value="1" />
+                  <input type="number" data-key="fov_cross_line_scale" data-path="aim.fov_cross_line_scale" step="0.1" value="1" />
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">十字线粗细</span>
+                <div class="dual-control">
+                  <input type="range" min="1" max="20" step="1" value="1" />
+                  <input type="number" data-key="fov_cross_line_thickness" data-path="aim.fov_cross_line_thickness" value="1" />
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">圆圈粗细</span>
+                <div class="dual-control">
+                  <input type="range" min="1" max="20" step="1" value="2" />
+                  <input type="number" data-key="fov_circle_thickness" data-path="aim.fov_circle_thickness" value="2" />
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>动态 FOV</h3></div>
+            <div class="group-grid">
+              <label class="field check"><input type="checkbox" data-key="use_dynamic_fov" data-path="aim.use_dynamic_fov" /><span class="label">启用动态视野</span></label>
+              <label class="field check"><input type="checkbox" data-key="show_fov2" data-path="aim.show_fov2" /><span class="label">显示第二视野</span></label>
+              <label class="field">
+                <span class="label">第二视野半径</span>
+                <div class="dual-control">
+                  <input type="range" min="1" max="800" step="1" value="80" />
+                  <input type="number" data-key="fov_radius2" data-path="aim.fov_radius2" value="80" />
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">动态视野收缩百分比</span>
+                <div class="dual-control">
+                  <input type="range" min="1" max="100" step="1" value="30" />
+                  <input type="number" data-key="dynamic_fov_shrink_percent" data-path="aim.dynamic_fov_shrink_percent" step="1" value="30" />
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">动态视野过渡毫秒</span>
+                <div class="dual-control">
+                  <input type="range" min="0" max="1000" step="10" value="200" />
+                  <input type="number" data-key="dynamic_fov_transition_time" data-path="aim.dynamic_fov_transition_time" value="200" />
+                </div>
+              </label>
+              <label class="field">
+                <span class="label">目标 Y 偏移</span>
+                <div class="dual-control">
+                  <input type="range" min="-1" max="1" step="0.01" value="0" />
+                  <input type="number" data-key="target_y_offset" data-slot="1" step="0.01" value="0" />
+                </div>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 2 ========== -->
+        <section class="page" data-page="2">
+          <div class="page-head">
+            <div>
+              <h2>鼠标 · 基础</h2>
+              <p>5 套配置槽、8 种后端、热键与屏幕校准。先选槽再改参数。</p>
+            </div>
+          </div>
+
+          <div class="slot-bar" id="slotBar">
+            <span class="label">编辑配置槽</span>
+            <button type="button" class="slot-chip active" data-slot-btn="0">0</button>
+            <button type="button" class="slot-chip" data-slot-btn="1">1</button>
+            <button type="button" class="slot-chip" data-slot-btn="2">2</button>
+            <button type="button" class="slot-chip" data-slot-btn="3">3</button>
+            <button type="button" class="slot-chip" data-slot-btn="4">4</button>
+            <select id="slot" data-key="mouse_config_select" data-path="aim.mouse_config_select" style="display:none">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            </select>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>总开关 / 本槽</h3></div>
+            <div class="group-grid">
+              <label class="field check"><input type="checkbox" data-key="aim_enabled" data-path="aim.enabled" checked /><span class="label">启用瞄准</span></label>
+              <label class="field check"><input type="checkbox" data-key="enable_config" data-slot="1" checked /><span class="label">启用本槽</span></label>
+              <label class="field check"><input type="checkbox" data-key="continuous_aim" data-slot="1" /><span class="label">持续自瞄</span></label>
+              <label class="field">
+                <span class="label">热键</span>
+                <select data-key="hotkey" data-slot="1">
+                  <option value="2">右键 0x02</option>
+                  <option value="1">左键 0x01</option>
+                  <option value="4">中键 0x04</option>
+                  <option value="5">X1 0x05</option>
+                  <option value="6">X2 0x06</option>
+                  <option value="18">Alt</option>
+                  <option value="16">Shift</option>
+                  <option value="20">大写锁定</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>控制器后端</h3><span class="tag">八种后端</span></div>
+            <div class="group-grid">
+              <label class="field span-2">
+                <span class="label">类型</span>
+                <select data-key="controller_type" data-slot="1">
+                  <option value="0">0 系统接口</option>
+                  <option value="1">1 MAKCU 硬件</option>
+                  <option value="2">2 罗技驱动</option>
+                  <option value="3">3 GvInput</option>
+                  <option value="4">4 TencInput</option>
+                  <option value="5">5 系统注入输入</option>
+                  <option value="6">6 注入鼠标</option>
+                  <option value="7">7 注入指针</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">MAKCU 串口</span>
+                <input type="text" data-key="makcu_port" data-slot="1" value="COM5" />
+              </label>
+              <label class="field">
+                <span class="label">MAKCU 波特率</span>
+                <input type="number" data-key="makcu_baud_rate" data-slot="1" value="4000000" />
+              </label>
+              <label class="field">
+                <span class="label">罗技驱动类型</span>
+                <select data-key="logi_driver_type" data-slot="1">
+                  <option value="0">0 自动</option>
+                  <option value="1">1 罗技 GHUB</option>
+                  <option value="2">2 罗技 LGS</option>
+                  <option value="3">3 雷蛇</option>
+                </select>
+              </label>
+            </div>
+            <div class="actions-row" style="margin-top:12px">
+              <button type="button" id="btnTestCtrl">测试连接</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>移动与校准</h3></div>
+            <div class="group-grid dense">
+              <label class="field"><span class="label">死区像素</span>
+                <div class="dual-control"><input type="range" min="0" max="50" step="0.1" value="5" /><input type="number" data-key="dead_zone_pixels" data-slot="1" step="0.1" value="5" /></div>
+              </label>
+              <label class="field"><span class="label">单次最大移动</span>
+                <div class="dual-control"><input type="range" min="1" max="512" step="1" value="128" /><input type="number" data-key="max_pixel_move" data-slot="1" step="1" value="128" /></div>
+              </label>
+              <label class="field"><span class="label">目标 Y 偏移</span>
+                <div class="dual-control"><input type="range" min="-1" max="1" step="0.01" value="0" /><input type="number" data-key="target_y_offset" data-slot="1" step="0.01" value="0" /></div>
+              </label>
+              <label class="field check"><input type="checkbox" data-key="enable_y_axis_unlock" data-slot="1" /><span class="label">Y 轴解锁</span></label>
+              <label class="field"><span class="label">Y 轴解锁延迟</span>
+                <div class="dual-control"><input type="range" min="0" max="5000" step="50" value="0" /><input type="number" data-key="y_axis_unlock_delay" data-slot="1" value="0" /></div>
+              </label>
+              <label class="field"><span class="label">屏幕中心 X 偏移</span>
+                <div class="dual-control"><input type="range" min="-500" max="500" step="1" value="0" /><input type="number" data-key="screen_offset_x" data-slot="1" value="0" /></div>
+              </label>
+              <label class="field"><span class="label">屏幕中心 Y 偏移</span>
+                <div class="dual-control"><input type="range" min="-500" max="500" step="1" value="0" /><input type="number" data-key="screen_offset_y" data-slot="1" value="0" /></div>
+              </label>
+              <label class="field"><span class="label">屏幕宽度</span>
+                <div class="dual-control"><input type="range" min="0" max="7680" step="1" value="0" /><input type="number" data-key="screen_width" data-slot="1" value="0" /></div>
+              </label>
+              <label class="field"><span class="label">屏幕高度</span>
+                <div class="dual-control"><input type="range" min="0" max="4320" step="1" value="0" /><input type="number" data-key="screen_height" data-slot="1" value="0" /></div>
+              </label>
+              <label class="field"><span class="label">切目标延迟</span>
+                <div class="dual-control"><input type="range" min="0" max="1000" step="1" value="0" /><input type="number" data-key="target_switch_delay" data-path="aim.target_switch_delay" value="0" /></div>
+              </label>
+              <label class="field"><span class="label">切目标容差</span>
+                <div class="dual-control"><input type="range" min="0" max="1" step="0.01" value="0.1" /><input type="number" data-key="target_switch_tolerance" data-path="aim.target_switch_tolerance" step="0.01" value="0.1" /></div>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 3 ========== -->
+        <section class="page" data-page="3">
+          <div class="page-head">
+            <div>
+              <h2>鼠标 · 控制算法</h2>
+              <p>选择全局算法，并在下方面板调整参数。高级 PID 作用于当前配置槽；外部 PID / 瞄准控制为全局参数。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><h3>算法</h3></div>
+            <div class="group-grid">
+              <label class="field span-2">
+                <span class="label">全局算法类型</span>
+                <select id="algoSelect" data-key="algorithm_type_global" data-path="aim.algorithm_type_global">
+                  <option value="0">0 高级比例积分微分</option>
+                  <option value="1">1 外部比例积分微分</option>
+                  <option value="2">2 瞄准控制器</option>
+                  <option value="3">3 限速控制</option>
+                  <option value="4">4 自适应比例积分微分</option>
+                </select>
+              </label>
+            </div>
+            <div class="algo-tabs" id="algoTabs">
+              <button type="button" class="algo-tab active" data-algo="0">高级 PID</button>
+              <button type="button" class="algo-tab" data-algo="1">外部 PID</button>
+              <button type="button" class="algo-tab" data-algo="2">瞄准控制</button>
+              <button type="button" class="algo-tab" data-algo="3">限速</button>
+              <button type="button" class="algo-tab" data-algo="4">自适应</button>
+            </div>
+
+            <div class="algo-panel active" data-algo-panel="0">
+              <div class="group-grid dense">
+                <label class="field"><span class="label">最小比例增益</span>
+                  <div class="dual-control"><input type="range" min="0" max="2" step="0.001" value="0.153" /><input type="number" data-key="p_min" data-slot="1" step="0.001" value="0.153" /></div></label>
+                <label class="field"><span class="label">最大比例增益</span>
+                  <div class="dual-control"><input type="range" min="0" max="3" step="0.001" value="0.6" /><input type="number" data-key="p_max" data-slot="1" step="0.001" value="0.6" /></div></label>
+                <label class="field"><span class="label">距离-增益斜率</span>
+                  <div class="dual-control"><input type="range" min="0" max="10" step="0.01" value="1" /><input type="number" data-key="p_slope" data-slot="1" step="0.01" value="1" /></div></label>
+                <label class="field"><span class="label">微分增益 D</span>
+                  <div class="dual-control"><input type="range" min="0" max="1" step="0.001" value="0.007" /><input type="number" data-key="d" data-slot="1" step="0.001" value="0.007" /></div></label>
+                <label class="field"><span class="label">积分增益 I</span>
+                  <div class="dual-control"><input type="range" min="0" max="1" step="0.001" value="0.01" /><input type="number" data-key="i" data-slot="1" step="0.001" value="0.01" /></div></label>
+                <label class="field"><span class="label">微分滤波系数</span>
+                  <div class="dual-control"><input type="range" min="0" max="1" step="0.01" value="0.2" /><input type="number" data-key="derivative_filter_alpha" data-slot="1" step="0.01" value="0.2" /></div></label>
+                <label class="field"><span class="label">自适应 P 增益变化率</span>
+                  <div class="dual-control"><input type="range" min="0" max="1" step="0.01" value="0" /><input type="number" data-key="adaptive_p_gain_rate" data-slot="1" step="0.01" value="0" /></div></label>
+                <label class="field"><span class="label">D 项缩放</span>
+                  <div class="dual-control"><input type="range" min="0" max="5" step="0.01" value="1" /><input type="number" data-key="d_term_scale" data-slot="1" step="0.01" value="1" /></div></label>
+                <label class="field"><span class="label">积分限幅</span>
+                  <div class="dual-control"><input type="range" min="0" max="100" step="0.1" value="10" /><input type="number" data-key="integral_limit" data-slot="1" step="0.1" value="10" /></div></label>
+                <label class="field"><span class="label">积分速率</span>
+                  <div class="dual-control"><input type="range" min="0" max="5" step="0.01" value="1" /><input type="number" data-key="integral_rate" data-slot="1" step="0.01" value="1" /></div></label>
+                <label class="field"><span class="label">P 增益爬升初值</span>
+                  <div class="dual-control"><input type="range" min="0" max="2" step="0.01" value="0.5" /><input type="number" data-key="p_gain_ramp_initial_scale" data-slot="1" step="0.01" value="0.5" /></div></label>
+                <label class="field"><span class="label">P 增益爬升时长</span>
+                  <div class="dual-control"><input type="range" min="0" max="2" step="0.01" value="0.3" /><input type="number" data-key="p_gain_ramp_duration" data-slot="1" step="0.01" value="0.3" /></div></label>
+              </div>
+            </div>
+
+            <div class="algo-panel" data-algo-panel="1">
+              <div class="group-grid dense">
+                <label class="field"><span class="label">外部比例增益 X</span><input type="number" data-key="external_kp_x" data-path="aim.external_kp_x" step="0.001" value="0.5" /></label>
+                <label class="field"><span class="label">外部积分增益 X</span><input type="number" data-key="external_ki_x" data-path="aim.external_ki_x" step="0.001" value="0" /></label>
+                <label class="field"><span class="label">外部微分增益 X</span><input type="number" data-key="external_kd_x" data-path="aim.external_kd_x" step="0.001" value="0" /></label>
+                <label class="field"><span class="label">外部比例增益 Y</span><input type="number" data-key="external_kp_y" data-path="aim.external_kp_y" step="0.001" value="0.5" /></label>
+                <label class="field"><span class="label">外部积分增益 Y</span><input type="number" data-key="external_ki_y" data-path="aim.external_ki_y" step="0.001" value="0" /></label>
+                <label class="field"><span class="label">外部微分增益 Y</span><input type="number" data-key="external_kd_y" data-path="aim.external_kd_y" step="0.001" value="0" /></label>
+                <label class="field"><span class="label">外部预测 X</span><input type="number" data-key="external_predict_x" data-path="aim.external_predict_x" step="0.01" value="0" /></label>
+                <label class="field"><span class="label">外部预测 Y</span><input type="number" data-key="external_predict_y" data-path="aim.external_predict_y" step="0.01" value="0" /></label>
+                <label class="field"><span class="label">外部速率 X</span><input type="number" data-key="external_rate_x" data-path="aim.external_rate_x" step="0.01" value="1" /></label>
+                <label class="field"><span class="label">外部速率 Y</span><input type="number" data-key="external_rate_y" data-path="aim.external_rate_y" step="0.01" value="1" /></label>
+                <label class="field"><span class="label">外部积分模式</span><input type="number" data-key="external_ki_mode" data-path="aim.external_ki_mode" value="0" /></label>
+                <label class="field"><span class="label">外部积分速率</span><input type="number" data-key="external_ki_rate" data-path="aim.external_ki_rate" step="0.01" value="1" /></label>
+                <label class="field"><span class="label">外部积分死区</span><input type="number" data-key="external_ki_deadband" data-path="aim.external_ki_deadband" step="0.1" value="0" /></label>
+                <label class="field"><span class="label">外部输出限制</span><input type="number" data-key="external_output_limit" data-path="aim.external_output_limit" step="1" value="128" /></label>
+              </div>
+            </div>
+
+            <div class="algo-panel" data-algo-panel="2">
+              <div class="group-grid dense">
+                <label class="field"><span class="label">瞄准比例增益</span><input type="number" data-key="aim_kp" data-path="aim.aim_kp" step="0.001" value="0.6" /></label>
+                <label class="field"><span class="label">瞄准积分增益</span><input type="number" data-key="aim_ki" data-path="aim.aim_ki" step="0.001" value="0.01" /></label>
+                <label class="field"><span class="label">瞄准微分增益</span><input type="number" data-key="aim_kd" data-path="aim.aim_kd" step="0.001" value="0.007" /></label>
+                <label class="field check"><input type="checkbox" data-key="aim_noise_enabled" data-path="aim.aim_noise_enabled" /><span class="label">启用瞄准噪声</span></label>
+                <label class="field"><span class="label">噪声幅度</span><input type="number" data-key="aim_noise_amplitude" data-path="aim.aim_noise_amplitude" step="0.1" value="2" /></label>
+                <label class="field"><span class="label">预测 X 权重</span><input type="number" data-key="aim_prediction_weight_x" data-path="aim.aim_prediction_weight_x" step="0.01" value="0.3" /></label>
+                <label class="field"><span class="label">预测 Y 权重</span><input type="number" data-key="aim_prediction_weight_y" data-path="aim.aim_prediction_weight_y" step="0.01" value="0.1" /></label>
+                <label class="field"><span class="label">增益爬升时间</span><input type="number" data-key="aim_ramp_time" data-path="aim.aim_ramp_time" step="0.01" value="0.3" /></label>
+                <label class="field"><span class="label">初始增益比例</span><input type="number" data-key="aim_init_scale" data-path="aim.aim_init_scale" step="0.01" value="0.6" /></label>
+                <label class="field"><span class="label">输出上限</span><input type="number" data-key="aim_output_max" data-path="aim.aim_output_max" step="1" value="128" /></label>
+              </div>
+            </div>
+
+            <div class="algo-panel" data-algo-panel="3">
+              <div class="group-grid dense">
+                <label class="field check"><input type="checkbox" data-key="slew_rate_group" data-slot="1" /><span class="label">启用限速控制</span></label>
+                <label class="field"><span class="label">输出增益</span><input type="number" data-key="slew_rate_output_gain" data-slot="1" step="0.01" value="1" /></label>
+                <label class="field"><span class="label">响应平滑</span><input type="number" data-key="slew_rate_response_smoothing" data-slot="1" step="0.01" value="0.5" /></label>
+                <label class="field"><span class="label">接近阻尼</span><input type="number" data-key="slew_rate_approach_damping" data-slot="1" step="0.01" value="0.5" /></label>
+                <label class="field"><span class="label">更新间隔（毫秒）</span><input type="number" data-key="slew_rate_update_interval_ms" data-slot="1" value="1" /></label>
+                <label class="field"><span class="label">归一化比例</span><input type="number" data-key="slew_rate_normalization_scale" data-slot="1" step="0.01" value="1" /></label>
+              </div>
+            </div>
+
+            <div class="algo-panel" data-algo-panel="4">
+              <div class="group-grid dense">
+                <label class="field"><span class="label">自适应比例增益</span><input type="number" data-key="adaptive_pid_kp" data-slot="1" step="0.001" value="0.5" /></label>
+                <label class="field"><span class="label">自适应积分增益</span><input type="number" data-key="adaptive_pid_ki" data-slot="1" step="0.001" value="0.01" /></label>
+                <label class="field"><span class="label">自适应微分增益</span><input type="number" data-key="adaptive_pid_kd" data-slot="1" step="0.001" value="0.007" /></label>
+                <label class="field"><span class="label">自适应死区</span><input type="number" data-key="adaptive_pid_dead_zone" data-slot="1" step="0.1" value="5" /></label>
+                <label class="field"><span class="label">自适应积分限幅</span><input type="number" data-key="adaptive_pid_integral_limit" data-slot="1" step="0.1" value="10" /></label>
+                <label class="field"><span class="label">自适应输出限制</span><input type="number" data-key="adaptive_pid_output_limit" data-slot="1" step="1" value="128" /></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 4 ========== -->
+        <section class="page" data-page="4">
+          <div class="page-head">
+            <div>
+              <h2>扳机 / 后座</h2>
+              <p>当前槽的自动扳机与后座补偿参数。</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>自动扳机</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="auto_trigger_group" data-slot="1" /><span class="label">启用自动扳机</span></label>
+              <label class="field"><span class="label">触发半径</span>
+                <div class="dual-control"><input type="range" min="1" max="100" step="1" value="5" /><input type="number" data-key="autoTriggerRadius" data-slot="1" value="5" /></div></label>
+              <label class="field"><span class="label">冷却（毫秒）</span>
+                <div class="dual-control"><input type="range" min="0" max="1000" step="1" value="50" /><input type="number" data-key="autoTriggerCooldown" data-slot="1" step="1" value="50" /></div></label>
+              <label class="field"><span class="label">开火延迟（毫秒）</span>
+                <div class="dual-control"><input type="range" min="0" max="500" step="1" value="0" /><input type="number" data-key="autoTriggerFireDelay" data-slot="1" value="0" /></div></label>
+              <label class="field"><span class="label">开火时长（毫秒）</span>
+                <div class="dual-control"><input type="range" min="1" max="500" step="1" value="30" /><input type="number" data-key="autoTriggerFireDuration" data-slot="1" value="30" /></div></label>
+              <label class="field"><span class="label">触发间隔（毫秒）</span>
+                <div class="dual-control"><input type="range" min="0" max="1000" step="1" value="0" /><input type="number" data-key="autoTriggerInterval" data-slot="1" value="0" /></div></label>
+              <label class="field check"><input type="checkbox" data-key="enable_trigger_delay_random" data-slot="1" /><span class="label">延迟随机</span></label>
+              <label class="field"><span class="label">延迟随机下限</span>
+                <div class="dual-control"><input type="range" min="0" max="500" step="1" value="0" /><input type="number" data-key="triggerDelayRandomMin" data-slot="1" value="0" /></div></label>
+              <label class="field"><span class="label">延迟随机上限</span>
+                <div class="dual-control"><input type="range" min="0" max="500" step="1" value="0" /><input type="number" data-key="triggerDelayRandomMax" data-slot="1" value="0" /></div></label>
+              <label class="field check"><input type="checkbox" data-key="enable_trigger_duration_random" data-slot="1" /><span class="label">时长随机</span></label>
+              <label class="field"><span class="label">时长随机下限</span>
+                <div class="dual-control"><input type="range" min="0" max="500" step="1" value="0" /><input type="number" data-key="triggerDurationRandomMin" data-slot="1" value="0" /></div></label>
+              <label class="field"><span class="label">时长随机上限</span>
+                <div class="dual-control"><input type="range" min="0" max="500" step="1" value="0" /><input type="number" data-key="triggerDurationRandomMax" data-slot="1" value="0" /></div></label>
+              <label class="field"><span class="label">移动补偿</span>
+                <div class="dual-control"><input type="range" min="0" max="50" step="0.1" value="0" /><input type="number" data-key="triggerMoveCompensation" data-slot="1" step="0.1" value="0" /></div></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>后座</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="autoRecoilControlEnabled" data-slot="1" /><span class="label">启用后座控制</span></label>
+              <label class="field"><span class="label">压枪幅度</span>
+                <div class="dual-control"><input type="range" min="0" max="50" step="0.1" value="1" /><input type="number" data-key="recoilStrength" data-slot="1" step="0.1" value="1" /></div></label>
+              <label class="field"><span class="label">压枪间隔（毫秒）</span>
+                <div class="dual-control"><input type="range" min="1" max="200" step="1" value="1" /><input type="number" data-key="recoilSpeed" data-slot="1" step="1" value="1" /></div></label>
+              <label class="field"><span class="label">压枪控制增益</span>
+                <div class="dual-control"><input type="range" min="0" max="2" step="0.01" value="1" /><input type="number" data-key="recoilPidGainScale" data-slot="1" step="0.01" value="1" /></div></label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 5 ========== -->
+        <section class="page" data-page="5">
+          <div class="page-head">
+            <div>
+              <h2>追踪与高级</h2>
+              <p>Hungarian / re-id / Kalman 权重；神经网络路径；配置导入导出。</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>多目标跟踪</h3></div>
+            <div class="group-grid dense">
+              <label class="field"><span class="label">交并比阈值</span><input type="number" data-key="iou_threshold" data-path="tracking.iou_threshold" min="0" max="1" step="0.05" value="0.3" /></label>
+              <label class="field"><span class="label">最大丢失帧</span><input type="number" data-key="max_lost_frames" data-path="tracking.max_lost_frames" min="1" max="120" value="10" /></label>
+              <label class="field"><span class="label">重识别最大帧</span><input type="number" data-key="max_reidentify_frames" data-path="tracking.max_reidentify_frames" min="1" max="300" value="30" /></label>
+              <label class="field"><span class="label">重识别中心阈值</span><input type="number" data-key="reidentify_center_threshold" data-path="tracking.reidentify_center_threshold" min="0" max="1" step="0.01" value="0.1" /></label>
+              <label class="field"><span class="label">交并比权重</span><input type="number" data-key="tracking_weight_iou" data-path="tracking.tracking_weight_iou" min="0" max="1" step="0.01" value="0.4" /></label>
+              <label class="field"><span class="label">权重中心</span><input type="number" data-key="tracking_weight_center" data-path="tracking.tracking_weight_center" min="0" max="1" step="0.01" value="0.3" /></label>
+              <label class="field"><span class="label">权重宽高比</span><input type="number" data-key="tracking_weight_aspect" data-path="tracking.tracking_weight_aspect" min="0" max="1" step="0.01" value="0.15" /></label>
+              <label class="field"><span class="label">权重面积</span><input type="number" data-key="tracking_weight_area" data-path="tracking.tracking_weight_area" min="0" max="1" step="0.01" value="0.15" /></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>卡尔曼追踪</h3><span class="tag">与插件一致</span></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="use_kalman_tracker" data-path="tracking.use_kalman_tracker" /><span class="label">启用卡尔曼追踪</span></label>
+              <label class="field"><span class="label">追踪确认阈值</span><input type="number" data-key="kalman_generate_threshold" data-path="tracking.kalman_generate_threshold" min="1" max="20" value="3" /></label>
+              <label class="field"><span class="label">追踪丢失阈值</span><input type="number" data-key="kalman_terminate_count" data-path="tracking.kalman_terminate_count" min="1" max="30" value="5" /></label>
+              <label class="field check"><input type="checkbox" data-key="show_kalman_predictions" data-path="tracking.show_kalman_predictions" /><span class="label">显示预测位置</span></label>
+              <label class="field"><span class="label">预测帧数</span><input type="number" data-key="kalman_prediction_frames" data-path="tracking.kalman_prediction_frames" min="1" max="30" value="5" /></label>
+              <label class="field check"><input type="checkbox" data-key="show_kalman_trajectories" data-path="tracking.show_kalman_trajectories" /><span class="label">显示预测轨迹</span></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>神经网络轨迹</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="enable_neural_path" data-path="aim.enable_neural_path" /><span class="label">启用神经网络轨迹</span></label>
+              <label class="field"><span class="label">轨迹点数量</span><input type="number" data-key="neural_path_points" data-path="aim.neural_path_points" min="10" max="100" value="25" /></label>
+              <label class="field"><span class="label">鼠标步长</span><input type="number" data-key="neural_mouse_step_size" data-path="aim.neural_mouse_step_size" min="1" max="20" step="0.5" value="8" /></label>
+              <label class="field"><span class="label">目标半径</span><input type="number" data-key="neural_target_radius" data-path="aim.neural_target_radius" min="1" max="50" value="8" /></label>
+              <label class="field"><span class="label">每帧消费点数</span><input type="number" data-key="neural_consume_per_frame" data-path="aim.neural_consume_per_frame" min="1" max="5" value="2" /></label>
+              <label class="field check"><input type="checkbox" data-key="enable_neural_path_debug" data-path="aim.enable_neural_path_debug" /><span class="label">神经网络调试日志</span></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>悬浮窗（与插件一致）</h3><span class="tag">置顶预览窗</span></div>
+            <div class="group-grid dense">
+              <label class="field check">
+                <input type="checkbox" data-key="show_floating_window" data-path="vision.show_floating_window" />
+                <span class="label">显示悬浮窗</span>
+              </label>
+              <label class="field check">
+                <input type="checkbox" data-key="preview_enabled" data-path="vision.preview_enabled" />
+                <span class="label">Web 预览（关闭可省 CPU）</span>
+              </label>
+              <label class="field">
+                <span class="label">窗口宽度</span>
+                <input type="number" data-key="floating_window_width" data-path="vision.floating_window_width" min="160" max="1920" step="10" value="640" />
+              </label>
+              <label class="field">
+                <span class="label">窗口高度</span>
+                <input type="number" data-key="floating_window_height" data-path="vision.floating_window_height" min="120" max="1080" step="10" value="480" />
+              </label>
+              <label class="field check">
+                <input type="checkbox" data-key="show_track_id_in_floating_window" data-path="vision.show_track_id_in_floating_window" />
+                <span class="label">显示目标编号</span>
+              </label>
+            </div>
+            <p class="hint">勾选后弹出独立置顶预览窗（可拖动），与 Web 预览同源帧；关闭窗口或取消勾选即关。</p>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>配置文件</h3></div>
+            <div class="actions-row">
+              <button type="button" id="btnExportCfg">导出 JSON</button>
+              <label class="file-btn ghost" style="padding:9px 14px;border-radius:10px;border:1px solid var(--border2);cursor:pointer;font-weight:600">
+                导入 JSON
+                <input type="file" id="fileImportCfg" accept="application/json,.json" />
+              </label>
+            </div>
+            <p class="hint">导出完整配置 JSON；导入后立即合并并保存到本地配置文件。</p>
+          </div>
+        </section>
+
+        <!-- ========== 6 ========== -->
+        <section class="page" data-page="6">
+          <div class="page-head">
+            <div>
+              <h2>预测 / 滤波</h2>
+              <p>当前槽：导数预测、Smith、OneEuro、Bezier、Ghost。</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>Derivative</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="derivative_predictor_group" data-slot="1" checked /><span class="label">启用</span></label>
+              <label class="field"><span class="label">X 轴权重</span><input type="number" data-key="prediction_weight_x" data-slot="1" step="0.01" value="0.5" /></label>
+              <label class="field"><span class="label">Y 轴权重</span><input type="number" data-key="prediction_weight_y" data-slot="1" step="0.01" value="0.1" /></label>
+              <label class="field"><span class="label">最大预测时间（秒）</span><input type="number" data-key="max_prediction_time" data-slot="1" step="0.01" value="0.1" /></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>Smith Predictor</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="smith_predictor_group" data-slot="1" /><span class="label">启用</span></label>
+              <label class="field"><span class="label">模型增益</span><input type="number" data-key="smith_model_gain" data-slot="1" step="0.01" value="1" /></label>
+              <label class="field"><span class="label">时间常数 τ</span><input type="number" data-key="smith_model_tau" data-slot="1" step="0.001" value="0.02" /></label>
+              <label class="field check"><input type="checkbox" data-key="smith_auto_tau" data-slot="1" checked /><span class="label">自动估计 τ</span></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>One Euro / Bezier / Ghost</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="use_one_euro_filter" data-slot="1" /><span class="label">One Euro 滤波</span></label>
+              <label class="field"><span class="label">最小截止频率</span><input type="number" data-key="one_euro_min_cutoff" data-slot="1" step="0.1" value="1" /></label>
+              <label class="field"><span class="label">速度系数 β</span><input type="number" data-key="one_euro_beta" data-slot="1" step="0.001" value="0.007" /></label>
+              <label class="field"><span class="label">导数截止频率</span><input type="number" data-key="one_euro_d_cutoff" data-slot="1" step="0.1" value="1" /></label>
+              <label class="field check"><input type="checkbox" data-key="bezier_movement_group" data-slot="1" /><span class="label">贝塞尔轨迹</span></label>
+              <label class="field"><span class="label">曲率</span><input type="number" data-key="bezier_curvature" data-slot="1" step="0.01" value="0.3" /></label>
+              <label class="field"><span class="label">随机扰动</span><input type="number" data-key="bezier_randomness" data-slot="1" step="0.01" value="0.2" /></label>
+              <label class="field check"><input type="checkbox" data-key="ghost_tracker_group" data-slot="1" /><span class="label">幽灵轨迹</span></label>
+              <label class="field"><span class="label">曲率</span><input type="number" data-key="ghost_curvature" data-slot="1" step="0.01" value="0.5" /></label>
+              <label class="field"><span class="label">噪声强度</span><input type="number" data-key="ghost_noise_intensity" data-slot="1" step="0.1" value="12" /></label>
+              <label class="field"><span class="label">垂直吸附</span><input type="number" data-key="ghost_vertical_snap" data-slot="1" step="0.1" value="3" /></label>
+              <label class="field"><span class="label">噪声频率</span><input type="number" data-key="ghost_noise_freq" data-slot="1" step="0.01" value="0.8" /></label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== 7 ========== -->
+        <section class="page" data-page="7">
+          <div class="page-head">
+            <div>
+              <h2>准星检测</h2>
+              <p>HSV 颜色扫描 → 作为 aim origin。manual RGB 在默认 HSV 时自动播种。</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>开关与范围</h3></div>
+            <div class="group-grid dense">
+              <label class="field check"><input type="checkbox" data-key="crosshair_enabled" data-path="crosshair.crosshair_enabled" /><span class="label">启用准星</span></label>
+              <label class="field"><span class="label">检测间隔帧</span><input type="number" data-key="crosshair_detect_interval" data-path="crosshair.crosshair_detect_interval" value="1" /></label>
+              <label class="field"><span class="label">搜索半径</span><input type="number" data-key="crosshair_search_radius" data-path="crosshair.crosshair_search_radius" value="0" /></label>
+              <label class="field check"><input type="checkbox" data-key="crosshair_color_isolation" data-path="crosshair.crosshair_color_isolation" /><span class="label">颜色隔离</span></label>
+              <label class="field check"><input type="checkbox" data-key="crosshair_debug_mask" data-path="crosshair.crosshair_debug_mask" /><span class="label">调试遮罩</span></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>HSV / Manual RGB</h3></div>
+            <div class="group-grid dense">
+              <label class="field"><span class="label">色相最小</span><input type="number" data-key="crosshair_h_min" data-path="crosshair.crosshair_h_min" min="0" max="180" value="0" /></label>
+              <label class="field"><span class="label">色相最大</span><input type="number" data-key="crosshair_h_max" data-path="crosshair.crosshair_h_max" min="0" max="180" value="180" /></label>
+              <label class="field"><span class="label">饱和度最小</span><input type="number" data-key="crosshair_s_min" data-path="crosshair.crosshair_s_min" min="0" max="255" value="100" /></label>
+              <label class="field"><span class="label">饱和度最大</span><input type="number" data-key="crosshair_s_max" data-path="crosshair.crosshair_s_max" min="0" max="255" value="255" /></label>
+              <label class="field"><span class="label">明度最小</span><input type="number" data-key="crosshair_v_min" data-path="crosshair.crosshair_v_min" min="0" max="255" value="100" /></label>
+              <label class="field"><span class="label">明度最大</span><input type="number" data-key="crosshair_v_max" data-path="crosshair.crosshair_v_max" min="0" max="255" value="255" /></label>
+              <label class="field"><span class="label">手动红色</span><input type="number" data-key="crosshair_manual_r" data-path="crosshair.crosshair_manual_r" min="0" max="255" value="0" /></label>
+              <label class="field"><span class="label">手动绿色</span><input type="number" data-key="crosshair_manual_g" data-path="crosshair.crosshair_manual_g" min="0" max="255" value="255" /></label>
+              <label class="field"><span class="label">手动蓝色</span><input type="number" data-key="crosshair_manual_b" data-path="crosshair.crosshair_manual_b" min="0" max="255" value="0" /></label>
+              <label class="field"><span class="label">色相容差</span><input type="number" data-key="crosshair_h_tolerance" data-path="crosshair.crosshair_h_tolerance" value="10" /></label>
+              <label class="field"><span class="label">饱和度容差</span><input type="number" data-key="crosshair_s_tolerance" data-path="crosshair.crosshair_s_tolerance" value="40" /></label>
+              <label class="field"><span class="label">明度容差</span><input type="number" data-key="crosshair_v_tolerance" data-path="crosshair.crosshair_v_tolerance" value="40" /></label>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><h3>形态 / 模板（兼容字段）</h3></div>
+            <div class="group-grid dense">
+              <label class="field"><span class="label">形态学核大小</span><input type="number" data-key="crosshair_morph_kernel" data-path="crosshair.crosshair_morph_kernel" value="3" /></label>
+              <label class="field"><span class="label">腐蚀次数</span><input type="number" data-key="crosshair_erode_iter" data-path="crosshair.crosshair_erode_iter" value="0" /></label>
+              <label class="field"><span class="label">膨胀次数</span><input type="number" data-key="crosshair_dilate_iter" data-path="crosshair.crosshair_dilate_iter" value="1" /></label>
+              <label class="field"><span class="label">网格行数</span><input type="number" data-key="crosshair_grid_rows" data-path="crosshair.crosshair_grid_rows" value="4" /></label>
+              <label class="field"><span class="label">网格列数</span><input type="number" data-key="crosshair_grid_cols" data-path="crosshair.crosshair_grid_cols" value="4" /></label>
+              <label class="field"><span class="label">分位数</span><input type="number" data-key="crosshair_quantile_threshold" data-path="crosshair.crosshair_quantile_threshold" step="0.01" value="0.01" /></label>
+              <label class="field span-2"><span class="label">模板路径</span><input type="text" data-key="crosshair_template_path" data-path="crosshair.crosshair_template_path" value="" /></label>
+              <label class="field"><span class="label">匹配阈值</span><input type="number" data-key="crosshair_match_threshold" data-path="crosshair.crosshair_match_threshold" step="0.01" value="0.6" /></label>
+              <label class="field"><span class="label">最小面积</span><input type="number" data-key="crosshair_min_area" data-path="crosshair.crosshair_min_area" value="10" /></label>
+              <label class="field"><span class="label">最大面积</span><input type="number" data-key="crosshair_max_area" data-path="crosshair.crosshair_max_area" value="50000" /></label>
+              <label class="field check"><input type="checkbox" data-key="crosshair_shape_filter_enabled" data-path="crosshair.crosshair_shape_filter_enabled" /><span class="label">形状过滤</span></label>
+              <label class="field"><span class="label">形状类型</span><input type="number" data-key="crosshair_shape_type" data-path="crosshair.crosshair_shape_type" value="0" /></label>
+              <label class="field"><span class="label">最小填充比</span><input type="number" data-key="crosshair_min_fill_ratio" data-path="crosshair.crosshair_min_fill_ratio" step="0.01" value="0.05" /></label>
+              <label class="field"><span class="label">最大填充比</span><input type="number" data-key="crosshair_max_fill_ratio" data-path="crosshair.crosshair_max_fill_ratio" step="0.01" value="0.8" /></label>
+              <label class="field"><span class="label">最小宽高比</span><input type="number" data-key="crosshair_min_aspect_ratio" data-path="crosshair.crosshair_min_aspect_ratio" step="0.01" value="0.3" /></label>
+              <label class="field"><span class="label">最大宽高比</span><input type="number" data-key="crosshair_max_aspect_ratio" data-path="crosshair.crosshair_max_aspect_ratio" step="0.01" value="3" /></label>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Preview dock -->
+      <aside class="preview-dock">
+        <h2>实时预览</h2>
+        <div class="preview-stage">
+          <img id="preview" alt="等待截图…" />
+          <canvas id="overlay" width="640" height="640"></canvas>
+        </div>
+        <p id="previewHint">引擎启动后约 1 秒出画面</p>
+        <dl class="stat-grid">
+          <div class="stat"><dt>截图/推理</dt><dd id="sCapture">—</dd></div>
+          <div class="stat"><dt>截图后端</dt><dd id="sBackend">—</dd></div>
+          <div class="stat span-2"><dt>截图模式</dt><dd id="sMode">—</dd></div>
+          <div class="stat span-2"><dt>推理设备</dt><dd id="sDevice">—</dd></div>
+          <div class="stat"><dt>帧率</dt><dd id="sFps">—</dd></div>
+          <div class="stat"><dt>总帧数</dt><dd id="sFrames">—</dd></div>
+          <div class="stat"><dt>目标数</dt><dd id="sDets">—</dd></div>
+          <div class="stat"><dt>瞄准状态</dt><dd id="sAim">—</dd></div>
+          <div class="stat span-2"><dt>模型路径</dt><dd id="sModel" style="word-break:break-all;font-size:11px">—</dd></div>
+          <div class="stat span-2"><dt>控制器</dt><dd id="sCtrl">—</dd></div>
+          <div class="stat span-2"><dt>错误/备注</dt><dd id="sErr">—</dd></div>
+        </dl>
+        <h2>检测列表</h2>
+        <pre id="detBox" class="det-box">（等待检测）</pre>
+      </aside>
+    </div>
+  </div>
+  <script src="/js/obs_help.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

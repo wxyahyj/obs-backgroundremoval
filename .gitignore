@@ -12,6 +12,7 @@
 !/scripts
 !/src
 !/vcpkg-triplets
+!/standalone
 !/microsoft.ml.onnxruntime.directml.*
 !/microsoft.ai.directml.*
 !.clang-format
@@ -37,3 +38,8 @@
 /cmake/.CMakeBuildNumber
 
 src/*.generated.*
+
+# Standalone: track sources, exclude build artifacts and model binaries
+/standalone/build/
+/standalone/models/
+
