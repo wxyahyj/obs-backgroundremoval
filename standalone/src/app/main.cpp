@@ -1,9 +1,12 @@
-// YoloAim standalone 入口 — M3 双线程引擎
+// YoloAim standalone 入口 — M4:引擎 + Web API
 // 用法: yolo_host.exe [config.json]
 // 默认: <exe 目录>/config/default.json(损坏时自动备份并回退默认)
+// WebUI: http://127.0.0.1:17890
 
 #include "config/ConfigStore.hpp"
 #include "engine/Engine.hpp"
+#include "web/ApiRoutes.hpp"
+#include "web/HttpServer.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -78,10 +81,21 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::fprintf(stderr, "[main] engine running (Ctrl+C to stop)\n");
+    // Web API + UI
+    ya::web::HttpServer web;
+    ya::web::ApiContext actx{&engine, (base / "config" / "user.json").string()};
+    ya::web::register_api_routes(web, actx);
+    if (!web.start(17890, (base / "webui").string())) {
+        std::fprintf(stderr, "[main] web server start failed (port busy?)\n");
+        engine.stop();
+        return 1;
+    }
+
+    std::fprintf(stderr, "[main] running — WebUI http://127.0.0.1:17890 (Ctrl+C to stop)\n");
     while (!InterlockedCompareExchange(&g_stop, 0, 0))
         Sleep(200);
 
+    web.stop();
     engine.stop();
     std::fprintf(stderr, "[main] stopped\n");
     return 0;

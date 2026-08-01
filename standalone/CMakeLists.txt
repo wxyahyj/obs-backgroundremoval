@@ -64,6 +64,8 @@ set(HOST_SOURCES
   ${YA_ROOT}/src/config/ConfigStore.cpp
   ${YA_ROOT}/src/capture/FrameSource.cpp
   ${YA_ROOT}/src/core/obs_stubs.cpp
+  ${YA_ROOT}/src/web/HttpServer.cpp
+  ${YA_ROOT}/src/web/ApiRoutes.cpp
 )
 
 if(YA_WITH_INFER)
@@ -128,6 +130,7 @@ target_include_directories(yolo_host PRIVATE
   ${YA_ROOT}/src/app
   ${YA_ROOT}/src/engine
   ${YA_ROOT}/src/config
+  ${YA_ROOT}/src/web
   ${YA_ROOT}/src/capture
   ${YA_ROOT}/src/host
   ${YA_ROOT}/src/web

@@ -36,10 +36,16 @@ public:
 
     // 热更新配置(下次循环生效;模型/截图参数需 reload)
     void update_config(const config::ConfigDocument& cfg);
+    // 当前配置快照(Web API 用)
+    config::ConfigDocument config() const;
 
     // 冷重载(下一轮循环执行)
     void request_reload_model();
     void request_reload_capture();
+
+    // 测试鼠标后端连通(不经瞄准)
+    bool test_controller(const std::string& type, const std::string& makcu_port, int baud,
+                         int logi_type, std::string* err);
 
     PipelineStats stats() const;
 
@@ -60,7 +66,7 @@ private:
     FramePipeline pipeline_;
 
     // 配置(双线程共享,热更新时替换)
-    std::mutex cfg_mu_;
+    mutable std::mutex cfg_mu_;
     config::ConfigDocument cfg_;
 
     // 最新帧槽

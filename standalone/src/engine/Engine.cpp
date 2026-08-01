@@ -181,6 +181,12 @@ void Engine::update_config(const config::ConfigDocument& cfg)
     apply_aim_settings(); // 瞄准/跟踪参数热生效;模型/截图走 reload
 }
 
+config::ConfigDocument Engine::config() const
+{
+    std::lock_guard<std::mutex> lock(cfg_mu_);
+    return cfg_;
+}
+
 void Engine::request_reload_model()
 {
     reload_model_.store(true);
@@ -189,6 +195,15 @@ void Engine::request_reload_model()
 void Engine::request_reload_capture()
 {
     reload_capture_.store(true);
+}
+
+bool Engine::test_controller(const std::string& type, const std::string& makcu_port, int baud,
+                             int logi_type, std::string* err)
+{
+    if (!aim_)
+        return false;
+    return aim_->test_controller(FullAimBridge::parse_controller(type), makcu_port, baud,
+                                 logi_type, err);
 }
 
 PipelineStats Engine::stats() const
