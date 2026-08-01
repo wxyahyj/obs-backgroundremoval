@@ -1,6 +1,6 @@
 # 独立软件项目计划书 v2.0 — 重做外围,复用核心
 
-> 版本:v2.0 · 2026-08-02 · 状态:已批准方向,实施中
+> 版本:v2.0 · 2026-08-02 · 状态:✅ 全部里程碑完成(M0-M7 交付)
 > 决策:现有 `standalone/` 实现质量不达标(代码结构乱 / UI 差 / 不稳定 / 架构不满)。
 > 方向:**重写外围(host/config/web/UI),复用主仓核心(推理/瞄准/跟踪)**,保持 WebUI 技术栈,功能必须**完全体**(与 OBS 插件全对齐)。
 
@@ -201,4 +201,17 @@ M0(基线) → M1(骨架闭环) → M2(配置层) → M3(引擎)
         → M4(Web+UI) → M5(完全体) → M6(稳定) → M7(打包门禁)
 ```
 
-当前进度:M0 进行中。
+当前进度:全部完成。
+
+## 7. 交付记录
+
+| 里程碑 | 验证 |
+|---|---|
+| M0 基线 | standalone 64 文件入 git, scripts 恢复 |
+| M1 骨架 | 构建 + 冒烟(dets=11, CUDA EP) |
+| M2 配置层 | config_test ALL PASS(序列化/键映射/合并/恢复) |
+| M3 引擎 | 双线程管线, controller created |
+| M4 Web | 页面 200, PUT 热生效 |
+| M5 功能 | preview 640x640 / pick RGB / overlay shown / OBS 导入映射 |
+| M6 稳定 | host.log 轮转, minidump 就绪, 捕获 GDI 回退 |
+| M7 打包门禁 | parity ok(0err/0warn), smoke ALL PASS, 便携 ZIP + 安装器 |
