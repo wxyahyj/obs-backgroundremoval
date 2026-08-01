@@ -59,6 +59,9 @@ endif()
 set(HOST_SOURCES
   ${YA_ROOT}/src/app/main.cpp
   ${YA_ROOT}/src/engine/Engine.cpp
+  ${YA_ROOT}/src/config/ConfigModel.cpp
+  ${YA_ROOT}/src/config/ConfigKeyMap.cpp
+  ${YA_ROOT}/src/config/ConfigStore.cpp
   ${YA_ROOT}/src/capture/FrameSource.cpp
   ${YA_ROOT}/src/core/obs_stubs.cpp
 )
@@ -122,6 +125,7 @@ target_include_directories(yolo_host PRIVATE
   ${YA_ROOT}/src
   ${YA_ROOT}/src/app
   ${YA_ROOT}/src/engine
+  ${YA_ROOT}/src/config
   ${YA_ROOT}/src/capture
   ${YA_ROOT}/src/host
   ${YA_ROOT}/src/web
@@ -339,3 +343,24 @@ if(EXISTS "${YA_DEFAULT_MODEL}")
 endif()
 
 message(STATUS "yolo_aim_standalone: capture=${YA_BUILD_CAPTURE_SHARED} wgc=${YA_WITH_WGC} infer=${YA_WITH_INFER} aim=${YA_WITH_AIM}")
+
+# ---- M2 config layer unit test ----
+if(EXISTS "${YA_PARENT}/.deps/obs-deps-2025-07-11-x64/include/nlohmann/json.hpp")
+  set(_nlohmann_inc "${YA_PARENT}/.deps/obs-deps-2025-07-11-x64/include")
+elseif(EXISTS "${YA_PARENT}/libs/nlohmann/json.hpp")
+  set(_nlohmann_inc "${YA_PARENT}/libs")
+endif()
+add_executable(yolo_config_test
+  ${YA_ROOT}/test/config_test.cpp
+  ${YA_ROOT}/src/config/ConfigModel.cpp
+  ${YA_ROOT}/src/config/ConfigKeyMap.cpp
+  ${YA_ROOT}/src/config/ConfigStore.cpp
+)
+target_include_directories(yolo_config_test PRIVATE
+  ${YA_ROOT}/src
+  ${YA_ROOT}/src/config
+  ${YA_PARENT}/src
+  ${_nlohmann_inc}
+  "${YA_PARENT}/libs/opencv/x64/include"
+)
+target_compile_options(yolo_config_test PRIVATE /utf-8)
