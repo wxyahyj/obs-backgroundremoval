@@ -6,6 +6,8 @@
 #include "config/ConfigStore.hpp"
 #include "engine/Engine.hpp"
 #include "overlay/OverlayWindow.hpp"
+#include "util/CrashGuard.hpp"
+#include "util/Log.hpp"
 #include "web/ApiRoutes.hpp"
 #include "web/HttpServer.hpp"
 
@@ -61,6 +63,10 @@ int main(int argc, char** argv)
     SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
     const std::filesystem::path base = exe_dir();
+    const std::filesystem::path log_dir = base / "logs";
+    ya::util::log_init(log_dir.string());
+    ya::util::install_crash_handler(log_dir.string());
+
     std::filesystem::path cfg_path = base / "config" / "default.json";
     if (argc > 1)
         cfg_path = argv[1];

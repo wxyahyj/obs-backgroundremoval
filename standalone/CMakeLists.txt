@@ -67,6 +67,8 @@ set(HOST_SOURCES
   ${YA_ROOT}/src/web/HttpServer.cpp
   ${YA_ROOT}/src/web/ApiRoutes.cpp
   ${YA_ROOT}/src/overlay/OverlayWindow.cpp
+  ${YA_ROOT}/src/util/Log.cpp
+  ${YA_ROOT}/src/util/CrashGuard.cpp
 )
 
 if(YA_WITH_INFER)
@@ -133,6 +135,7 @@ target_include_directories(yolo_host PRIVATE
   ${YA_ROOT}/src/config
   ${YA_ROOT}/src/web
   ${YA_ROOT}/src/overlay
+  ${YA_ROOT}/src/util
   ${YA_ROOT}/src/capture
   ${YA_ROOT}/src/host
   ${YA_ROOT}/src/web
