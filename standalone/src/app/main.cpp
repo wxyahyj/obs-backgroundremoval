@@ -90,7 +90,8 @@ int main(int argc, char** argv)
 
     // Web API + UI
     ya::web::HttpServer web;
-    ya::web::ApiContext actx{&engine, (base / "config" / "user.json").string()};
+    ya::web::ApiContext actx{&engine, (base / "config" / "user.json").string(),
+                             base.string()};
     ya::web::register_api_routes(web, actx);
     if (!web.start(17890, (base / "webui").string())) {
         std::fprintf(stderr, "[main] web server start failed (port busy?)\n");

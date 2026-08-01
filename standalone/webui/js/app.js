@@ -94,6 +94,7 @@ setInterval(refreshDets, 2000);
 /* ---------- 配置页:OBS 分类 + 中文 ---------- */
 let configDoc = null;
 let currentPage = 0;
+let modelList = [];
 
 async function loadConfig() {
   try {
@@ -103,6 +104,13 @@ async function loadConfig() {
   } catch (e) {
     setMsg("配置加载失败", "err");
   }
+}
+
+async function loadModels() {
+  try {
+    const r = await api.get("/api/models");
+    modelList = r.models || [];
+  } catch (e) {}
 }
 
 // 沿路径取配置值;{i} 已被调用方替换
@@ -214,6 +222,59 @@ function renderField(container, obsKey, pathTemplate) {
   const label = document.createElement("label");
   label.textContent = fieldLabel(obsKey);
 
+  // 模型路径:下拉选择(D:/AI + exe/models 扫描)+ 版本 + 加载按钮
+  if (obsKey === "model_path") {
+    div.className = "field";
+    const row = document.createElement("div");
+    row.className = "model-row";
+    const sel = document.createElement("select");
+    sel.dataset.path = path.join(".");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "— 选择模型 —";
+    sel.appendChild(placeholder);
+    modelList.forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.path;
+      o.textContent = m.name;
+      sel.appendChild(o);
+    });
+    sel.value = val || "";
+    const versionSel = document.createElement("select");
+    versionSel.dataset.path = path.slice(0, -1).concat("model_version").join(".");
+    (FIELD_OPTIONS.model_version || []).forEach(([text, v]) => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.dataset.type = "number";
+      o.textContent = text;
+      versionSel.appendChild(o);
+    });
+    versionSel.value = getByPath(configDoc, path.slice(0, -1).concat("model_version"));
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn primary";
+    btn.textContent = "加载模型";
+    btn.addEventListener("click", async () => {
+      if (!sel.value) {
+        setMsg("请先选择模型", "err");
+        return;
+      }
+      const doc = collectConfig();
+      const r = await api.put("/api/config", doc);
+      if (r.ok) {
+        const rr = await api.post("/api/engine/reload_model");
+        setMsg(rr.ok ? "模型加载中…" : "重载失败: " + rr.error, rr.ok ? "ok" : "err");
+      }
+    });
+    row.appendChild(sel);
+    row.appendChild(versionSel);
+    row.appendChild(btn);
+    div.appendChild(label);
+    div.appendChild(row);
+    container.appendChild(div);
+    return;
+  }
+
   // 下拉框(obs 键有选项表)
   const options = FIELD_OPTIONS[obsKey];
   if (options) {
@@ -304,6 +365,7 @@ document.getElementById("btn-save").addEventListener("click", async () => {
   if (r.ok) loadConfig();
 });
 document.getElementById("btn-reload").addEventListener("click", loadConfig);
+loadModels();
 
 /* ---- OBS 场景导入 ---- */
 document.getElementById("btn-import-obs").addEventListener("click", () => {

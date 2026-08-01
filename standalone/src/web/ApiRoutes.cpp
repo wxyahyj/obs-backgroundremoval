@@ -6,12 +6,29 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
 
 namespace ya {
 namespace web {
 
 namespace {
+
+// 按文件名推断模型版本(与 D:/AI 模型库命名一致)
+int guess_model_version(const std::string& name)
+{
+    std::string n = name;
+    std::transform(n.begin(), n.end(), n.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (n.find("yolov5") != std::string::npos || n.find("_v5") != std::string::npos)
+        return 0; // YOLOv5
+    if (n.find("v11") != std::string::npos || n.find("v26") != std::string::npos ||
+        n.find("v27") != std::string::npos)
+        return 2; // YOLOv11
+    return 1; // 默认 YOLOv8(v8n/v8s/nms 等)
+}
 
 nlohmann::json status_json(const Engine& e)
 {
@@ -93,6 +110,37 @@ void register_api_routes(HttpServer& srv, ApiContext& ctx)
 
     srv.route("GET", "/api/health",
               [](const HttpRequest&) { return HttpResponse::json("{\"ok\":true}"); });
+
+    // 模型扫描:D:/AI(存在时)+ exe/models
+    srv.route("GET", "/api/models", [&ctx](const HttpRequest&) {
+        nlohmann::json models = nlohmann::json::array();
+        std::vector<std::filesystem::path> dirs;
+        if (!ctx.exe_dir.empty())
+            dirs.push_back(std::filesystem::path(ctx.exe_dir) / "models");
+        const std::filesystem::path d_ai("D:/AI");
+        if (std::filesystem::exists(d_ai))
+            dirs.push_back(d_ai);
+        for (const auto& dir : dirs) {
+            std::error_code ec;
+            if (!std::filesystem::is_directory(dir, ec))
+                continue;
+            for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+                if (!entry.is_regular_file(ec))
+                    continue;
+                const std::string ext = entry.path().extension().string();
+                if (ext != ".onnx")
+                    continue;
+                const std::string name = entry.path().filename().string();
+                models.push_back({
+                    {"name", name},
+                    {"path", entry.path().string()},
+                    {"size", static_cast<uint64_t>(entry.file_size(ec))},
+                    {"version", guess_model_version(name)},
+                });
+            }
+        }
+        return ok_json({{"ok", true}, {"models", models}});
+    });
 
     srv.route("GET", "/api/status",
               [engine](const HttpRequest&) { return ok_json(status_json(*engine)); });

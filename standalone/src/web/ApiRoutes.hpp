@@ -14,6 +14,7 @@ namespace web {
 struct ApiContext {
     Engine* engine = nullptr;
     std::string config_path; // user.json(不存在则不落盘)
+    std::string exe_dir;     // 可执行目录(模型扫描用)
 };
 
 void register_api_routes(HttpServer& srv, ApiContext& ctx);
