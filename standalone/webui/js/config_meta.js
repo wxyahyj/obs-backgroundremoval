@@ -292,3 +292,31 @@ function fieldLabel(obsKey) {
   if (SLOT_LABELS && SLOT_LABELS[obsKey]) return SLOT_LABELS[obsKey];
   return obsKey.replace(/_/g, " ");
 }
+
+// 下拉框选项(OBS obs_properties_add_list 对齐)
+const FIELD_OPTIONS = {
+  use_gpu: [["CPU", "cpu"], ["CUDA", "cuda"], ["ROCm", "rocm"], ["TensorRT", "tensorrt"], ["DirectML", "dml"]],
+  model_version: [["YOLOv5", 0], ["YOLOv8", 1], ["YOLOv11", 2]],
+  input_resolution: [["320x320", 320], ["416x416", 416], ["640x640", 640], ["960x960", 960], ["1280x1280", 1280]],
+  controller_type: [
+    ["Windows API", 0], ["MAKCU", 1], ["罗技/雷蛇驱动", 2], ["UU remote GvInput", 3],
+    ["NtUserSendInput", 5], ["NtUserInjectMouse", 6], ["NtUserInjectPointer", 7],
+  ],
+  algorithm_type_global: [
+    ["高级PID(动态P增益+卡尔曼)", 0], ["专业PID(外部库)", 1],
+    ["Aim控制器(增量式PID+预测)", 2], ["SlewRate(限速平滑)", 3], ["自适应PID(位置式)", 4],
+  ],
+  logi_driver_type: [["自动检测", 0], ["Logitech G HUB", 1], ["Logitech LGS", 2], ["Razer Synapse", 3]],
+  makcu_baud_rate: [["9600", 9600], ["19200", 19200], ["38400", 38400], ["57600", 57600],
+                    ["115200", 115200], ["2000000", 2000000], ["4000000", 4000000]],
+  hotkey: [
+    ["鼠标左键", 1], ["鼠标右键", 2], ["侧键1", 5], ["侧键2", 6],
+    ["空格", 32], ["Shift", 16], ["Control", 17],
+    ["A", 65], ["D", 68], ["W", 87], ["S", 83],
+    ["F1", 112], ["F2", 113], ["F3", 114], ["F4", 115],
+  ],
+  crosshair_shape_type: [["任意形状", 0], ["十字形(+字)", 1], ["点状(圆点)", 2], ["T字形", 3]],
+  backend: [["DXGI", "dxgi"], ["WGC", "wgc"], ["GDI", "gdi"]],
+  mode: [["屏幕中心裁剪", "center"], ["固定区域", "region"], ["全屏", "full"]],
+  target_class: [["全部类别", -1], ["0", 0], ["1", 1], ["2", 2], ["3", 3], ["4", 4], ["5", 5]],
+};

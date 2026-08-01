@@ -214,6 +214,26 @@ function renderField(container, obsKey, pathTemplate) {
   const label = document.createElement("label");
   label.textContent = fieldLabel(obsKey);
 
+  // 下拉框(obs 键有选项表)
+  const options = FIELD_OPTIONS[obsKey];
+  if (options) {
+    div.className = "field";
+    const sel = document.createElement("select");
+    sel.dataset.path = path.join(".");
+    options.forEach(([text, optVal]) => {
+      const o = document.createElement("option");
+      o.value = optVal;
+      o.dataset.type = typeof optVal;
+      o.textContent = text;
+      sel.appendChild(o);
+    });
+    sel.value = val;
+    div.appendChild(label);
+    div.appendChild(sel);
+    container.appendChild(div);
+    return;
+  }
+
   if (typeof val === "boolean") {
     div.className = "field checkbox";
     const input = document.createElement("input");
@@ -266,6 +286,10 @@ function collectConfig() {
     else if (el.type === "number") {
       const v = el.value;
       node[key] = v === "" ? 0 : Number(v);
+    } else if (el.tagName === "SELECT") {
+      const opt = el.selectedOptions[0];
+      const t = opt && opt.dataset.type;
+      node[key] = t === "number" ? Number(el.value) : el.value;
     } else if (el.tagName === "TEXTAREA") {
       try { node[key] = JSON.parse(el.value); } catch (e) { node[key] = el.value; }
     } else node[key] = el.value;
