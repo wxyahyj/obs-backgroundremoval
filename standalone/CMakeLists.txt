@@ -69,6 +69,8 @@ set(HOST_SOURCES
 if(YA_WITH_INFER)
   list(APPEND HOST_SOURCES
     ${YA_ROOT}/src/core/InferEngine.cpp
+    ${YA_ROOT}/src/core/TrackerEngine.cpp
+    ${YA_ROOT}/src/engine/FramePipeline.cpp
     ${YA_PARENT}/src/models/ModelYOLO.cpp
     ${YA_PARENT}/src/models/DmlPreprocessor.cpp
   )
