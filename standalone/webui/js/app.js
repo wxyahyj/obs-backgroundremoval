@@ -98,6 +98,8 @@ let modelList = [];
 
 async function loadConfig() {
   try {
+    // 确保模型列表已加载(下拉渲染依赖),失败不阻塞配置
+    if (modelList.length === 0) await loadModels();
     const r = await api.get("/api/config");
     configDoc = r.config || r;
     renderConfig();

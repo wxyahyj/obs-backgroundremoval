@@ -84,7 +84,16 @@ if(YA_WITH_INFER)
   list(APPEND CMAKE_PREFIX_PATH "${OpenCV_DIR}")
   include("${OpenCV_DIR}/OpenCVConfig.cmake")
 
-  set(ONNXRUNTIME_DIR "${YA_PARENT}/onnxruntime")
+  # ORT 选择:优先 standalone 本地 DML 版(third_party/onnxruntime_dml),
+  # 否则回退主仓 onnxruntime(CUDA 版)。
+  if(EXISTS "${YA_ROOT}/third_party/onnxruntime_dml/lib/onnxruntime.lib")
+    set(ONNXRUNTIME_DIR "${YA_ROOT}/third_party/onnxruntime_dml")
+    message(STATUS "ONNX Runtime: DML edition (third_party/onnxruntime_dml)")
+    # DML 版 ORT 无 providers_cuda/tensorrt lib
+    set(YA_WITH_CUDA_EP OFF CACHE BOOL "" FORCE)
+  else()
+    set(ONNXRUNTIME_DIR "${YA_PARENT}/onnxruntime")
+  endif()
   add_library(onnxruntime::onnxruntime SHARED IMPORTED)
   set_target_properties(onnxruntime::onnxruntime PROPERTIES
     IMPORTED_IMPLIB "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib"
@@ -157,6 +166,11 @@ if(YA_WITH_INFER)
   target_include_directories(yolo_host BEFORE PRIVATE ${YA_ROOT}/include)
 
   target_compile_definitions(yolo_host PRIVATE YA_WITH_INFER=1)
+  if(EXISTS "${ONNXRUNTIME_DIR}/lib/DirectML.dll")
+    # DML 版 ORT:DML EP 内嵌,DML provider 无条件可用
+    target_compile_definitions(yolo_host PRIVATE HAVE_ONNXRUNTIME_DML_EP)
+    message(STATUS "DML EP enabled for standalone (DirectML edition)")
+  endif()
   if(YA_WITH_CUDA_EP)
     if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_cuda.lib")
       target_compile_definitions(yolo_host PRIVATE HAVE_ONNXRUNTIME_CUDA_EP)
@@ -233,6 +247,9 @@ if(YA_WITH_INFER)
     "${ONNXRUNTIME_DIR}/lib/onnxruntime.dll"
     "${ONNXRUNTIME_DIR}/lib/onnxruntime_providers_*.dll"
   )
+  if(EXISTS "${ONNXRUNTIME_DIR}/lib/DirectML.dll")
+    list(APPEND YA_ORT_DLLS "${ONNXRUNTIME_DIR}/lib/DirectML.dll")
+  endif()
   foreach(_dll ${YA_ORT_DLLS})
     add_custom_command(TARGET yolo_host POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
