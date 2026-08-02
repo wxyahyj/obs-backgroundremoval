@@ -130,10 +130,11 @@ void register_api_routes(HttpServer& srv, ApiContext& ctx)
                 const std::string ext = entry.path().extension().string();
                 if (ext != ".onnx")
                     continue;
-                const std::string name = entry.path().filename().string();
+                // 中文文件名:必须 UTF-8(u8string),否则 JSON 解析坏
+                const std::string name = entry.path().filename().u8string();
                 models.push_back({
                     {"name", name},
-                    {"path", entry.path().string()},
+                    {"path", entry.path().u8string()},
                     {"size", static_cast<uint64_t>(entry.file_size(ec))},
                     {"version", guess_model_version(name)},
                 });

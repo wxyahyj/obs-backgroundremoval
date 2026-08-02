@@ -254,6 +254,7 @@ void HttpServer::thread_main()
         o << "HTTP/1.1 " << resp.status << " " << (resp.status == 200 ? "OK" : "Error")
           << "\r\n"
           << "Access-Control-Allow-Origin: *\r\n"
+          << "Cache-Control: no-store\r\n"
           << "Content-Type: " << resp.content_type << "\r\n"
           << "Content-Length: " << resp.body.size() << "\r\n"
           << "Connection: close\r\n\r\n";
