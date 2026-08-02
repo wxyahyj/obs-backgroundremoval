@@ -343,10 +343,14 @@ void Engine::capture_loop()
 {
     FramePacket frame;
     auto last_log = std::chrono::steady_clock::now();
+    bool cap_reopen_pending = false;
     while (!stop_.load()) {
-        // 截图重开:重建 FrameSource(region/backend 变更生效)
-        if (reload_capture_.exchange(false)) {
+        // 截图重开:先释放旧 DXGI(同一输出同时只能有一个 desktop duplication),
+        // 再重建 FrameSource(region/backend 变更生效)
+        if (reload_capture_.exchange(false) || cap_reopen_pending) {
+            cap_reopen_pending = false;
             std::fprintf(stderr, "[engine] reload capture\n");
+            capture_.reset(); // 释放旧 duplication → 新的才能 DuplicateOutput
             auto next = std::make_unique<FrameSource>();
             config::CaptureSection c;
             {
@@ -372,9 +376,14 @@ void Engine::capture_loop()
                 std::fprintf(stderr, "[engine] capture reopened %dx%d\n",
                              capture_->width(), capture_->height());
             } else {
-                std::fprintf(stderr, "[engine] capture reopen FAILED: %s\n",
+                std::fprintf(stderr, "[engine] capture reopen FAILED: %s (retry)\n",
                              next->last_error().c_str());
+                cap_reopen_pending = true;
             }
+        }
+        if (!capture_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            continue;
         }
         const auto t0 = std::chrono::steady_clock::now();
         const bool got = capture_->grab(frame);

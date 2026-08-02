@@ -104,18 +104,20 @@ int main(int argc, char** argv)
     // 叠加层(可选,vision.show_floating_window 开关)
     ya::OverlayWindow overlay;
     bool overlay_on = false;
+    int overlay_w_ = 0;
+    int overlay_h_ = 0;
     while (!InterlockedCompareExchange(&g_stop, 0, 0)) {
         Sleep(50);
         const bool want = engine.config().vision.show_floating_window;
+        const auto cfg_now = engine.config();
+        const int fw = cfg_now.vision.floating_window_width > 0
+                           ? cfg_now.vision.floating_window_width
+                           : 480;
+        const int fh = cfg_now.vision.floating_window_height > 0
+                           ? cfg_now.vision.floating_window_height
+                           : 360;
         if (want != overlay_on) {
             if (want) {
-                const auto cfg_now = engine.config();
-                const int fw = cfg_now.vision.floating_window_width > 0
-                                   ? cfg_now.vision.floating_window_width
-                                   : 480;
-                const int fh = cfg_now.vision.floating_window_height > 0
-                                   ? cfg_now.vision.floating_window_height
-                                   : 360;
                 if (overlay.create(fw, fh)) {
                     overlay.show();
                     std::fprintf(stderr, "[overlay] floating window shown %dx%d\n", fw,
@@ -127,13 +129,25 @@ int main(int argc, char** argv)
                 overlay.hide();
             }
             overlay_on = want;
+            overlay_w_ = fw;
+            overlay_h_ = fh;
+        } else if (overlay_on && (fw != overlay_w_ || fh != overlay_h_)) {
+            // 宽高配置变更 → 重建窗口
+            overlay.destroy();
+            if (overlay.create(fw, fh)) {
+                overlay.show();
+                std::fprintf(stderr, "[overlay] floating window resized %dx%d\n", fw,
+                             fh);
+            }
+            overlay_w_ = fw;
+            overlay_h_ = fh;
         }
         if (overlay_on) {
             const auto s = engine.stats();
             const auto pf = engine.preview_frame();
             overlay.update(pf.bgr, pf.width > 0 ? pf.width : 1,
                            pf.height > 0 ? pf.height : 1, engine.last_detections(),
-                           s.aim_status.fov_px, engine.config().aim.show_fov);
+                           s.aim_status.fov_px, cfg_now.aim.show_fov);
         }
         overlay.pump();
     }
