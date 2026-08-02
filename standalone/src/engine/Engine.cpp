@@ -358,7 +358,24 @@ void Engine::capture_loop()
     FramePacket frame;
     auto last_log = std::chrono::steady_clock::now();
     bool cap_reopen_pending = false;
+    int max_fps = 60;
+    auto last_grab = std::chrono::steady_clock::now();
     while (!stop_.load()) {
+        // 限帧:max_fps > 0 时按帧间隔节流(降低 DXGI+推理 GPU 争用)
+        {
+            std::lock_guard<std::mutex> lock(cfg_mu_);
+            max_fps = cfg_.capture.max_fps;
+        }
+        if (max_fps > 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const double interval_ms = 1000.0 / max_fps;
+            const double elapsed =
+                std::chrono::duration<double, std::milli>(now - last_grab).count();
+            if (elapsed < interval_ms) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(static_cast<int>(interval_ms - elapsed)));
+            }
+        }
         // 截图重开:先释放旧 DXGI(同一输出同时只能有一个 desktop duplication),
         // 再重建 FrameSource(region/backend 变更生效)
         if (reload_capture_.exchange(false) || cap_reopen_pending) {
@@ -399,6 +416,7 @@ void Engine::capture_loop()
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
             continue;
         }
+        last_grab = std::chrono::steady_clock::now();
         const auto t0 = std::chrono::steady_clock::now();
         const bool got = capture_->grab(frame);
         const auto t1 = std::chrono::steady_clock::now();

@@ -37,6 +37,7 @@ const OBS_PAGES = [
         ["region_height", ["capture", "region_height"]],
         ["backend", ["capture", "backend"]],
         ["mode", ["capture", "mode"]],
+        ["max_fps", ["capture", "max_fps"]],
       ]},
       { name: "FOV 设置", fields: [
         ["show_fov", ["aim", "show_fov"]],

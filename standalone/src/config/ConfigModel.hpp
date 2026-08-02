@@ -26,6 +26,7 @@ struct CaptureSection {
     int region_height = 640;
     int width = 640;                   // center 模式裁剪尺寸
     int height = 640;
+    int max_fps = 60;                  // 截图限帧(0=不限,降低 GPU 争用)
 };
 
 // ---- 推理节 ----

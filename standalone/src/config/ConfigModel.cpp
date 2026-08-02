@@ -42,7 +42,7 @@ nlohmann::json capture_to_json(const CaptureSection& s)
     nlohmann::json j;
     W(backend); W(mode); W(use_region);
     W(region_x); W(region_y); W(region_width); W(region_height);
-    W(width); W(height);
+    W(width); W(height); W(max_fps);
     return j;
 }
 
@@ -51,7 +51,7 @@ bool capture_from_json(CaptureSection& s, const nlohmann::json& j)
     auto& v = s;
     R(backend); R(mode); R(use_region);
     R(region_x); R(region_y); R(region_width); R(region_height);
-    R(width); R(height);
+    R(width); R(height); R(max_fps);
     return true;
 }
 
