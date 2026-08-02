@@ -69,6 +69,9 @@ public:
     // 当前模型类别数(0 = 未加载/不可用)
     int num_classes() const;
 
+    // 模型重载进行中(前端轮询用)
+    bool model_loading() const { return model_loading_.load(); }
+
     // 捕获区域信息(叠加层定位用)
     struct CaptureInfo {
         int width = 0;
@@ -105,6 +108,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> reload_model_{false};
     std::atomic<bool> reload_capture_{false};
+    std::atomic<bool> model_loading_{false};
     std::thread capture_th_;
     std::thread process_th_;
 

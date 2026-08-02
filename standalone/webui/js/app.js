@@ -272,7 +272,13 @@ function renderField(container, obsKey, pathTemplate) {
       }
       const rr = await api.post("/api/engine/reload_model");
       if (rr.ok) {
-        setTimeout(() => loadConfig(), 1800); // 重载完成 → 类别数跟随新模型
+        // 轮询等待模型真正加载完成(异步重载含版本冒烟,可能数秒)
+        for (let i = 0; i < 30; i++) {
+          await new Promise((res) => setTimeout(res, 1000));
+          const st = await api.get("/api/status").catch(() => null);
+          if (!st || !st.model_loading) break; // 加载完成
+        }
+        loadConfig(); // 类别复选框跟随新模型
       } else {
         setMsg("模型重载失败: " + (rr.error || ""), "err");
       }

@@ -440,6 +440,7 @@ void Engine::process_loop()
 
     while (!stop_.load()) {
         if (reload_model_.exchange(false)) {
+            model_loading_.store(true);
             std::fprintf(stderr, "[engine] reload model\n");
             InferConfig ic;
             {
@@ -455,6 +456,7 @@ void Engine::process_loop()
                 std::fprintf(stderr, "[engine] model reload FAILED: %s\n",
                              next->last_error().c_str());
             }
+            model_loading_.store(false);
         }
 
         // 取最新帧

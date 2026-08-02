@@ -61,6 +61,7 @@ nlohmann::json status_json(const Engine& e)
     j["h"] = ci.height;
     j["origin"] = {ci.origin_x, ci.origin_y};
     j["num_classes"] = e.num_classes();
+    j["model_loading"] = e.model_loading();
     j["aim"] = {
         {"slot", s.aim_status.active_slot},
         {"aiming", s.aim_status.aiming},
