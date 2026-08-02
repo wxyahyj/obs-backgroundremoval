@@ -260,30 +260,23 @@ function renderField(container, obsKey, pathTemplate) {
       sel.appendChild(o);
     });
     sel.value = val || "";
-    // 选择模型 → 自动保存 + 自动重载 + 类别复选框跟随刷新
-    sel.addEventListener("change", () => {
+    // 选择模型 → 立即保存(不等 auto-save 防抖)→ 重载 → 类别复选框跟随
+    sel.addEventListener("change", async () => {
       if (!sel.value) return;
       setMsg("模型切换中…", "ok");
-      // 等 auto-save(800ms 防抖)落盘后重载
-      setTimeout(async () => {
-        const rr = await api.post("/api/engine/reload_model");
-        if (rr.ok) {
-          setTimeout(() => loadConfig(), 1800); // 重载完成 → 类别数跟随新模型
-        } else {
-          setMsg("模型重载失败: " + (rr.error || ""), "err");
-        }
-      }, 1000);
+      const doc = collectConfig();
+      const r = await api.put("/api/config", doc);
+      if (!r.ok) {
+        setMsg("模型保存失败: " + (r.error || ""), "err");
+        return;
+      }
+      const rr = await api.post("/api/engine/reload_model");
+      if (rr.ok) {
+        setTimeout(() => loadConfig(), 1800); // 重载完成 → 类别数跟随新模型
+      } else {
+        setMsg("模型重载失败: " + (rr.error || ""), "err");
+      }
     });
-    const versionSel = document.createElement("select");
-    versionSel.dataset.path = path.slice(0, -1).concat("model_version").join(".");
-    (FIELD_OPTIONS.model_version || []).forEach(([text, v]) => {
-      const o = document.createElement("option");
-      o.value = v;
-      o.dataset.type = "number";
-      o.textContent = text;
-      versionSel.appendChild(o);
-    });
-    versionSel.value = getByPath(configDoc, path.slice(0, -1).concat("model_version"));
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn primary";
@@ -298,12 +291,10 @@ function renderField(container, obsKey, pathTemplate) {
       if (r.ok) {
         const rr = await api.post("/api/engine/reload_model");
         setMsg(rr.ok ? "模型加载中…" : "重载失败: " + rr.error, rr.ok ? "ok" : "err");
-        // 加载完成后刷新:类别复选框数量自动跟随新模型
-        setTimeout(() => loadConfig(), 1500);
+        setTimeout(() => loadConfig(), 1800);
       }
     });
     row.appendChild(sel);
-    row.appendChild(versionSel);
     row.appendChild(btn);
     div.appendChild(label);
     div.appendChild(row);
