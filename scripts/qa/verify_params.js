@@ -97,6 +97,10 @@ async function main() {
     }
   }
 
+  // 恢复初始配置(测试会污染 user.json)
+  await put("/api/config", cfg0);
+  console.log("配置已恢复为初始值");
+
   console.log(`\n结果: PASS=${pass} FAIL=${fail}`);
   if (failed.length) {
     console.log("失败字段:");
