@@ -296,7 +296,7 @@ function fieldLabel(obsKey) {
 // 下拉框选项(OBS obs_properties_add_list 对齐)
 const FIELD_OPTIONS = {
   use_gpu: [["CPU", "cpu"], ["CUDA", "cuda"], ["ROCm", "rocm"], ["TensorRT", "tensorrt"], ["DirectML", "dml"]],
-  model_version: [["YOLOv5", 0], ["YOLOv8", 1], ["YOLOv11", 2]],
+  model_version: [["自动检测", -1], ["YOLOv5", 0], ["YOLOv8", 1], ["YOLOv11", 2]],
   input_resolution: [["320x320", 320], ["416x416", 416], ["640x640", 640], ["960x960", 960], ["1280x1280", 1280]],
   controller_type: [
     ["Windows API", 0], ["MAKCU", 1], ["罗技/雷蛇驱动", 2], ["UU remote GvInput", 3],

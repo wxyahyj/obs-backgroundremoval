@@ -22,7 +22,7 @@
     "model_path": "D:/AI/cs2j0x1tf2x3t_fp16.onnx",
     "device": "dml",
     "use_gpu": "cuda",
-    "model_version": 0,
+    "model_version": -1,
     "confidence": 0.5,
     "confidence_threshold": 0.5,
     "nms": 0.45,

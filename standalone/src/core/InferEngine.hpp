@@ -13,7 +13,7 @@ namespace ya {
 struct InferConfig {
 	std::string model_path;
 	std::string device = "cpu"; // cpu | cuda | tensorrt | dml
-	int model_version = 2;      // 0=v5 1=v8 2=v11
+	int model_version = -1;      // -1=自动(黑图冒烟检测) 0=v5 1=v8 2=v11
 	int input_resolution = 640;
 	float confidence = 0.45f;
 	float nms = 0.45f;

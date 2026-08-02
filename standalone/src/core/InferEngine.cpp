@@ -35,9 +35,10 @@ bool InferEngine::load(const InferConfig &cfg)
 		return false;
 	}
 
-	auto version = static_cast<ModelYOLO::Version>(cfg_.model_version);
-	// clamp
-	if (cfg_.model_version < 0 || cfg_.model_version > 2) {
+	// 版本解析:auto(<0)先用 v8,黑图冒烟后自动切换
+	const bool autoVersion = cfg_.model_version < 0;
+	auto version = static_cast<ModelYOLO::Version>(autoVersion ? 1 : cfg_.model_version);
+	if (!autoVersion && (cfg_.model_version < 0 || cfg_.model_version > 2)) {
 		version = ModelYOLO::Version::YOLOv11;
 	}
 
@@ -47,14 +48,66 @@ bool InferEngine::load(const InferConfig &cfg)
 		device = "cuda";
 
 	const std::string requested = device;
+
+	auto load_with = [&](ModelYOLO::Version v) -> std::unique_ptr<ModelYOLO> {
+		auto m = std::make_unique<ModelYOLO>(v);
+		m->loadModel(cfg_.model_path, device, cfg_.num_threads, cfg_.input_resolution);
+		m->setConfidenceThreshold(cfg_.confidence);
+		m->setNMSThreshold(cfg_.nms);
+		if (!cfg_.target_classes.empty())
+			m->setTargetClasses(cfg_.target_classes);
+		return m;
+	};
+
+	// 黑图冒烟:正确版本在纯黑图上应几乎无框;错配版本(v5 当 v8 读)会大量误报
+	auto smoke_boxes = [&](ModelYOLO &m) -> size_t {
 		try {
-			impl_->model = std::make_unique<ModelYOLO>(version);
-			impl_->model->loadModel(cfg_.model_path, device, cfg_.num_threads,
-			                        cfg_.input_resolution);
-			impl_->model->setConfidenceThreshold(cfg_.confidence);
-			impl_->model->setNMSThreshold(cfg_.nms);
-			if (!cfg_.target_classes.empty()) {
-				impl_->model->setTargetClasses(cfg_.target_classes);
+			cv::Mat black(cfg_.input_resolution, cfg_.input_resolution, CV_8UC3,
+			              cv::Scalar(0, 0, 0));
+			return m.inference(black).size();
+		} catch (...) {
+			return SIZE_MAX;
+		}
+	};
+
+		try {
+			impl_->model = load_with(version);
+			if (autoVersion) {
+				const size_t n = smoke_boxes(*impl_->model);
+				// 黑图冒烟:正确版本应 ~0 框;错配版本(v5 当 v8 读)会有明显误报
+				if (n > 8) {
+					// 疑似版本错配:尝试 v5 / v11,选冒烟框数最少的
+					int bestV = static_cast<int>(version);
+					size_t bestN = n;
+					std::string tried;
+					for (int v : {0, 2}) {
+						if (v == static_cast<int>(version))
+							continue;
+						auto cand = load_with(static_cast<ModelYOLO::Version>(v));
+						const size_t cn = smoke_boxes(*cand);
+						tried += std::to_string(v) + ":" + std::to_string(cn) + " ";
+						if (cn < bestN) {
+							bestN = cn;
+							bestV = v;
+							impl_->model = std::move(cand);
+						}
+					}
+					if (bestV != static_cast<int>(version)) {
+						version = static_cast<ModelYOLO::Version>(bestV);
+						cfg_.model_version = bestV;
+						std::fprintf(stderr,
+						             "[infer] auto-version: v%d smoke=%zu tried(%s) -> v%d (smoke=%zu)\n",
+						             static_cast<int>(version), n, tried.c_str(), bestV,
+						             bestN);
+					} else {
+						std::fprintf(stderr,
+						             "[infer] auto-version: kept v%d (smoke=%zu, alternatives no better)\n",
+						             static_cast<int>(version), n);
+					}
+				} else {
+					std::fprintf(stderr, "[infer] auto-version: v%d smoke=%zu OK\n",
+					             static_cast<int>(version), n);
+				}
 			}
 			// Prefer ModelYOLO runtime label (detects CUDA EP / cpu_pre honestly)
 const std::string runtime = impl_->model->getRuntimeDevice();
