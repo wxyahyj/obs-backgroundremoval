@@ -260,6 +260,20 @@ function renderField(container, obsKey, pathTemplate) {
       sel.appendChild(o);
     });
     sel.value = val || "";
+    // 选择模型 → 自动保存 + 自动重载 + 类别复选框跟随刷新
+    sel.addEventListener("change", () => {
+      if (!sel.value) return;
+      setMsg("模型切换中…", "ok");
+      // 等 auto-save(800ms 防抖)落盘后重载
+      setTimeout(async () => {
+        const rr = await api.post("/api/engine/reload_model");
+        if (rr.ok) {
+          setTimeout(() => loadConfig(), 1800); // 重载完成 → 类别数跟随新模型
+        } else {
+          setMsg("模型重载失败: " + (rr.error || ""), "err");
+        }
+      }, 1000);
+    });
     const versionSel = document.createElement("select");
     versionSel.dataset.path = path.slice(0, -1).concat("model_version").join(".");
     (FIELD_OPTIONS.model_version || []).forEach(([text, v]) => {
