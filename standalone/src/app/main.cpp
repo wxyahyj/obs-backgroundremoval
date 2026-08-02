@@ -78,6 +78,18 @@ int main(int argc, char** argv)
     }
     resolve_model_path(cfg.infer.model_path, base);
 
+    // 用户配置覆盖默认(default.json → user.json 合并,用户保存优先)
+    const std::filesystem::path user_path = base / "config" / "user.json";
+    std::string uerr;
+    ya::config::ConfigDocument user_cfg;
+    if (ya::config::ConfigStore::load_file(user_path.string(), user_cfg, &uerr)) {
+        ya::config::document_from_json(cfg, ya::config::document_to_json(user_cfg));
+        std::fprintf(stderr, "[main] user config loaded: %s\n",
+                     user_path.string().c_str());
+    } else if (std::filesystem::exists(user_path)) {
+        std::fprintf(stderr, "[main] user config load failed: %s\n", uerr.c_str());
+    }
+
     std::fprintf(stderr, "[main] config: %s\n", cfg_path.string().c_str());
     std::fprintf(stderr, "[main] model: %s device=%s\n", cfg.infer.model_path.c_str(),
                  cfg.infer.device.c_str());
