@@ -199,6 +199,11 @@ void Engine::update_config(const config::ConfigDocument& cfg)
         cfg_ = cfg;
     }
     apply_aim_settings(); // 瞄准/跟踪参数热生效;模型/截图走 reload
+    // 推理阈值/目标类别热生效(无需 reload_model)
+    if (infer_) {
+        infer_->set_thresholds(cfg.infer.confidence, cfg.infer.nms);
+        infer_->set_target_classes(cfg.infer.target_classes);
+    }
 }
 
 config::ConfigDocument Engine::config() const

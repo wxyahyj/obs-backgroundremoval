@@ -357,9 +357,13 @@ function renderField(container, obsKey, pathTemplate) {
     div.appendChild(input);
   } else if (Array.isArray(val)) {
     div.className = "field";
-    const input = document.createElement("textarea");
-    input.value = JSON.stringify(val);
+    const input = document.createElement("input");
+    input.type = "text";
+    // 目标类别:逗号分隔文本(空 = 全部),OBS 风格
+    input.value = val.length ? val.join(",") : "";
+    input.placeholder = "留空 = 全部类别,如: 0,1,2";
     input.dataset.path = path.join(".");
+    input.dataset.arr = "1";
     div.appendChild(label);
     div.appendChild(input);
   } else {
@@ -394,6 +398,11 @@ function collectConfig() {
       const opt = el.selectedOptions[0];
       const t = opt && opt.dataset.type;
       node[key] = t === "number" ? Number(el.value) : el.value;
+    } else if (el.dataset.arr) {
+      // 逗号分隔数组(目标类别)
+      node[key] = el.value.trim() === ""
+        ? []
+        : el.value.split(",").map((s) => Number(s.trim())).filter((n) => !isNaN(n));
     } else if (el.tagName === "TEXTAREA") {
       try { node[key] = JSON.parse(el.value); } catch (e) { node[key] = el.value; }
     } else node[key] = el.value;
