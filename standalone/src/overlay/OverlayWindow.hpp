@@ -1,7 +1,8 @@
 #pragma once
 
-// 游戏内叠加层(M5c)— 透明置顶窗口,绘制 bbox/FOV。
-// 实现:WS_EX_LAYERED + UpdateLayeredWindow,GDI 双缓冲,点击穿透。
+// 悬浮窗(M5c 重做)— OBS 风格独立窗口:显示捕获画面 + 检测框 + FOV。
+// 置顶、可拖动、可调整?固定尺寸(配置 floating_window_width/height)。
+// 实现:WS_EX_LAYERED + UpdateLayeredWindow,GDI 双缓冲。
 
 #include "models/Detection.h"
 
@@ -24,16 +25,16 @@ public:
     OverlayWindow(const OverlayWindow&) = delete;
     OverlayWindow& operator=(const OverlayWindow&) = delete;
 
-    // 创建窗口(尺寸 = 捕获区域);不显示。
+    // 创建窗口(尺寸 = 悬浮窗显示尺寸);不显示。
     bool create(int width, int height);
-    void set_position(int x, int y); // 屏幕坐标(捕获区域 origin)
     void show();
     void hide();
     void destroy();
 
-    // 刷新内容;dets 归一化坐标,frame_w/h 捕获尺寸。
-    void update(const std::vector<Detection>& dets, int frame_w, int frame_h, int fov_px,
-                bool show_fov);
+    // 刷新内容:frame_bgr = 捕获帧(可能比窗口大,内部缩放);
+    // dets 归一化坐标(相对 frame_w/h);fov_px 帧内像素。
+    void update(const std::vector<uint8_t>& frame_bgr, int frame_w, int frame_h,
+                const std::vector<Detection>& dets, int fov_px, bool show_fov);
 
     // 处理窗口消息(main 循环低频调用)
     void pump();
@@ -47,13 +48,13 @@ private:
     HWND hwnd_ = nullptr;
     int width_ = 0;
     int height_ = 0;
-    int pos_x_ = 0;
-    int pos_y_ = 0;
     bool visible_ = false;
 
-    std::vector<Detection> dets_;
+    // 显示内容(update 传入)
+    std::vector<uint8_t> frame_bgr_;
     int frame_w_ = 0;
     int frame_h_ = 0;
+    std::vector<Detection> dets_;
     int fov_px_ = 0;
     bool show_fov_ = true;
     bool dirty_ = true;

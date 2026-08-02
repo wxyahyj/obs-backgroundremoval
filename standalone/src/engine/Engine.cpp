@@ -283,6 +283,16 @@ Engine::CaptureInfo Engine::capture_info() const
     return info;
 }
 
+Engine::PreviewFrameData Engine::preview_frame() const
+{
+    PreviewFrameData out;
+    std::lock_guard<std::mutex> lock(preview_mu_);
+    out.bgr = preview_.bgr;
+    out.width = preview_.width;
+    out.height = preview_.height;
+    return out;
+}
+
 bool Engine::pick_color(double nx, double ny, int& r, int& g, int& b) const
 {
     PreviewFrame f;

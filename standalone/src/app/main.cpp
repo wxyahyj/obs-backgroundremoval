@@ -109,13 +109,19 @@ int main(int argc, char** argv)
         const bool want = engine.config().vision.show_floating_window;
         if (want != overlay_on) {
             if (want) {
-                const auto ci = engine.capture_info();
-                if (overlay.create(ci.width > 0 ? ci.width : 640,
-                                   ci.height > 0 ? ci.height : 640)) {
-                    overlay.set_position(ci.origin_x, ci.origin_y);
+                const auto cfg_now = engine.config();
+                const int fw = cfg_now.vision.floating_window_width > 0
+                                   ? cfg_now.vision.floating_window_width
+                                   : 480;
+                const int fh = cfg_now.vision.floating_window_height > 0
+                                   ? cfg_now.vision.floating_window_height
+                                   : 360;
+                if (overlay.create(fw, fh)) {
                     overlay.show();
-                    std::fprintf(stderr, "[overlay] shown %dx%d @(%d,%d)\n", ci.width,
-                                 ci.height, ci.origin_x, ci.origin_y);
+                    std::fprintf(stderr, "[overlay] floating window shown %dx%d\n", fw,
+                                 fh);
+                } else {
+                    std::fprintf(stderr, "[overlay] floating window create FAILED\n");
                 }
             } else {
                 overlay.hide();
@@ -124,10 +130,10 @@ int main(int argc, char** argv)
         }
         if (overlay_on) {
             const auto s = engine.stats();
-            const auto ci = engine.capture_info();
-            overlay.update(engine.last_detections(), ci.width > 0 ? ci.width : 1,
-                           ci.height > 0 ? ci.height : 1, s.aim_status.fov_px,
-                           engine.config().aim.show_fov);
+            const auto pf = engine.preview_frame();
+            overlay.update(pf.bgr, pf.width > 0 ? pf.width : 1,
+                           pf.height > 0 ? pf.height : 1, engine.last_detections(),
+                           s.aim_status.fov_px, engine.config().aim.show_fov);
         }
         overlay.pump();
     }

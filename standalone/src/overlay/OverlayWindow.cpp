@@ -1,4 +1,4 @@
-// 透明叠加层实现 — GDI 双缓冲 + UpdateLayeredWindow。
+// 悬浮窗实现 — 显示捕获画面 + 检测框 + FOV(GDI 双缓冲 + UpdateLayeredWindow)。
 
 #include "OverlayWindow.hpp"
 
@@ -13,7 +13,7 @@ namespace {
 constexpr int kFps = 30;
 constexpr DWORD kUpdateIntervalMs = 1000 / kFps;
 
-// 简易 Bresenham 画线(8-bit RGBA buffer)
+// 简易 Bresenham 画线(8-bit BGRA buffer,预乘 alpha)
 void draw_line(std::vector<uint32_t>& px, int w, int h, int x0, int y0, int x1, int y1,
                uint32_t color)
 {
@@ -50,7 +50,7 @@ void draw_circle(std::vector<uint32_t>& px, int w, int h, int cx, int cy, int ra
     while (x >= y) {
         const int pts[8][2] = {
             {cx + x, cy + y}, {cx - x, cy + y}, {cx + x, cy - y}, {cx - x, cy - y},
-            {cx + y, cy + x}, {cx - y, cy + x}, {cx + y, cy - x}, {cx - y, cy - x},
+            {cx + y, cy + x}, {cx - y, cy + x}, {cx + y, cy - y}, {cx - y, cy - y},
         };
         for (const auto& p : pts) {
             if (p[0] >= 0 && p[1] >= 0 && p[0] < w && p[1] < h)
@@ -71,8 +71,6 @@ void draw_circle(std::vector<uint32_t>& px, int w, int h, int cx, int cy, int ra
 LRESULT CALLBACK OverlayWindow::wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
-    case WM_NCHITTEST:
-        return HTTRANSPARENT; // 点击穿透
     case WM_DESTROY:
         return 0;
     default:
@@ -87,7 +85,7 @@ bool OverlayWindow::create(int width, int height)
     width_ = width;
     height_ = height;
 
-    const wchar_t kClass[] = L"YoloAimOverlay";
+    const wchar_t kClass[] = L"YoloAimFloating";
     HINSTANCE inst = GetModuleHandleW(nullptr);
     WNDCLASSW wc{};
     wc.lpfnWndProc = wnd_proc;
@@ -97,21 +95,17 @@ bool OverlayWindow::create(int width, int height)
     if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         return false;
 
+    // 置顶工具窗 + 可拖动;初始放屏幕右上角
+    const int sw = GetSystemMetrics(SM_CXSCREEN);
+    int x = sw - width - 16;
+    int y = 64;
     hwnd_ = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass,
-        L"YoloAimOverlay", WS_POPUP, pos_x_, pos_y_, width_, height_, nullptr, nullptr,
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"YoloAim 悬浮窗",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, width_, height_, nullptr, nullptr,
         inst, nullptr);
     if (!hwnd_)
         return false;
     return true;
-}
-
-void OverlayWindow::set_position(int x, int y)
-{
-    pos_x_ = x;
-    pos_y_ = y;
-    if (hwnd_)
-        SetWindowPos(hwnd_, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 void OverlayWindow::show()
@@ -140,12 +134,14 @@ void OverlayWindow::destroy()
     visible_ = false;
 }
 
-void OverlayWindow::update(const std::vector<Detection>& dets, int frame_w, int frame_h,
-                           int fov_px, bool show_fov)
+void OverlayWindow::update(const std::vector<uint8_t>& frame_bgr, int frame_w,
+                           int frame_h, const std::vector<Detection>& dets, int fov_px,
+                           bool show_fov)
 {
-    dets_ = dets;
+    frame_bgr_ = frame_bgr;
     frame_w_ = frame_w;
     frame_h_ = frame_h;
+    dets_ = dets;
     fov_px_ = fov_px;
     show_fov_ = show_fov;
     dirty_ = true;
@@ -162,21 +158,41 @@ void OverlayWindow::render()
     if (w <= 0 || h <= 0)
         return;
 
-    std::vector<uint32_t> px(static_cast<size_t>(w) * h, 0x00000000); // 全透明
+    std::vector<uint32_t> px(static_cast<size_t>(w) * h, 0xFF000000); // 黑底不透明
 
-    const uint32_t kBox = 0xFF00FF00; // 绿框
-    const uint32_t kFov = 0x80FFFFFF; // 半透明白圆
-
-    // FOV 圆(帧内像素坐标)
-    if (show_fov_ && fov_px_ > 0 && frame_w_ > 0) {
-        const int cx = w / 2;
-        const int cy = h / 2;
-        draw_circle(px, w, h, cx, cy, fov_px_ * w / frame_w_, kFov);
+    // 1. 捕获画面(最近邻缩放 BGR → BGRA)
+    if (frame_w_ > 0 && frame_h_ > 0 && frame_bgr_.size() >=
+                                             static_cast<size_t>(frame_w_) * frame_h_ * 3) {
+        for (int dy = 0; dy < h; ++dy) {
+            const int sy = std::min(frame_h_ - 1, dy * frame_h_ / h);
+            const uint8_t* row = frame_bgr_.data() + static_cast<size_t>(sy) * frame_w_ * 3;
+            uint32_t* out = px.data() + static_cast<size_t>(dy) * w;
+            for (int dx = 0; dx < w; ++dx) {
+                const int sx = std::min(frame_w_ - 1, dx * frame_w_ / w);
+                const uint8_t* p = row + static_cast<size_t>(sx) * 3;
+                out[dx] = 0xFF000000u | (static_cast<uint32_t>(p[0]) << 16) |
+                          (static_cast<uint32_t>(p[1]) << 8) | p[2]; // BGRA
+            }
+        }
     }
 
-    // bbox(归一化 → 帧像素)
+    const uint32_t kBox = 0xFF00FF00; // 绿框(不透明)
+    const uint32_t kFov = 0x80FFFFFF; // 半透明白圆
+
+    // 2. FOV 圆(帧坐标 → 窗口坐标缩放)
+    if (show_fov_ && fov_px_ > 0 && frame_w_ > 0 && frame_h_ > 0) {
+        const int cx = w / 2;
+        const int cy = h / 2;
+        const int radius = std::max(1, fov_px_ * w / frame_w_);
+        draw_circle(px, w, h, cx, cy, radius, kFov);
+    }
+
+    // 3. 检测框(归一化 → 窗口像素)
     if (frame_w_ > 0 && frame_h_ > 0) {
         for (const auto& d : dets_) {
+            if (!std::isfinite(d.x) || !std::isfinite(d.y) || !std::isfinite(d.width) ||
+                !std::isfinite(d.height))
+                continue;
             const int x0 = static_cast<int>(d.x * w);
             const int y0 = static_cast<int>(d.y * h);
             const int x1 = static_cast<int>((d.x + d.width) * w);
@@ -188,7 +204,7 @@ void OverlayWindow::render()
         }
     }
 
-    // UpdateLayeredWindow 送显
+    // UpdateLayeredWindow 送显(窗口客户区坐标)
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bi.bmiHeader.biWidth = w;
@@ -209,7 +225,12 @@ void OverlayWindow::render()
         blend.AlphaFormat = AC_SRC_ALPHA;
         POINT src{0, 0};
         SIZE size{w, h};
-        POINT dst{pos_x_, pos_y_};
+        POINT dst{0, 0}; // 客户区坐标(UpdateLayeredWindow 用窗口坐标)
+        // UpdateLayeredWindow 需要屏幕坐标
+        RECT rc{};
+        GetWindowRect(hwnd_, &rc);
+        dst.x = rc.left;
+        dst.y = rc.top;
         UpdateLayeredWindow(hwnd_, nullptr, &dst, &size, mem_dc, &src, 0, &blend,
                             ULW_ALPHA);
         SelectObject(mem_dc, old);

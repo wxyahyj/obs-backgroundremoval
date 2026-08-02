@@ -55,6 +55,14 @@ public:
     // 最新带框预览帧(BMP 编码;空 = 无帧)
     std::vector<uint8_t> preview_bmp() const;
 
+    // 原始预览帧(悬浮窗显示用)
+    struct PreviewFrameData {
+        std::vector<uint8_t> bgr;
+        int width = 0;
+        int height = 0;
+    };
+    PreviewFrameData preview_frame() const;
+
     // 取色:预览帧归一化坐标 (nx,ny) ∈ [0,1) → 5x5 邻域均值 RGB
     bool pick_color(double nx, double ny, int& r, int& g, int& b) const;
 
