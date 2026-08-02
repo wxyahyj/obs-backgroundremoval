@@ -310,6 +310,34 @@ function renderField(container, obsKey, pathTemplate) {
     return;
   }
 
+  // 滑块(obs 键有范围表)
+  const slider = FIELD_SLIDERS[obsKey];
+  if (slider && typeof val === "number") {
+    div.className = "field slider-field";
+    const [min, max, step] = slider;
+    const row = document.createElement("div");
+    row.className = "slider-row";
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = min;
+    input.max = max;
+    input.step = step || "any";
+    input.value = val;
+    input.dataset.path = path.join(".");
+    const valSpan = document.createElement("span");
+    valSpan.className = "slider-val";
+    valSpan.textContent = Number(val).toFixed(step && step < 1 ? 2 : 0);
+    input.addEventListener("input", () => {
+      valSpan.textContent = Number(input.value).toFixed(step && step < 1 ? 2 : 0);
+    });
+    row.appendChild(input);
+    row.appendChild(valSpan);
+    div.appendChild(label);
+    div.appendChild(row);
+    container.appendChild(div);
+    return;
+  }
+
   if (typeof val === "boolean") {
     div.className = "field checkbox";
     const input = document.createElement("input");
@@ -359,7 +387,7 @@ function collectConfig() {
     }
     const key = path[path.length - 1];
     if (el.type === "checkbox") node[key] = el.checked;
-    else if (el.type === "number") {
+    else if (el.type === "number" || el.type === "range") {
       const v = el.value;
       node[key] = v === "" ? 0 : Number(v);
     } else if (el.tagName === "SELECT") {

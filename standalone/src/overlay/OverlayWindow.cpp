@@ -170,8 +170,9 @@ void OverlayWindow::render()
             for (int dx = 0; dx < w; ++dx) {
                 const int sx = std::min(frame_w_ - 1, dx * frame_w_ / w);
                 const uint8_t* p = row + static_cast<size_t>(sx) * 3;
-                out[dx] = 0xFF000000u | (static_cast<uint32_t>(p[0]) << 16) |
-                          (static_cast<uint32_t>(p[1]) << 8) | p[2]; // BGRA
+                // BGR(p[0]=B,p[1]=G,p[2]=R) → BGRA uint32 小端:byte0=B,byte1=G,byte2=R
+                out[dx] = 0xFF000000u | (static_cast<uint32_t>(p[2]) << 16) |
+                          (static_cast<uint32_t>(p[1]) << 8) | p[0]; // BGRA
             }
         }
     }
