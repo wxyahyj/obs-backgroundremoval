@@ -45,6 +45,23 @@ async function refreshStatus() {
     setVal("st-infer", s.infer_ms.toFixed(2) + " ms");
     setVal("st-slot", s.aim.slot >= 0 ? "槽 " + s.aim.slot : "-");
     setVal("st-ctrl", s.aim.controller_ok ? "OK" : "失败", s.aim.controller_ok ? "var(--ok)" : "var(--danger)");
+    // 整条链路(状态页 + 配置页)
+    const p = s.pipeline || {};
+    const pairs = [
+      ["p-grab", "pg-grab"], ["p-infer", "pg-infer"], ["p-track", "pg-track"],
+      ["p-aim", "pg-aim"], ["p-total", "pg-total"],
+    ];
+    const vals = {
+      "p-grab": "截图 " + (p.grab_ms || 0).toFixed(1) + "ms",
+      "p-infer": "推理 " + (p.infer_ms || 0).toFixed(2) + "ms",
+      "p-track": "跟踪 " + (p.track_ms || 0).toFixed(2) + "ms",
+      "p-aim": "瞄准 " + (p.aim_ms || 0).toFixed(2) + "ms",
+      "p-total": "总计 " + (p.total_ms || 0).toFixed(1) + "ms",
+    };
+    for (const [a, b] of pairs) {
+      setVal(a, vals[a]);
+      setVal(b, vals[a]);
+    }
   } catch (e) {}
 }
 

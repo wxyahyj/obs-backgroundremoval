@@ -135,6 +135,8 @@ void Engine::apply_aim_settings()
         std::lock_guard<std::mutex> lock(cfg_mu_);
         a = cfg_.aim;
     }
+    // 收敛:固定使用自适应PID(旧配置/导入值可能仍是 AdvancedPID 等)
+    a.algorithm = AlgorithmType::AdaptivePID;
     if (aim_) {
         aim_->set_settings(aim_settings_from_config(a));
         aim_->ensure_controller();
@@ -495,6 +497,9 @@ void Engine::process_loop()
             stats_.last_dets = pipeline_.stats().last_dets;
             stats_.aim_status = pipeline_.stats().aim_status;
             stats_.infer_ms = pipeline_.stats().infer_ms;
+            stats_.track_ms = pipeline_.stats().track_ms;
+            stats_.aim_ms = pipeline_.stats().aim_ms;
+            stats_.total_ms = pipeline_.stats().total_ms;
             stats_.post_ms = pipeline_.stats().post_ms;
         }
 

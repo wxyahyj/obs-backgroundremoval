@@ -66,6 +66,17 @@ h3 { font-size: 15px; margin: 20px 0 10px; color: var(--muted); }
 .page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-actions { display: flex; gap: 8px; }
 
+/* ---- 链路显示 ---- */
+.pipeline-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 12px; margin-bottom: 14px;
+  font-size: 13px;
+}
+.pipe-label { color: var(--accent); font-weight: 600; margin-right: 4px; }
+.pipe-step { color: var(--text); font-family: Consolas, monospace; }
+.pipe-arrow { color: var(--muted); }
+
 /* ---- 卡片 ---- */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 .card {

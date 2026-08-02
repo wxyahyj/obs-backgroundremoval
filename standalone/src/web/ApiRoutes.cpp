@@ -44,6 +44,15 @@ nlohmann::json status_json(const Engine& e)
     j["infer_ms"] = s.infer_ms;
     j["post_ms"] = s.post_ms;
     j["last_error"] = s.last_error;
+    // 整条链路(悬浮窗/参数界面显示)
+    j["pipeline"] = {
+        {"grab_ms", s.grab_ms},
+        {"infer_ms", s.infer_ms},
+        {"track_ms", s.track_ms},
+        {"aim_ms", s.aim_ms},
+        {"post_ms", s.post_ms},
+        {"total_ms", s.total_ms},
+    };
     // parity 契约字段(OBS 对齐)
     j["capture_ok"] = ci.width > 0;
     j["capture_fps"] = s.fps;

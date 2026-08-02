@@ -84,7 +84,7 @@ struct AimSlot {
 struct AimSection {
     bool enabled = true;
     int config_select = 0;             // UI 选中槽;运行时由热键/持续切换
-    AlgorithmType algorithm = AlgorithmType::AdvancedPID;
+    AlgorithmType algorithm = AlgorithmType::AdaptivePID; // 收敛:仅自适应PID
 
     // FOV
     int fov_radius = 120;

@@ -60,7 +60,7 @@
   "aim": {
     "enabled": true,
     "mouse_config_select": 0,
-    "algorithm_type_global": 0,
+    "algorithm_type_global": 4,
     "fov_radius": 120,
     "use_dynamic_fov": false,
     "target_switch_delay": 500,

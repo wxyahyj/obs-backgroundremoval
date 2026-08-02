@@ -135,30 +135,44 @@ void FramePipeline::process(const FramePacket& frame)
         if (r.ok)
             dets = std::move(r.dets);
     }
+    const auto t1 = std::chrono::steady_clock::now();
 
     // 2. 跟踪
-    if (tracker_ && !dets.empty())
-        dets = tracker_->update(dets);
-    else if (tracker_)
-        tracker_->update({});
+    double track_ms = 0.0;
+    if (tracker_) {
+        const auto tt0 = std::chrono::steady_clock::now();
+        if (!dets.empty())
+            dets = tracker_->update(dets);
+        else
+            tracker_->update({});
+        const auto tt1 = std::chrono::steady_clock::now();
+        track_ms = std::chrono::duration<double, std::milli>(tt1 - tt0).count();
+    }
+    const auto t2 = std::chrono::steady_clock::now();
 
     // 3. 瞄准(每帧 tick,与 OBS video_tick 等价)
     FullAimStatus aim_status;
+    double aim_ms = 0.0;
     if (aim_ && aim_ != nullptr) {
+        const auto at0 = std::chrono::steady_clock::now();
         aim_->tick(dets, frame.width, frame.height, frame.origin_x, frame.origin_y,
                    static_cast<float>(infer_ms));
+        const auto at1 = std::chrono::steady_clock::now();
+        aim_ms = std::chrono::duration<double, std::milli>(at1 - at0).count();
         aim_status = aim_->status();
     }
-
-    const auto t1 = std::chrono::steady_clock::now();
-    const double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    const auto t3 = std::chrono::steady_clock::now();
 
     // 4. 统计累积
     stats_.frames++;
     stats_.detections = dets.size();
     stats_.last_dets = std::move(dets);
     stats_.infer_ms = infer_ms;
-    stats_.post_ms = total_ms - infer_ms;
+    stats_.track_ms = track_ms;
+    stats_.aim_ms = aim_ms;
+    stats_.total_ms =
+        std::chrono::duration<double, std::milli>(t3 - t0).count();
+    stats_.post_ms = stats_.total_ms - infer_ms - track_ms - aim_ms;
     stats_.aim_status = aim_status;
 }
 

@@ -36,6 +36,10 @@ public:
     void update(const std::vector<uint8_t>& frame_bgr, int frame_w, int frame_h,
                 const std::vector<Detection>& dets, int fov_px, bool show_fov);
 
+    // 链路延迟(悬浮窗底部文字显示)
+    void set_pipeline(double grab_ms, double infer_ms, double track_ms,
+                      double aim_ms, double total_ms);
+
     // 处理窗口消息(main 循环低频调用)
     void pump();
 
@@ -58,6 +62,9 @@ private:
     int fov_px_ = 0;
     bool show_fov_ = true;
     bool dirty_ = true;
+
+    // 链路延迟文字
+    double grab_ms_ = 0, infer_ms_ = 0, track_ms_ = 0, aim_ms_ = 0, total_ms_ = 0;
 };
 
 } // namespace ya

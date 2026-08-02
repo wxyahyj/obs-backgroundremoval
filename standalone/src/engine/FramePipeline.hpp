@@ -19,7 +19,10 @@ struct PipelineStats {
     double fps = 0.0;
     double grab_ms = 0.0;
     double infer_ms = 0.0;
+    double track_ms = 0.0;
+    double aim_ms = 0.0;
     double post_ms = 0.0;
+    double total_ms = 0.0;
     uint64_t frames = 0;
     uint64_t detections = 0;
     std::vector<Detection> last_dets; // 最近一次跟踪结果(预览/叠加用)

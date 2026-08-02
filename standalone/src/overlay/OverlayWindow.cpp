@@ -147,6 +147,17 @@ void OverlayWindow::update(const std::vector<uint8_t>& frame_bgr, int frame_w,
     dirty_ = true;
 }
 
+void OverlayWindow::set_pipeline(double grab_ms, double infer_ms, double track_ms,
+                                 double aim_ms, double total_ms)
+{
+    grab_ms_ = grab_ms;
+    infer_ms_ = infer_ms;
+    track_ms_ = track_ms;
+    aim_ms_ = aim_ms;
+    total_ms_ = total_ms;
+    dirty_ = true;
+}
+
 void OverlayWindow::render()
 {
     if (!hwnd_ || !dirty_)
@@ -220,6 +231,24 @@ void OverlayWindow::render()
     if (bmp && bits) {
         std::memcpy(bits, px.data(), px.size() * sizeof(uint32_t));
         HGDIOBJ old = SelectObject(mem_dc, bmp);
+
+        // 链路延迟文字(左下角)
+        wchar_t buf[160];
+        std::swprintf(buf, 160,
+                      L"截图 %.1fms \u2192 推理 %.2fms \u2192 跟踪 %.2fms \u2192 瞄准 %.2fms \u2192 总计 %.1fms",
+                      grab_ms_, infer_ms_, track_ms_, aim_ms_, total_ms_);
+        SetBkMode(mem_dc, TRANSPARENT);
+        SetTextColor(mem_dc, RGB(0, 255, 0));
+        HFONT font = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                 CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                 DEFAULT_PITCH, L"Consolas");
+        HGDIOBJ oldFont = SelectObject(mem_dc, font);
+        RECT tr{4, h - 24, w - 4, h - 4};
+        DrawTextW(mem_dc, buf, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(mem_dc, oldFont);
+        DeleteObject(font);
+
         BLENDFUNCTION blend{};
         blend.BlendOp = AC_SRC_OVER;
         blend.SourceConstantAlpha = 255;

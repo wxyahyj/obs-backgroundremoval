@@ -160,6 +160,8 @@ int main(int argc, char** argv)
             overlay.update(pf.bgr, pf.width > 0 ? pf.width : 1,
                            pf.height > 0 ? pf.height : 1, engine.last_detections(),
                            s.aim_status.fov_px, cfg_now.aim.show_fov);
+            overlay.set_pipeline(s.grab_ms, s.infer_ms, s.track_ms, s.aim_ms,
+                                 s.total_ms);
         }
         overlay.pump();
     }
