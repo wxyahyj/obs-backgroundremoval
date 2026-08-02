@@ -271,16 +271,25 @@ void HttpServer::thread_main()
 
 HttpResponse HttpServer::dispatch(const HttpRequest& req)
 {
-    const auto mi = routes_.find(req.method);
-    if (mi != routes_.end()) {
-        const auto hi = mi->second.find(req.path);
-        if (hi != mi->second.end())
-            return hi->second(req);
+    try {
+        const auto mi = routes_.find(req.method);
+        if (mi != routes_.end()) {
+            const auto hi = mi->second.find(req.path);
+            if (hi != mi->second.end())
+                return hi->second(req);
+        }
+        // 静态文件
+        if (req.method == "GET" && !static_root_.empty())
+            return serve_static(req.path);
+        return HttpResponse::text("not found", 404);
+    } catch (const std::exception& e) {
+        // 防御:handler 异常 → 500,绝不带崩进程
+        std::fprintf(stderr, "[web] handler exception: %s\n", e.what());
+        return HttpResponse::json("{\"ok\":false,\"error\":\"internal\"}", 500);
+    } catch (...) {
+        std::fprintf(stderr, "[web] handler unknown exception\n");
+        return HttpResponse::json("{\"ok\":false,\"error\":\"internal\"}", 500);
     }
-    // 静态文件
-    if (req.method == "GET" && !static_root_.empty())
-        return serve_static(req.path);
-    return HttpResponse::text("not found", 404);
 }
 
 HttpResponse HttpServer::serve_static(const std::string& path)

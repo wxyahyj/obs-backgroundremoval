@@ -6,6 +6,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -246,12 +247,23 @@ std::vector<uint8_t> Engine::preview_bmp() const
                 static_cast<size_t>(f.width) * 3);
     cv::Mat out = img.clone();
     for (const auto& d : f.dets) {
-        const cv::Rect box = d.getPixelBBox(f.width, f.height);
+        // 防御:NaN/Inf/越界坐标 → 跳过(异常框画图可崩)
+        if (!std::isfinite(d.x) || !std::isfinite(d.y) || !std::isfinite(d.width) ||
+            !std::isfinite(d.height))
+            continue;
+        cv::Rect box = d.getPixelBBox(f.width, f.height);
+        if (box.width <= 0 || box.height <= 0)
+            continue;
+        box.x = std::max(0, std::min(box.x, f.width - 1));
+        box.y = std::max(0, std::min(box.y, f.height - 1));
+        box.width = std::max(1, std::min(box.width, f.width - box.x));
+        box.height = std::max(1, std::min(box.height, f.height - box.y));
         cv::rectangle(out, box, cv::Scalar(0, 255, 0), 2);
         char label[64];
         std::snprintf(label, sizeof(label), "%s %.0f%%", d.className.c_str(),
                       d.confidence * 100.f);
-        cv::putText(out, label, cv::Point(box.x, box.y > 14 ? box.y - 4 : box.y + 16),
+        cv::putText(out, label,
+                    cv::Point(box.x, box.y > 14 ? box.y - 4 : box.y + 16),
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1,
                     cv::LINE_AA);
     }
@@ -280,6 +292,8 @@ bool Engine::pick_color(double nx, double ny, int& r, int& g, int& b) const
             return false;
         f = preview_;
     }
+    if (!std::isfinite(nx) || !std::isfinite(ny))
+        return false;
     const int cx = static_cast<int>(nx * f.width);
     const int cy = static_cast<int>(ny * f.height);
     if (cx < 0 || cy < 0 || cx >= f.width || cy >= f.height)
