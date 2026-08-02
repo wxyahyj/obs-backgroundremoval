@@ -538,6 +538,43 @@ void AbstractMouseController::tick()
                 lastAutoTriggerTime = now;
             }
         }
+        // 死区内仍执行压枪补偿(后座独立于瞄准误差;目标居中时同样需要压枪)
+        if (config.autoRecoilControlEnabled && checkFiring()) {
+            float recoilPerSecond = config.recoilStrength /
+                                    (static_cast<float>(config.recoilSpeed) / 1000.0f);
+            float dy = recoilPerSecond * deltaTime;
+            moveMouse(0, static_cast<int>(dy));
+        }
+        // 死区内也执行扳机(目标对准准心时开枪,不应被死区跳过)
+        if (config.autoTriggerEnabled) {
+            const float dist = std::sqrt(distanceSquared);
+            if (autoTriggerHolding) {
+                auto fireElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerFireStartTime).count();
+                if (fireElapsed >= currentFireDuration) {
+                    releaseAutoTrigger();
+                    lastAutoTriggerTime = now;
+                }
+                if (dist > config.autoTriggerRadius * 2.0f) {
+                    releaseAutoTrigger();
+                    lastAutoTriggerTime = now;
+                }
+            } else if (dist < config.autoTriggerRadius) {
+                auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutoTriggerTime).count();
+                if (cooldownElapsed >= config.autoTriggerInterval) {
+                    if (!autoTriggerWaitingForDelay) {
+                        autoTriggerWaitingForDelay = true;
+                        autoTriggerDelayStartTime = now;
+                    }
+                    auto delayElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - autoTriggerDelayStartTime).count();
+                    int totalDelay = config.autoTriggerFireDelay + getRandomDelay();
+                    if (delayElapsed >= totalDelay) {
+                        performAutoClick();
+                    }
+                }
+            } else {
+                autoTriggerWaitingForDelay = false;
+            }
+        }
         return;
     }
 

@@ -392,3 +392,32 @@ target_include_directories(yolo_config_test PRIVATE
   "${YA_PARENT}/libs/opencv/x64/include"
 )
 target_compile_options(yolo_config_test PRIVATE /utf-8)
+
+# ---- M5 core function test (PID/aim/recoil/trigger/tracking) ----
+add_executable(yolo_core_test
+  ${YA_ROOT}/test/core_test.cpp
+  ${YA_PARENT}/src/AbstractMouseController.cpp
+  ${YA_PARENT}/src/aim_controller.cpp
+  ${YA_PARENT}/src/mpid.cpp
+  ${YA_PARENT}/src/curve.cpp
+  ${YA_PARENT}/src/SmithPredictor.cpp
+  ${YA_PARENT}/src/SlewRateController.cpp
+  ${YA_PARENT}/src/OneEuroFilter.cpp
+  ${YA_PARENT}/src/DerivativePredictor.cpp
+    ${YA_PARENT}/src/DynamicPIDController.cpp
+  ${YA_PARENT}/src/utils/GhostTracker.cpp
+  ${YA_PARENT}/src/HungarianAlgorithm.cpp
+  ${YA_ROOT}/src/core/TrackerEngine.cpp
+  ${YA_ROOT}/src/core/obs_stubs.cpp
+  ${YA_ROOT}/src/util/Log.cpp
+)
+target_include_directories(yolo_core_test PRIVATE
+  ${YA_ROOT}/src ${YA_ROOT}/src/core ${YA_ROOT}/include
+  ${YA_PARENT}/src ${YA_PARENT}/src/utils ${YA_PARENT}/src/models
+  ${_nlohmann_inc}
+  ${OpenCV_INCLUDE_DIRS}
+  ${ONNXRUNTIME_DIR}/include
+  "${YA_PARENT}/libs/eigen3/eigen"
+)
+target_compile_options(yolo_core_test PRIVATE /utf-8)
+target_link_libraries(yolo_core_test PRIVATE ${OpenCV_LIBS} ws2_32 user32)
