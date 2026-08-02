@@ -1,8 +1,11 @@
 #ifdef _WIN32
 
 #include "FullAimBridge.hpp"
+#include "LogiDriverMouseController.hpp"
+#include "MAKCUMouseController.hpp"
 #include "MouseControllerFactory.hpp"
 
+#include <thread>
 #include <Windows.h>
 #include <algorithm>
 #include <cmath>
@@ -247,10 +250,45 @@ bool FullAimBridge::test_controller(ControllerType type, const std::string &makc
 				*err_out = "create returned null";
 			return false;
 		}
-		// tiny relative move then stop — proves backend open
-		// (backends may no-op if device missing; still success if object lives)
+		// 硬件后端连接状态检查(Logi 驱动等;MAKCU 由用户跳过)
+		if (type == ControllerType::LogiDriver) {
+			auto *logi = dynamic_cast<LogiDriverMouseController *>(c.get());
+			if (logi && !logi->isConnected()) {
+				if (err_out)
+					*err_out = "Logi 驱动未连接(检查 GHUB/LGS/Razer)";
+				return false;
+			}
+		}
+		if (type == ControllerType::MAKCU) {
+			auto *makcu = dynamic_cast<MAKCUMouseController *>(c.get());
+			if (makcu && !makcu->isConnected()) {
+				if (err_out)
+					*err_out = "MAKCU 串口未连接(" + makcu_port + ")";
+				return false;
+			}
+		}
+		// 真移动冒烟:注入偏置目标 + 一次 tick,验证后端真正执行移动
+		MouseControllerConfig cfg;
+		cfg.enableMouseControl = true;
+		cfg.continuousAimEnabled = true; // 绕过热键
+		cfg.controllerType = type;
+		cfg.algorithmType = AlgorithmType::ExternalPID;
+		cfg.maxPixelMove = 8.f;
+		c->updateConfig(cfg);
+		Detection d;
+		d.classId = 0;
+		d.confidence = 0.9f;
+		d.x = 0.49f;
+		d.y = 0.49f;
+		d.width = 0.04f;
+		d.height = 0.08f;
+		d.centerX = 0.51f;
+		d.centerY = 0.5f;
+		c->setDetectionsWithFrameSize(std::vector<Detection>{d}, 640, 640, 0, 0);
+		c->tick(); // 真移动(小位移)
+		std::this_thread::sleep_for(std::chrono::milliseconds(30));
 		if (err_out)
-			*err_out = std::string("ok: ") + controller_name(type);
+			*err_out = std::string("ok: ") + controller_name(type) + " 移动正常";
 		return true;
 	} catch (const std::exception &e) {
 		if (err_out)

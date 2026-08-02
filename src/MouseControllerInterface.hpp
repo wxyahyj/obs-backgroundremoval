@@ -280,6 +280,10 @@ public:
     virtual ControllerType getControllerType() const = 0;
     virtual void setInferenceTimeMs(float ms) = 0;
 
+    // 设备连接状态(MAKCU 串口/Logi 驱动等硬件后端 override;
+    // 系统 API 后端默认 true)
+    virtual bool isDeviceConnected() const { return true; }
+
     // 閻犱礁澧介悿鍝朓D闁轰胶澧楀畵渚€宕堕悙鍓佹闁告垼濮ら弳鐔兼晬閸垺鏆忓ù婊冩唉閻ㄧ喓鎷犻弴鐐茶閻熸瑥妫楃€垫煡鏁?
     virtual void setPidDataCallback(PidDataCallback callback) = 0;
 

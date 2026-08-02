@@ -84,8 +84,21 @@ document.getElementById("btn-reload-cap").addEventListener("click", async () => 
   setMsg(r.ok ? "截图重载请求已发出" : "错误: " + r.error, r.ok ? "ok" : "err");
 });
 document.getElementById("btn-test-ctrl").addEventListener("click", async () => {
-  const r = await api.put("/api/controller/test", { type: "WindowsAPI" });
-  setMsg(r.ok ? "控制器测试通过" : "测试失败: " + r.error, r.ok ? "ok" : "err");
+  // 遍历全部后端测试(MAKCU 无串口会报未连接,属正常)
+  const types = [
+    [0, "WindowsAPI"], [1, "MAKCU"], [2, "LogiDriver"], [3, "GvInput"],
+    [4, "TencInput"], [5, "NtUserSendInput"], [6, "NtUserInjectMouse"],
+    [7, "NtUserInjectPointer"],
+  ];
+  let lines = [];
+  for (const [id, name] of types) {
+    const r = await api.put("/api/controller/test", {
+      type: String(id), makcu_port: "COM5", makcu_baud_rate: 115200,
+      logi_driver_type: 0,
+    });
+    lines.push(name + ": " + (r.ok ? "✓" : "✗ " + (r.error || "")));
+  }
+  setMsg(lines.join("\n"), "ok");
 });
 
 setInterval(refreshStatus, 1000);
