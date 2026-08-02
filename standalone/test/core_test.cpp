@@ -2,8 +2,12 @@
 // Mock controller 记录 moveMouse/click,不真动鼠标。
 
 #include "AbstractMouseController.hpp"
+#include "CrosshairDetector.hpp"
+#include "FullAimBridge.hpp"
 #include "TrackerEngine.hpp"
 #include "aim_controller.hpp"
+
+#include <opencv2/imgproc.hpp>
 
 #include <cstdio>
 #include <thread>
@@ -297,6 +301,109 @@ void test_filters()
     }
 }
 
+void test_crosshair()
+{
+    // 准星检测:合成图(黑底 + 中心绿色十字)→ detect 应返回中心附近
+    CrosshairDetector det;
+    CrosshairDetectorConfig cfg;
+    cfg.enabled = true;
+    cfg.hMin = 40;
+    cfg.hMax = 90;   // 绿色 HSV 范围
+    cfg.sMin = 80;
+    cfg.sMax = 255;
+    cfg.vMin = 80;
+    cfg.vMax = 255;
+    cfg.manualR = 0;
+    cfg.manualG = 255;
+    cfg.manualB = 0;
+    det.updateConfig(cfg);
+
+    cv::Mat frame(640, 640, CV_8UC3, cv::Scalar(0, 0, 0));
+    const cv::Scalar green(0, 255, 0); // BGR
+    cv::line(frame, cv::Point(320, 300), cv::Point(320, 340), green, 3);
+    cv::line(frame, cv::Point(300, 320), cv::Point(340, 320), green, 3);
+
+    auto res = det.detect(frame, 640, 640, 0, 0, 0.5f, 0.5f, 0.5f);
+    char buf[200];
+    std::snprintf(buf, sizeof(buf), "准星: 合成十字图检测到 %zu 个, 首个中心=(%.3f,%.3f)",
+                  res.size(), res.empty() ? -1.f : res[0].centerX,
+                  res.empty() ? -1.f : res[0].centerY);
+    const bool ok = !res.empty() && std::fabs(res[0].centerX - 0.5f) < 0.1f &&
+                    std::fabs(res[0].centerY - 0.5f) < 0.1f;
+    CHECK(ok, buf);
+
+    // 反向:无准星(全黑)→ 不应检测
+    cv::Mat black(640, 640, CV_8UC3, cv::Scalar(0, 0, 0));
+    auto none = det.detect(black, 640, 640, 0, 0, 0.5f, 0.5f, 0.5f);
+    std::snprintf(buf, sizeof(buf), "准星: 纯黑图检测数=%zu(应为0)", none.size());
+    CHECK(none.empty(), buf);
+}
+
+void test_dynamic_fov()
+{
+    // 动态 FOV:目标在 FOV 内 → fov 收缩;目标消失 → 恢复
+    ya::FullAimBridge bridge;
+    ya::FullAimSettings s;
+    s.enabled = true;
+    s.use_dynamic_fov = true;
+    s.fov_radius = 120;
+    s.dynamic_fov_shrink_percent = 0.7f;
+    s.profiles[0].enabled = true;
+    s.profiles[0].continuous_aim = true;
+    bridge.set_settings(s);
+    if (!bridge.ensure_controller()) {
+        CHECK(false, "动态FOV: controller 创建失败");
+        return;
+    }
+
+    // 目标在 FOV 内(中心)→ 多帧 tick → fov 应收敛到 ~84(120*0.7)
+    for (int i = 0; i < 30; ++i)
+        bridge.tick({make_det(0.5f, 0.5f)}, 640, 640, 0, 0, 1.f);
+    const int fovShrunk = bridge.status().fov_px;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "动态FOV: 目标在内 → fov=%d(应<120 收缩)", fovShrunk);
+    CHECK(fovShrunk < 120, buf);
+
+    // 目标消失 → fov 恢复
+    for (int i = 0; i < 40; ++i)
+        bridge.tick({}, 640, 640, 0, 0, 1.f);
+    const int fovBack = bridge.status().fov_px;
+    std::snprintf(buf, sizeof(buf), "动态FOV: 目标消失 → fov=%d(应恢复120)", fovBack);
+    CHECK(fovBack >= 118, buf);
+}
+
+void test_neural_path()
+{
+    // 神经路径:开启后输出应与关闭不同(MLP 轨迹)
+    auto run = [](bool neural) -> long {
+        MockController c;
+        MouseControllerConfig cfg;
+        cfg.enableMouseControl = true;
+        cfg.continuousAimEnabled = true;
+        cfg.algorithmType = AlgorithmType::AdvancedPID;
+        cfg.fovRadiusPixels = 200;
+        cfg.deadZonePixels = 2.f;
+        cfg.maxPixelMove = 64.f;
+        cfg.enableNeuralPath = neural;
+        cfg.neuralPathPoints = 25;
+        c.updateConfig(cfg);
+        float cx = 0.5f;
+        for (int i = 0; i < 30; ++i) {
+            cx += 2.f / 640.f;
+            c.setDetectionsWithFrameSize({make_det(cx, 0.5f)}, 640, 640, 0, 0);
+            c.tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return c.totalDx;
+    };
+    const long off = run(false);
+    const long on = run(true);
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "神经路径: 关=%ld 开=%ld (差异=%ld)",
+                  off, on, on - off);
+    CHECK(on > 0 && on != off, buf);
+}
+
 } // namespace
 
 int main()
@@ -322,6 +429,15 @@ int main()
 
     std::fprintf(stderr, "== 滤波器实测 ==\n");
     test_filters();
+
+    std::fprintf(stderr, "== 准星检测 ==\n");
+    test_crosshair();
+
+    std::fprintf(stderr, "== 动态FOV ==\n");
+    test_dynamic_fov();
+
+    std::fprintf(stderr, "== 神经路径 ==\n");
+    test_neural_path();
 
     std::fprintf(stderr, "\n结果: %s (%d failed)\n",
                  g_fail == 0 ? "ALL PASS" : "FAILED", g_fail);

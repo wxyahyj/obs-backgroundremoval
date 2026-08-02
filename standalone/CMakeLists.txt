@@ -407,6 +407,17 @@ add_executable(yolo_core_test
     ${YA_PARENT}/src/DynamicPIDController.cpp
   ${YA_PARENT}/src/utils/GhostTracker.cpp
   ${YA_PARENT}/src/HungarianAlgorithm.cpp
+  ${YA_ROOT}/src/aim/FullAimBridge.cpp
+  ${YA_PARENT}/src/MouseControllerFactory.cpp
+  ${YA_PARENT}/src/MouseController.cpp
+  ${YA_PARENT}/src/MAKCUMouseController.cpp
+  ${YA_PARENT}/src/LogiDriverMouseController.cpp
+  ${YA_PARENT}/src/logi_driver.cpp
+  ${YA_PARENT}/src/GvInputMouseController.cpp
+  ${YA_PARENT}/src/NtUserSendInputMouseController.cpp
+  ${YA_PARENT}/src/NtUserInjectMouseController.cpp
+  ${YA_PARENT}/src/NtUserInjectPointerController.cpp
+  ${YA_PARENT}/src/CrosshairDetector.cpp
   ${YA_ROOT}/src/core/TrackerEngine.cpp
   ${YA_ROOT}/src/core/obs_stubs.cpp
   ${YA_ROOT}/src/util/Log.cpp
@@ -414,10 +425,15 @@ add_executable(yolo_core_test
 target_include_directories(yolo_core_test PRIVATE
   ${YA_ROOT}/src ${YA_ROOT}/src/core ${YA_ROOT}/include
   ${YA_PARENT}/src ${YA_PARENT}/src/utils ${YA_PARENT}/src/models
+  ${YA_ROOT}/src/aim
   ${_nlohmann_inc}
   ${OpenCV_INCLUDE_DIRS}
   ${ONNXRUNTIME_DIR}/include
   "${YA_PARENT}/libs/eigen3/eigen"
+)
+set_source_files_properties(
+  ${YA_PARENT}/src/GvInputMouseController.cpp
+  PROPERTIES COMPILE_DEFINITIONS "UNICODE;_UNICODE"
 )
 target_compile_options(yolo_core_test PRIVATE /utf-8)
 target_link_libraries(yolo_core_test PRIVATE ${OpenCV_LIBS} ws2_32 user32)
