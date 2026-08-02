@@ -208,6 +208,95 @@ void test_gates()
     CHECK(c2.moveCount == 0, "门控: 目标在 FOV 外 → 无移动");
 }
 
+void test_filters()
+{
+    // 每个滤波器:开 vs 关,两种场景:
+    //  A) 静态目标:方向正确 + 输出存在
+    //  B) 运动目标(每帧右移):预测/平滑类应改变输出(生效)
+    struct FilterCase {
+        const char* name;
+        void (*enable)(MouseControllerConfig&);
+        void (*disable)(MouseControllerConfig&);
+    };
+    FilterCase cases[] = {
+        {"导数预测器",
+         [](MouseControllerConfig& c) { c.useDerivativePredictor = true; },
+         [](MouseControllerConfig& c) { c.useDerivativePredictor = false; }},
+        {"Smith预估器",
+         [](MouseControllerConfig& c) { c.smithPredictorEnabled = true; },
+         [](MouseControllerConfig& c) { c.smithPredictorEnabled = false; }},
+        {"SlewRate限速",
+         [](MouseControllerConfig& c) { c.slewRateEnabled = true; },
+         [](MouseControllerConfig& c) { c.slewRateEnabled = false; }},
+        {"贝塞尔曲线",
+         [](MouseControllerConfig& c) { c.enableBezierMovement = true; },
+         [](MouseControllerConfig& c) { c.enableBezierMovement = false; }},
+        {"GhostTracker",
+         [](MouseControllerConfig& c) { c.enableGhostTracker = true; },
+         [](MouseControllerConfig& c) { c.enableGhostTracker = false; }},
+        {"IMM滤波器",
+         [](MouseControllerConfig& c) { c.immFilterEnabled = true; },
+         [](MouseControllerConfig& c) { c.immFilterEnabled = false; }},
+        {"OneEuro滤波",
+         [](MouseControllerConfig& c) { c.useOneEuroFilter = true; },
+         [](MouseControllerConfig& c) { c.useOneEuroFilter = false; }},
+    };
+
+    for (const auto& fc : cases) {
+        // 运动目标:记录逐帧输出序列(轨迹/平滑类总量相同但序列应不同)
+        auto run_seq = [&](bool enabled) -> std::vector<long> {
+            MockController c;
+            MouseControllerConfig cfg;
+            cfg.enableMouseControl = true;
+            cfg.continuousAimEnabled = true;
+            cfg.algorithmType = AlgorithmType::AdvancedPID;
+            cfg.fovRadiusPixels = 200;
+            cfg.deadZonePixels = 2.f;
+            cfg.maxPixelMove = 64.f;
+            cfg.pidPMin = 0.15f;
+            cfg.pidPMax = 0.6f;
+            fc.enable(cfg);
+            if (!enabled)
+                fc.disable(cfg);
+            c.updateConfig(cfg);
+            float cx = 0.5f;
+            std::vector<long> seq;
+            for (int i = 0; i < 40; ++i) {
+                cx += 2.f / 640.f;
+                c.setDetectionsWithFrameSize({make_det(cx, 0.5f)}, 640, 640, 0, 0);
+                c.tick();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                seq.push_back(c.totalDx);
+            }
+            return seq;
+        };
+
+        const auto off = run_seq(false);
+        const auto on = run_seq(true);
+        // 逐帧差异:任何帧输出不同 = 滤波器生效
+        long diffFrames = 0;
+        double sumOff = 0, sumOn = 0;
+        for (size_t i = 0; i < off.size() && i < on.size(); ++i) {
+            if (off[i] != on[i])
+                ++diffFrames;
+            sumOff += off[i];
+            sumOn += on[i];
+        }
+        // 平滑类:开启后逐帧跳变应更小(方差比)
+        double varOff = 0, varOn = 0;
+        const double mOff = sumOff / off.size(), mOn = sumOn / on.size();
+        for (size_t i = 0; i < off.size(); ++i) {
+            varOff += (off[i] - mOff) * (off[i] - mOff);
+            varOn += (on[i] - mOn) * (on[i] - mOn);
+        }
+        char buf[220];
+        std::snprintf(buf, sizeof(buf),
+                      "[%s] 差异帧=%ld/40 总量:关=%.0f 开=%.0f 方差:关=%.0f 开=%.0f",
+                      fc.name, diffFrames, sumOff, sumOn, varOff, varOn);
+        CHECK(diffFrames > 0, buf);
+    }
+}
+
 } // namespace
 
 int main()
@@ -230,6 +319,9 @@ int main()
 
     std::fprintf(stderr, "== 跟踪测试 ==\n");
     test_tracking();
+
+    std::fprintf(stderr, "== 滤波器实测 ==\n");
+    test_filters();
 
     std::fprintf(stderr, "\n结果: %s (%d failed)\n",
                  g_fail == 0 ? "ALL PASS" : "FAILED", g_fail);
