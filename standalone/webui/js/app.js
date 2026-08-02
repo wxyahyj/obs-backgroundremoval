@@ -315,7 +315,7 @@ function renderField(container, obsKey, pathTemplate) {
     return;
   }
 
-  // 滑块(obs 键有范围表)
+  // 滑块(obs 键有范围表)+ 数字输入框并存
   const slider = FIELD_SLIDERS[obsKey];
   if (slider && typeof val === "number") {
     div.className = "field slider-field";
@@ -329,14 +329,32 @@ function renderField(container, obsKey, pathTemplate) {
     input.step = step || "any";
     input.value = val;
     input.dataset.path = path.join(".");
-    const valSpan = document.createElement("span");
-    valSpan.className = "slider-val";
-    valSpan.textContent = Number(val).toFixed(step && step < 1 ? 2 : 0);
+    const numInput = document.createElement("input");
+    numInput.type = "number";
+    numInput.min = min;
+    numInput.max = max;
+    numInput.step = step || "any";
+    numInput.value = val;
+    numInput.className = "slider-num";
+    // 双向联动:拖滑块 → 数字框;输数字 → 滑块
     input.addEventListener("input", () => {
-      valSpan.textContent = Number(input.value).toFixed(step && step < 1 ? 2 : 0);
+      numInput.value = input.value;
+    });
+    numInput.addEventListener("input", () => {
+      let v = parseFloat(numInput.value);
+      if (isNaN(v)) return;
+      v = Math.min(max, Math.max(min, v));
+      input.value = v;
+    });
+    numInput.addEventListener("blur", () => {
+      let v = parseFloat(numInput.value);
+      if (isNaN(v)) { numInput.value = input.value; return; }
+      v = Math.min(max, Math.max(min, v));
+      input.value = v;
+      numInput.value = v;
     });
     row.appendChild(input);
-    row.appendChild(valSpan);
+    row.appendChild(numInput);
     div.appendChild(label);
     div.appendChild(row);
     container.appendChild(div);
