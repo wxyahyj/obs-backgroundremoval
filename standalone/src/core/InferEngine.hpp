@@ -39,6 +39,9 @@ public:
 	void unload();
 	bool ready() const { return ready_; }
 
+	// 当前模型类别数(0 = 未加载)
+	int num_classes() const;
+
 	// BGR tightly packed (from FrameSource)
 	InferResult run_bgr(const uint8_t *bgr, int w, int h, int stride);
 

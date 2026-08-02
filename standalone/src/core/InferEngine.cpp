@@ -185,6 +185,14 @@ void InferEngine::unload()
 	ready_ = false;
 }
 
+int InferEngine::num_classes() const
+{
+	std::lock_guard<std::mutex> lock(mu_);
+	if (!ready_ || !impl_->model)
+		return 0;
+	return impl_->model->getNumClasses();
+}
+
 InferConfig InferEngine::config() const
 {
 	std::lock_guard<std::mutex> lock(mu_);

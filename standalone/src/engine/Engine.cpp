@@ -282,6 +282,13 @@ std::vector<uint8_t> Engine::preview_bmp() const
     return buf;
 }
 
+int Engine::num_classes() const
+{
+    if (!infer_)
+        return 0;
+    return infer_->num_classes();
+}
+
 Engine::CaptureInfo Engine::capture_info() const
 {
     CaptureInfo info;

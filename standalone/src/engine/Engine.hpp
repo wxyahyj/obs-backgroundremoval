@@ -66,6 +66,9 @@ public:
     // 取色:预览帧归一化坐标 (nx,ny) ∈ [0,1) → 5x5 邻域均值 RGB
     bool pick_color(double nx, double ny, int& r, int& g, int& b) const;
 
+    // 当前模型类别数(0 = 未加载/不可用)
+    int num_classes() const;
+
     // 捕获区域信息(叠加层定位用)
     struct CaptureInfo {
         int width = 0;

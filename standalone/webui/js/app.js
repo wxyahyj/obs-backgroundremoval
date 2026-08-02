@@ -113,6 +113,11 @@ async function loadConfig() {
   try {
     // 确保模型列表已加载(下拉渲染依赖),失败不阻塞配置
     if (modelList.length === 0) await loadModels();
+    // 当前模型类别数(复选框组用)
+    try {
+      const st = await api.get("/api/status");
+      window.curNumClasses = st.num_classes || 0;
+    } catch (e) {}
     const r = await api.get("/api/config");
     configDoc = r.config || r;
     renderConfig();
@@ -356,6 +361,33 @@ function renderField(container, obsKey, pathTemplate) {
     div.appendChild(label);
     div.appendChild(input);
   } else if (Array.isArray(val)) {
+    // 目标类别:自动识别类别数 → 复选框组(勾选 = 过滤,全选/空 = 全部)
+    const nc = window.curNumClasses || 0;
+    if (obsKey === "target_classes_text" && nc > 0) {
+      div.className = "field checkbox-group";
+      const label = document.createElement("div");
+      label.className = "group-label";
+      label.textContent = fieldLabel(obsKey) + " (模型 " + nc + " 类)";
+      div.appendChild(label);
+      const box = document.createElement("div");
+      box.className = "checkboxes";
+      const sel = new Set(val);
+      for (let i = 0; i < nc; i++) {
+        const cdiv = document.createElement("label");
+        cdiv.className = "checkbox-item";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = sel.has(i);
+        cb.dataset.path = path.join(".");
+        cb.dataset.cls = String(i);
+        cdiv.appendChild(cb);
+        cdiv.appendChild(document.createTextNode("类别 " + i));
+        box.appendChild(cdiv);
+      }
+      div.appendChild(box);
+      container.appendChild(div);
+      return;
+    }
     div.className = "field";
     const input = document.createElement("input");
     input.type = "text";
@@ -381,6 +413,13 @@ function renderField(container, obsKey, pathTemplate) {
 // 从表单收集 → 嵌套 JSON(仅渲染过的路径)
 function collectConfig() {
   const out = {};
+  // 类别复选框组:先聚合(空 = 全部)
+  const clsMap = {};
+  document.querySelectorAll("#config-root [data-cls]").forEach((el) => {
+    const p = el.dataset.path;
+    if (!clsMap[p]) clsMap[p] = [];
+    if (el.checked) clsMap[p].push(Number(el.dataset.cls));
+  });
   document.querySelectorAll("#config-root [data-path]").forEach((el) => {
     const path = el.dataset.path.split(".");
     let node = out;
@@ -390,7 +429,10 @@ function collectConfig() {
       node = node[k];
     }
     const key = path[path.length - 1];
-    if (el.type === "checkbox") node[key] = el.checked;
+    if (el.dataset.cls) {
+      // 复选框组:由 clsMap 统一写(空数组 = 不过滤全部)
+      node[key] = clsMap[el.dataset.path] || [];
+    } else if (el.type === "checkbox") node[key] = el.checked;
     else if (el.type === "number" || el.type === "range") {
       const v = el.value;
       node[key] = v === "" ? 0 : Number(v);
