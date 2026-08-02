@@ -5,10 +5,14 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <fstream>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -469,6 +473,39 @@ void Engine::process_loop()
             stats_.aim_status = pipeline_.stats().aim_status;
             stats_.infer_ms = pipeline_.stats().infer_ms;
             stats_.post_ms = pipeline_.stats().post_ms;
+        }
+
+        // 坐标导出(低频,约 1s 一次)
+        if (frames_since_log % 60 == 0) {
+            bool do_export = false;
+            std::string out_path;
+            {
+                std::lock_guard<std::mutex> lock(cfg_mu_);
+                do_export = cfg_.vision.export_coordinates;
+                out_path = cfg_.vision.coordinate_output_path;
+            }
+            if (do_export) {
+                const std::vector<Detection> dets = pipeline_.stats().last_dets;
+                nlohmann::json arr = nlohmann::json::array();
+                for (const auto& d : dets) {
+                    arr.push_back({
+                        {"class_id", d.classId},
+                        {"confidence", d.confidence},
+                        {"x", d.x},
+                        {"y", d.y},
+                        {"width", d.width},
+                        {"height", d.height},
+                        {"track_id", d.trackId},
+                    });
+                }
+                const std::string path = out_path.empty()
+                                             ? "detections.json"
+                                             : out_path;
+                std::ofstream f(path, std::ios::trunc);
+                if (f.is_open())
+                    f << (nlohmann::json{{"timestamp", time(nullptr)}, {"detections", arr}})
+                             .dump(1);
+            }
         }
 
         // FPS 按实际消费率统计
