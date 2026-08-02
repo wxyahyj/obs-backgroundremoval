@@ -148,7 +148,7 @@ void test_recoil()
     cfg.continuousAimEnabled = true;
     cfg.autoRecoilControlEnabled = true;
     cfg.recoilStrength = 5.f;
-    cfg.algorithmType = AlgorithmType::AdvancedPID;
+    cfg.algorithmType = AlgorithmType::AdaptivePID;
     c.updateConfig(cfg);
     c.firing = true; // 模拟开枪
 
@@ -172,7 +172,7 @@ void test_trigger()
     cfg.continuousAimEnabled = true;
     cfg.autoTriggerEnabled = true;
     cfg.autoTriggerRadius = 20; // 像素
-    cfg.algorithmType = AlgorithmType::AdvancedPID;
+    cfg.algorithmType = AlgorithmType::AdaptivePID;
     c.updateConfig(cfg);
 
     // 目标在中心(扳机半径内)→ 应触发点击
@@ -193,7 +193,7 @@ void test_gates()
     MouseControllerConfig cfg;
     cfg.enableMouseControl = false;
     cfg.continuousAimEnabled = true;
-    cfg.algorithmType = AlgorithmType::AdvancedPID;
+    cfg.algorithmType = AlgorithmType::AdaptivePID;
     c.updateConfig(cfg);
     c.setDetectionsWithFrameSize({make_det(0.6f, 0.5f)}, 640, 640, 0, 0);
     c.tickN(20);
@@ -253,7 +253,7 @@ void test_filters()
             MouseControllerConfig cfg;
             cfg.enableMouseControl = true;
             cfg.continuousAimEnabled = true;
-            cfg.algorithmType = AlgorithmType::AdvancedPID;
+            cfg.algorithmType = AlgorithmType::AdaptivePID;
             cfg.fovRadiusPixels = 200;
             cfg.deadZonePixels = 2.f;
             cfg.maxPixelMove = 64.f;
@@ -380,7 +380,7 @@ void test_neural_path()
         MouseControllerConfig cfg;
         cfg.enableMouseControl = true;
         cfg.continuousAimEnabled = true;
-        cfg.algorithmType = AlgorithmType::AdvancedPID;
+        cfg.algorithmType = AlgorithmType::AdaptivePID;
         cfg.fovRadiusPixels = 200;
         cfg.deadZonePixels = 2.f;
         cfg.maxPixelMove = 64.f;
@@ -409,10 +409,6 @@ void test_neural_path()
 int main()
 {
     std::fprintf(stderr, "== 5 算法瞄准测试 ==\n");
-    test_algorithm(AlgorithmType::AdvancedPID, "AdvancedPID", 40.f);
-    test_algorithm(AlgorithmType::ExternalPID, "ExternalPID", 40.f);
-    test_algorithm(AlgorithmType::AimController, "AimController", 40.f);
-    test_algorithm(AlgorithmType::SlewRate, "SlewRate", 40.f);
     test_algorithm(AlgorithmType::AdaptivePID, "AdaptivePID", 40.f);
 
     std::fprintf(stderr, "== 门控测试 ==\n");
