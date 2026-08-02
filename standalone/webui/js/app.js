@@ -284,6 +284,8 @@ function renderField(container, obsKey, pathTemplate) {
       if (r.ok) {
         const rr = await api.post("/api/engine/reload_model");
         setMsg(rr.ok ? "模型加载中…" : "重载失败: " + rr.error, rr.ok ? "ok" : "err");
+        // 加载完成后刷新:类别复选框数量自动跟随新模型
+        setTimeout(() => loadConfig(), 1500);
       }
     });
     row.appendChild(sel);
@@ -443,8 +445,19 @@ function collectConfig() {
     let node = out;
     for (let i = 0; i < path.length - 1; i++) {
       const k = path[i];
-      if (!(k in node) || node[k] === null || typeof node[k] !== "object") node[k] = {};
-      node = node[k];
+      const nextIsNum = /^\d+$/.test(path[i + 1] || "");
+      if (nextIsNum) {
+        // 数字段 → 父应为数组(slots 等)
+        if (!Array.isArray(node[k])) node[k] = [];
+        if (!node[k][path[i + 1]] || typeof node[k][path[i + 1]] !== "object")
+          node[k][path[i + 1]] = {};
+        node = node[k][path[i + 1]];
+        i++; // 消费数字段
+      } else {
+        if (!(k in node) || node[k] === null || typeof node[k] !== "object")
+          node[k] = {};
+        node = node[k];
+      }
     }
     const key = path[path.length - 1];
     if (el.dataset.cls) {
@@ -471,10 +484,40 @@ function collectConfig() {
 }
 
 document.getElementById("btn-save").addEventListener("click", async () => {
+  const r = await saveConfig();
+  if (r) {
+    setMsg("配置已保存并应用", "ok");
+    loadConfig(); // 手动保存后刷新(类别复选框/下拉同步)
+  }
+});
+
+// 自动保存:配置控件变化 → 防抖 800ms 即时保存
+let autoSaveTimer = null;
+async function saveConfig() {
   const doc = collectConfig();
   const r = await api.put("/api/config", doc);
-  setMsg(r.ok ? "配置已保存并应用" : "保存失败: " + r.error, r.ok ? "ok" : "err");
-  if (r.ok) loadConfig();
+  if (r.ok) {
+    if (!document.getElementById("btn-save").contains(document.activeElement)) {
+      // 静默成功(不刷屏);按钮手动保存时显示提示
+    }
+  } else {
+    setMsg("保存失败: " + r.error, "err");
+    return null;
+  }
+  return r;
+}
+function scheduleAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(async () => {
+    await saveConfig();
+  }, 800);
+}
+// 配置区任何 input/change 触发自动保存
+document.getElementById("config-root").addEventListener("input", (e) => {
+  if (e.target.closest("[data-path]")) scheduleAutoSave();
+});
+document.getElementById("config-root").addEventListener("change", (e) => {
+  if (e.target.closest("[data-path]")) scheduleAutoSave();
 });
 document.getElementById("btn-reload").addEventListener("click", loadConfig);
 loadModels();
