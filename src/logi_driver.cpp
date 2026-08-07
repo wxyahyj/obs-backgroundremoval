@@ -68,7 +68,11 @@ typedef LONG (WINAPI *fn_NtQueryDirectoryObject)(
 
 /* ==================== 常量 ==================== */
 
-#define LGHUB_MOUSE_IOCTL   0x2a2010
+/* IOCTL 码运行时 XOR 解码(防静态特征扫描) */
+static ULONG mouseIoctl() {
+    volatile ULONG a = 0x5A5A5A5Au, b = 0x5A707A4Au; // a^b == 0x2A2010
+    return a ^ b;
+}
 
 /* IOCTL鼠标报告结构体 */
 #pragma pack(push, 1)
@@ -218,41 +222,60 @@ static BOOL try_open_path(const WCHAR* path)
 
 static BOOL try_open_logitech_device(int index)
 {
-    static const WCHAR* ghub_paths[] = {
-        L"\\??\\ROOT#SYSTEM#0000#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0001#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0002#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0003#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0004#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0005#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0006#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0007#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0008#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
-        L"\\??\\ROOT#SYSTEM#0009#{1abc05c0-c378-41b9-9cef-df1aba82b015}",
+    /* 设备路径运行时解码(防静态特征扫描):前缀+索引+#+GUID 均 XOR 0x5A 密文 */
+    static const unsigned char kPathPrefixXor[] = {
+        6, 90, 101, 90, 101, 90, 6, 90, 8, 90, 21, 90,
+        21, 90, 14, 90, 121, 90, 9, 90, 3, 90, 9, 90,
+        14, 90, 31, 90, 23, 90, 121, 90, 106, 90, 106, 90,
+        106, 90
     };
-    static const WCHAR* lgs_paths[] = {
-        L"\\??\\ROOT#SYSTEM#0000#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0001#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0002#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0003#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0004#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0005#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0006#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0007#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0008#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
-        L"\\??\\ROOT#SYSTEM#0009#{df31f106-d870-453d-8fa1-ec8ab43fa1d2}",
+    static const unsigned char kGhubGuidXor[] = {
+        33, 90, 107, 90, 59, 90, 56, 90, 57, 90, 106, 90,
+        111, 90, 57, 90, 106, 90, 119, 90, 57, 90, 105, 90,
+        109, 90, 98, 90, 119, 90, 110, 90, 107, 90, 56, 90,
+        99, 90, 119, 90, 99, 90, 57, 90, 63, 90, 60, 90,
+        119, 90, 62, 90, 60, 90, 107, 90, 59, 90, 56, 90,
+        59, 90, 98, 90, 104, 90, 56, 90, 106, 90, 107, 90,
+        111, 90, 39, 90, 90, 90
+    };
+    static const unsigned char kLgsGuidXor[] = {
+        33, 90, 62, 90, 60, 90, 105, 90, 107, 90, 60, 90,
+        107, 90, 106, 90, 108, 90, 119, 90, 62, 90, 98, 90,
+        109, 90, 106, 90, 119, 90, 110, 90, 111, 90, 105, 90,
+        62, 90, 119, 90, 98, 90, 60, 90, 59, 90, 107, 90,
+        119, 90, 63, 90, 57, 90, 98, 90, 59, 90, 56, 90,
+        110, 90, 105, 90, 60, 90, 59, 90, 107, 90, 62, 90,
+        104, 90, 39, 90, 90, 90
+    };
+    static WCHAR pathBuf[128];
+    auto build_path = [&](const unsigned char* guid) {
+        int n = 0;
+        for (size_t i = 0; i < sizeof(kPathPrefixXor); i += 2)
+            pathBuf[n++] = (WCHAR)((kPathPrefixXor[i] ^ 0x5A) |
+                                   ((kPathPrefixXor[i + 1] ^ 0x5A) << 8));
+        pathBuf[n++] = (WCHAR)(L'0' + index);
+        pathBuf[n++] = L'#';
+        for (size_t i = 0; i < sizeof(kGhubGuidXor); i += 2)
+            pathBuf[n++] = (WCHAR)((guid[i] ^ 0x5A) | ((guid[i + 1] ^ 0x5A) << 8));
+        pathBuf[n] = 0;
     };
 
     if (index < 0 || index > 9) return FALSE;
 
     if (g_forced_type == DRIVER_TYPE_NONE || g_forced_type == DRIVER_TYPE_GHUB) {
-        if (try_open_path(ghub_paths[index])) {
+        build_path(kGhubGuidXor);
+        if (try_open_path(pathBuf)) {
             g_driver_type = DRIVER_TYPE_GHUB;
             return TRUE;
         }
-    }
-    if (g_forced_type == DRIVER_TYPE_NONE || g_forced_type == DRIVER_TYPE_LGS) {
-        if (try_open_path(lgs_paths[index])) {
+        build_path(kLgsGuidXor);
+        if (try_open_path(pathBuf)) {
+            g_driver_type = DRIVER_TYPE_LGS;
+            return TRUE;
+        }
+    } else if (g_forced_type == DRIVER_TYPE_LGS) {
+        build_path(kLgsGuidXor);
+        if (try_open_path(pathBuf)) {
             g_driver_type = DRIVER_TYPE_LGS;
             return TRUE;
         }
@@ -519,7 +542,7 @@ static int send_ioctl(void* buf, ULONG size)
     ZeroMemory(&iosb, sizeof(iosb));
     status = g_NtDeviceIoControlFile(
         g_device, NULL, NULL, NULL, &iosb,
-        LGHUB_MOUSE_IOCTL, buf, size, NULL, 0);
+        mouseIoctl(), buf, size, NULL, 0);
 
     if (status != 0) {
         /* 失败：仅标记设备无效，不在此热路径中重连 */

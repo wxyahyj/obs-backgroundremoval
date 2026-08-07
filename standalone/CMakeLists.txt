@@ -109,6 +109,8 @@ if(YA_WITH_AIM)
     ${YA_PARENT}/src/MouseControllerFactory.cpp
     ${YA_PARENT}/src/MouseController.cpp
     ${YA_PARENT}/src/MAKCUMouseController.cpp
+    ${YA_PARENT}/src/makcu/src/makcu.cpp
+    ${YA_PARENT}/src/makcu/src/serialport.cpp
     ${YA_PARENT}/src/LogiDriverMouseController.cpp
     ${YA_PARENT}/src/logi_driver.cpp
     ${YA_PARENT}/src/GvInputMouseController.cpp
@@ -411,6 +413,8 @@ add_executable(yolo_core_test
   ${YA_PARENT}/src/MouseControllerFactory.cpp
   ${YA_PARENT}/src/MouseController.cpp
   ${YA_PARENT}/src/MAKCUMouseController.cpp
+  ${YA_PARENT}/src/makcu/src/makcu.cpp
+  ${YA_PARENT}/src/makcu/src/serialport.cpp
   ${YA_PARENT}/src/LogiDriverMouseController.cpp
   ${YA_PARENT}/src/logi_driver.cpp
   ${YA_PARENT}/src/GvInputMouseController.cpp
@@ -424,7 +428,7 @@ add_executable(yolo_core_test
 )
 target_include_directories(yolo_core_test PRIVATE
   ${YA_ROOT}/src ${YA_ROOT}/src/core ${YA_ROOT}/include
-  ${YA_PARENT}/src ${YA_PARENT}/src/utils ${YA_PARENT}/src/models
+  ${YA_PARENT}/src ${YA_PARENT}/src/utils ${YA_PARENT}/src/models ${YA_PARENT}/src/makcu/include
   ${YA_ROOT}/src/aim
   ${_nlohmann_inc}
   ${OpenCV_INCLUDE_DIRS}
