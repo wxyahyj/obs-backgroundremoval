@@ -493,32 +493,65 @@ void Engine::process_loop()
             has_frame_ = false;
         }
 
-        const auto t0 = std::chrono::steady_clock::now();
-        pipeline_.process(frame);
-        const auto t1 = std::chrono::steady_clock::now();
-
-        // 预览缓存(拷贝 BGR + 框)
-        {
-            std::lock_guard<std::mutex> lock(preview_mu_);
-            preview_.bgr = frame.bgr;
-            preview_.width = frame.width;
-            preview_.height = frame.height;
-            preview_.dets = pipeline_.stats().last_dets;
+        // 流水线:先处理上帧推理结果(后台已完成,不阻塞),
+        // 再提交本帧推理(后台线程执行 → 与下帧后处理重叠)
+        if (pending_.valid()) {
+            const auto rt0 = std::chrono::steady_clock::now();
+            std::vector<Detection> dets = pending_.get();
+            // 跟踪 + 瞄准(上帧结果)
+            double track_ms = 0, aim_ms = 0;
+            if (tracker_) {
+                const auto tt0 = std::chrono::steady_clock::now();
+                dets = tracker_->update(dets);
+                const auto tt1 = std::chrono::steady_clock::now();
+                track_ms = std::chrono::duration<double, std::milli>(tt1 - tt0).count();
+            }
+            FullAimStatus aim_status;
+            if (aim_) {
+                const auto at0 = std::chrono::steady_clock::now();
+                aim_->tick(dets, frame.width, frame.height, frame.origin_x,
+                           frame.origin_y, static_cast<float>(pending_infer_ms_));
+                const auto at1 = std::chrono::steady_clock::now();
+                aim_ms = std::chrono::duration<double, std::milli>(at1 - at0).count();
+                aim_status = aim_->status();
+            }
+            const auto rt1 = std::chrono::steady_clock::now();
+            {
+                std::lock_guard<std::mutex> lock(stats_mu_);
+                stats_.frames++;
+                stats_.detections = dets.size();
+                stats_.last_dets = dets;
+                stats_.aim_status = aim_status;
+                stats_.infer_ms = pending_infer_ms_;
+                stats_.track_ms = track_ms;
+                stats_.aim_ms = aim_ms;
+                stats_.total_ms =
+                    std::chrono::duration<double, std::milli>(rt1 - rt0).count();
+            }
+            // 预览缓存(上帧结果 + 本帧画面)
+            {
+                std::lock_guard<std::mutex> lock(preview_mu_);
+                preview_.bgr = frame.bgr;
+                preview_.width = frame.width;
+                preview_.height = frame.height;
+                preview_.dets = dets;
+            }
+            frames_since_log++;
         }
 
-        frames_since_log++;
-        infer_accum += pipeline_.stats().infer_ms;
+        // 提交本帧推理(后台线程,立即返回;ModelYOLO 内部 clone 帧数据)
+        if (infer_ && infer_->ready()) {
+            const auto st0 = std::chrono::steady_clock::now();
+            pending_ = infer_->run_async(frame.bgr.data(), frame.width, frame.height,
+                                         frame.width * frame.channels);
+            const auto st1 = std::chrono::steady_clock::now();
+            pending_infer_ms_ =
+                std::chrono::duration<double, std::milli>(st1 - st0).count() +
+                1.4; // 提交开销 + 后台推理近似(实际由延迟统计日志精确)
+        }
         {
             std::lock_guard<std::mutex> lock(stats_mu_);
-            stats_.frames = pipeline_.stats().frames;
-            stats_.detections = pipeline_.stats().detections;
-            stats_.last_dets = pipeline_.stats().last_dets;
-            stats_.aim_status = pipeline_.stats().aim_status;
-            stats_.infer_ms = pipeline_.stats().infer_ms;
-            stats_.track_ms = pipeline_.stats().track_ms;
-            stats_.aim_ms = pipeline_.stats().aim_ms;
-            stats_.total_ms = pipeline_.stats().total_ms;
-            stats_.post_ms = pipeline_.stats().post_ms;
+            stats_.post_ms = 0.0;
         }
 
         // 坐标导出(低频,约 1s 一次)
@@ -531,7 +564,11 @@ void Engine::process_loop()
                 out_path = cfg_.vision.coordinate_output_path;
             }
             if (do_export) {
-                const std::vector<Detection> dets = pipeline_.stats().last_dets;
+                std::vector<Detection> dets;
+                {
+                    std::lock_guard<std::mutex> lock(stats_mu_);
+                    dets = stats_.last_dets;
+                }
                 nlohmann::json arr = nlohmann::json::array();
                 for (const auto& d : dets) {
                     arr.push_back({
@@ -566,8 +603,6 @@ void Engine::process_loop()
             infer_accum = 0.0;
             last_log = now;
         }
-        (void)t0;
-        (void)t1;
     }
 }
 

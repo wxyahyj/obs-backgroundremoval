@@ -220,6 +220,22 @@ void InferEngine::set_thresholds(float conf, float nms)
 		}
 	}
 
+std::future<std::vector<Detection>> InferEngine::run_async(const uint8_t *bgr, int w,
+                                                             int h, int stride)
+{
+	std::lock_guard<std::mutex> lock(mu_);
+	if (!ready_ || !impl_->model) {
+		// 未就绪:返回空结果 future
+		std::promise<std::vector<Detection>> p;
+		p.set_value({});
+		return p.get_future();
+	}
+	// Mat 包装 buffer(不拷贝);ModelYOLO::asyncInference 内部 clone 后交后台线程
+	cv::Mat frame(h, w, CV_8UC3, const_cast<uint8_t *>(bgr),
+	              static_cast<size_t>(stride));
+	return impl_->model->asyncInference(frame);
+}
+
 InferResult InferEngine::run_bgr(const uint8_t *bgr, int w, int h, int stride)
 {
 	InferResult r;

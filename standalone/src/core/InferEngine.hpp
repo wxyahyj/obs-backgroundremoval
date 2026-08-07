@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <future>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,11 @@ public:
 
 	// BGR tightly packed (from FrameSource)
 	InferResult run_bgr(const uint8_t *bgr, int w, int h, int stride);
+
+	// 异步推理(ModelYOLO 后台常驻线程;无新线程开销)。
+	// 返回 dets future,提交线程不阻塞 → 与上帧后处理形成流水线。
+	std::future<std::vector<Detection>> run_async(const uint8_t *bgr, int w, int h,
+	                                              int stride);
 
 	InferConfig config() const;
 	void set_thresholds(float conf, float nms);

@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -115,6 +116,10 @@ private:
     // 统计
     mutable std::mutex stats_mu_;
     PipelineStats stats_;
+
+    // 异步流水线(process_loop:提交本帧/处理上帧)
+    std::future<std::vector<Detection>> pending_;
+    double pending_infer_ms_ = 0.0;
 
     // 预览缓存(process 线程写,Web 线程读)
     struct PreviewFrame {
