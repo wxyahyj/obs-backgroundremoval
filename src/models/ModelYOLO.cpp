@@ -13,6 +13,7 @@
 
 #ifdef HAVE_ONNXRUNTIME_DML_EP
 #include <d3d11.h>
+#include <dxgi.h>
 #include <dml_provider_factory.h>
 #endif
 #ifdef _WIN32
@@ -360,10 +361,35 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
 
 #ifdef HAVE_ONNXRUNTIME_DML_EP
         if (currentUseGPU == "dml" && !gpuFailed) {
+            // 枚举 DXGI 适配器:跳过软件适配器(虚拟显示器/WARP),选 VRAM 最大的真 GPU。
+            // device_id=0 默认可能是虚拟显示器 → 软件渲染 → 推理 10ms+
+            int dmlDeviceId = 0;
+            {
+                IDXGIFactory1* factory = nullptr;
+                if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                                reinterpret_cast<void**>(&factory)))) {
+                    SIZE_T bestVram = 0;
+                    for (UINT i = 0;; ++i) {
+                        IDXGIAdapter1* adapter = nullptr;
+                        if (factory->EnumAdapters1(i, &adapter) != S_OK)
+                            break;
+                        DXGI_ADAPTER_DESC1 desc;
+                        adapter->GetDesc1(&desc);
+                        const bool software =
+                            (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+                        if (!software && desc.DedicatedVideoMemory > bestVram) {
+                            bestVram = desc.DedicatedVideoMemory;
+                            dmlDeviceId = static_cast<int>(i);
+                        }
+                        adapter->Release();
+                    }
+                    factory->Release();
+                }
+            }
             // AiMod-style: C API status check (does not rely on C++ exception alone)
             try {
                 OrtStatus* st = OrtSessionOptionsAppendExecutionProvider_DML(
-                    static_cast<OrtSessionOptions*>(sessionOptions), 0);
+                    static_cast<OrtSessionOptions*>(sessionOptions), dmlDeviceId);
                 if (st != nullptr) {
                     const char* msg = Ort::GetApi().GetErrorMessage(st);
                     obs_log(LOG_WARNING,
@@ -373,7 +399,9 @@ void ModelYOLO::loadModel(const std::string& modelPath, const std::string& useGP
                     gpuFailed = true;
                     currentUseGPU = "cpu";
                 } else {
-                    obs_log(LOG_INFO, "[ModelYOLO] DirectML execution provider enabled (AiMod-style)");
+                    obs_log(LOG_INFO,
+                            "[ModelYOLO] DirectML execution provider enabled on adapter %d (AiMod-style)",
+                            dmlDeviceId);
                 }
             } catch (const std::exception& e) {
                 obs_log(LOG_WARNING, "[ModelYOLO] Failed to enable DirectML: %s, falling back to CPU", e.what());
@@ -1158,12 +1186,33 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv5(
         classIds.push_back(maxClassId);
     }
 
-    // AiMod/OBS v5: class-aware NMS when classIds provided
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
+	    // Top-K: 候选 > 300 时按置信度砍到 300
+	    const int MAX_NMS_IN = 300;
+	    if ((int)boxes.size() > MAX_NMS_IN) {
+	        std::vector<int> order(boxes.size());
+	        std::iota(order.begin(), order.end(), 0);
+	        std::partial_sort(order.begin(), order.begin() + MAX_NMS_IN, order.end(),
+	            [&scores](int a, int b) { return scores[a] > scores[b]; });
+	        std::vector<cv::Rect2f> topBoxes(MAX_NMS_IN);
+	        std::vector<float> topScores(MAX_NMS_IN);
+	        std::vector<int> topClassIds(MAX_NMS_IN);
+	        for (int k = 0; k < MAX_NMS_IN; ++k) {
+	            int o = order[k];
+	            topBoxes[k] = boxes[o];
+	            topScores[k] = scores[o];
+	            topClassIds[k] = classIds[o];
+	        }
+	        boxes = std::move(topBoxes);
+	        scores = std::move(topScores);
+	        classIds = std::move(topClassIds);
+	    }
 
-    for (int idx : nmsIndices) {
-        Detection det;
-        det.classId = classIds[idx];
+	    // AiMod/OBS v5: class-aware NMS when classIds provided
+	    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
+
+	    for (int idx : nmsIndices) {
+	        Detection det;
+	        det.classId = classIds[idx];
         det.className = (det.classId < classNames_.size())
                         ? classNames_[det.classId]
                         : "Class_" + std::to_string(det.classId);
@@ -1296,10 +1345,31 @@ std::vector<Detection> ModelYOLO::postprocessYOLOv8(
         classIds.push_back(maxClassId);
     }
 
-    // AiMod NMSBoxes: class-aware (pass classIds)
-    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
+	    // Top-K: 候选 > 300 时按置信度砍到 300，压 NMS O(n²)
+	    const int MAX_NMS_IN = 300;
+	    if ((int)boxes.size() > MAX_NMS_IN) {
+	        std::vector<int> order(boxes.size());
+	        std::iota(order.begin(), order.end(), 0);
+	        std::partial_sort(order.begin(), order.begin() + MAX_NMS_IN, order.end(),
+	            [&scores](int a, int b) { return scores[a] > scores[b]; });
+	        std::vector<cv::Rect2f> topBoxes(MAX_NMS_IN);
+	        std::vector<float> topScores(MAX_NMS_IN);
+	        std::vector<int> topClassIds(MAX_NMS_IN);
+	        for (int k = 0; k < MAX_NMS_IN; ++k) {
+	            int o = order[k];
+	            topBoxes[k] = boxes[o];
+	            topScores[k] = scores[o];
+	            topClassIds[k] = classIds[o];
+	        }
+	        boxes = std::move(topBoxes);
+	        scores = std::move(topScores);
+	        classIds = std::move(topClassIds);
+	    }
 
-    const float scale = std::max(letterboxInfo.scale, 1e-6f);
+	    // AiMod NMSBoxes: class-aware (pass classIds)
+	    std::vector<int> nmsIndices = performNMS(boxes, scores, nmsThreshold_, classIds);
+
+	    const float scale = std::max(letterboxInfo.scale, 1e-6f);
     const float padX = static_cast<float>(letterboxInfo.padX);
     const float padY = static_cast<float>(letterboxInfo.padY);
     const float imgW = static_cast<float>(std::max(1, originalImageSize.width));
