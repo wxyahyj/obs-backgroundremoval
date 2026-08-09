@@ -190,9 +190,6 @@ struct MouseControllerConfig {
     // 目标中心自适应EMA平滑（低分辨率/双机检测框跳帧专用）
     // 默认关：平滑会引入固定滞后，目标转弯时准星拖着旧方向走。高分辨率本地推理必须关。
     bool aimSmoothingEnabled = false;
-    // 检测框边界瞄准：误差=准星到检测框最近边距离，准星在框内→0。
-    // 天然死区=框尺寸，中心抖动不影响，无积分残留。默认开
-    bool useBoxEdgeAiming = true;
 
     // SlewRate控制器（限速平滑趋近）
     bool slewRateEnabled = false;
