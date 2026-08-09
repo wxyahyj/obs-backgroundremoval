@@ -53,7 +53,7 @@ private:
 	static constexpr size_t CAX = 6;
 	static constexpr size_t CTX = 5;
 
-	void applyControl(float dt, float uMoveX, float uMoveY);
+	void applyControl(float uMoveX, float uMoveY);
 	void predictCV(float dt);
 	void updateCV(float mx, float my);
 	void predictCA(float dt);
@@ -122,18 +122,15 @@ inline void IMMFilter::setConfig(const Config& cfg)
 	cfg_ = cfg;
 }
 
-// 鼠标输出直接改变误差：error_new ≈ error_old - mouseMove。
-// 位置和速度都扣自己移动（视角转动改变目标画面位置）——
-// 只扣位置不扣速度会把"自己移动"误判成目标运动，速度估计方向错。
-inline void IMMFilter::applyControl(float dt, float uMoveX, float uMoveY)
+// 鼠标输出直接改变误差：error_new ≈ error_old - mouseMove
+inline void IMMFilter::applyControl(float uMoveX, float uMoveY)
 {
-	float invDt = (dt > 1e-6f) ? (1.0f / dt) : 0.0f;
-	xCV_[0] -= uMoveX;        xCV_[1] -= uMoveX * invDt;
-	xCV_[2] -= uMoveY;        xCV_[3] -= uMoveY * invDt;
-	xCA_[0] -= uMoveX;        xCA_[1] -= uMoveX * invDt;
-	xCA_[3] -= uMoveY;        xCA_[4] -= uMoveY * invDt;
-	xCT_[0] -= uMoveX;        xCT_[1] -= uMoveX * invDt;
-	xCT_[2] -= uMoveY;        xCT_[3] -= uMoveY * invDt;
+	xCV_[0] -= uMoveX;
+	xCV_[2] -= uMoveY;
+	xCA_[0] -= uMoveX;
+	xCA_[3] -= uMoveY;
+	xCT_[0] -= uMoveX;
+	xCT_[2] -= uMoveY;
 }
 
 inline void IMMFilter::predictCV(float dt)
@@ -492,8 +489,8 @@ inline void IMMFilter::predict(float dt, float uMoveX, float uMoveY)
 	if (!initialized_ || dt <= TINY)
 		return;
 
-	// 1) 先扣掉自己鼠标位移（控制输入，位置+速度）
-	applyControl(dt, uMoveX, uMoveY);
+	// 1) 先扣掉自己鼠标位移（控制输入）
+	applyControl(uMoveX, uMoveY);
 	// 2) 模型交互
 	interact();
 	// 3) 各模型自由动力学预测（目标运动）

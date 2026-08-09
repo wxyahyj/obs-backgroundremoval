@@ -152,10 +152,6 @@ struct MouseControllerConfig {
     float maxPredictionTime = 0.1f;
     float mouseLatencyMs = 15.0f;      // 执行延迟估计：鼠标输出→游戏响应→画面反馈
     float maxPredictionPixels = 30.0f; // 预测提前量像素限幅（防误检/速度爆炸）
-    // 速度前馈增益：目标速度估计直接进输出 u += Kv·v·dt（独立于误差通道）。
-    // 当前"预测进误差"等效前馈 = Kp×predW×dt ≈ 0.0017 几乎为零，
-    // P 被迫独自扛高速跟踪 → 数学必然追不上。Kv=1.0 = 完美前馈(每帧补目标位移)
-    float velocityFeedforward = 1.0f;
 
     // Smith预估器（纯滞后补偿控制）
     bool smithPredictorEnabled = false;
@@ -212,7 +208,6 @@ struct MouseControllerConfig {
     float adaptivePidIntegralDeadzone = 1.0f;      // 积分死区阈值
     float adaptivePidIntegralGainThreshold = 50.0f; // 积分自适应阈值
     float adaptivePidIntegralGainRate = 0.015f;    // 积分自适应速率
-    float adaptivePidIntegralGainVelocityLimit = 30.0f; // 积分误差变化率上限(px/s)，超过禁积分
     float adaptivePidOutputLimit = 10.0f;          // 输出限幅
 
     // 连续瞄准与弹道控制

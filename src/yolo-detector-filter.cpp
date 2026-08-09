@@ -479,9 +479,7 @@ std::atomic<int> framesSubmitted{0};
 		float adaptivePidIntegralDeadzone;
 		float adaptivePidIntegralGainThreshold;
 		float adaptivePidIntegralGainRate;
-		float adaptivePidIntegralGainVelocityLimit;
 		float adaptivePidOutputLimit;
-		float velocityFeedforward;
 		// 持续自瞄和自动压枪参数
 		bool continuousAimEnabled;
 		bool autoRecoilControlEnabled;
@@ -606,9 +604,7 @@ useDerivativePredictor = false;
 			adaptivePidIntegralDeadzone = 1.0f;
 			adaptivePidIntegralGainThreshold = 50.0f;
 			adaptivePidIntegralGainRate = 0.015f;
-			adaptivePidIntegralGainVelocityLimit = 30.0f;
 			adaptivePidOutputLimit = 10.0f;
-			velocityFeedforward = 1.0f;
 			// 持续自瞄和自动压枪默认值
 			continuousAimEnabled = false;
 			autoRecoilControlEnabled = false;
@@ -700,9 +696,7 @@ float aimOutputMax;
 	float adaptivePidIntegralDeadzone;
 	float adaptivePidIntegralGainThreshold;
 	float adaptivePidIntegralGainRate;
-	float adaptivePidIntegralGainVelocityLimit;
 	float adaptivePidOutputLimit;
-	float velocityFeedforward;
 
 		// 准星检测器
 	CrosshairDetector crosshairDetector;
@@ -1499,10 +1493,6 @@ obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", O
 		obs_property_set_long_description(adaptIGainRateProp, "积分增益自适应调整速率，默认0.015");
 		obs_property_t *adaptOutLimitProp = obs_properties_add_float_slider(adaptivePidProps, "adaptive_pid_output_limit", "输出限幅", 1.0f, 200.0f, 1.0f);
 		obs_property_set_long_description(adaptOutLimitProp, "单帧输出最大值，默认10.0");
-		obs_property_t *adaptIGainVelProp = obs_properties_add_float_slider(adaptivePidProps, "adaptive_pid_integral_gain_velocity_limit", "积分误差变化率上限", 5.0f, 200.0f, 5.0f);
-		obs_property_set_long_description(adaptIGainVelProp, "误差变化率超过此值(px/s)视为目标在飞走/正在追，禁积分。默认30。目标快速经过时防积分误积累→追完过冲");
-		obs_property_t *velFFProp = obs_properties_add_float_slider(adaptivePidProps, "velocity_feedforward", "速度前馈增益Kv", 0.0f, 2.0f, 0.05f);
-		obs_property_set_long_description(velFFProp, "目标速度估计直接进输出 u+=Kv·v·dt，独立于误差通道。Kv=1.0完美前馈(每帧补目标位移)，P不用扛高速跟踪。默认1.0");
 		obs_properties_add_group(props, "adaptive_pid_controller_group", "自适应PID 控制器配置", OBS_GROUP_NORMAL, adaptivePidProps);
 
 		// ========== 页面7: 准星检测 ==========
@@ -2590,9 +2580,7 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "adaptive_pid_integral_deadzone", 1.0);
     obs_data_set_default_double(settings, "adaptive_pid_integral_gain_threshold", 50.0);
     obs_data_set_default_double(settings, "adaptive_pid_integral_gain_rate", 0.015);
-    obs_data_set_default_double(settings, "adaptive_pid_integral_gain_velocity_limit", 30.0);
     obs_data_set_default_double(settings, "adaptive_pid_output_limit", 10.0);
-    obs_data_set_default_double(settings, "velocity_feedforward", 1.0);
     obs_data_set_default_double(settings, "incremental_side_comp_denom", 1.0);
     obs_data_set_default_double(settings, "incremental_input_alpha", 0.3);
     obs_data_set_default_double(settings, "incremental_d_alpha", 0.2);
@@ -3140,9 +3128,7 @@ tf->aimOutputMax = (float)obs_data_get_double(settings, "aim_output_max");
 		tf->adaptivePidIntegralDeadzone = (float)obs_data_get_double(settings, "adaptive_pid_integral_deadzone");
 		tf->adaptivePidIntegralGainThreshold = (float)obs_data_get_double(settings, "adaptive_pid_integral_gain_threshold");
 		tf->adaptivePidIntegralGainRate = (float)obs_data_get_double(settings, "adaptive_pid_integral_gain_rate");
-		tf->adaptivePidIntegralGainVelocityLimit = (float)obs_data_get_double(settings, "adaptive_pid_integral_gain_velocity_limit");
 		tf->adaptivePidOutputLimit = (float)obs_data_get_double(settings, "adaptive_pid_output_limit");
-		tf->velocityFeedforward = (float)obs_data_get_double(settings, "velocity_feedforward");
 
 		bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -6313,9 +6299,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.adaptivePidIntegralDeadzone = tf->adaptivePidIntegralDeadzone;
 		mcConfig.adaptivePidIntegralGainThreshold = tf->adaptivePidIntegralGainThreshold;
 		mcConfig.adaptivePidIntegralGainRate = tf->adaptivePidIntegralGainRate;
-		mcConfig.adaptivePidIntegralGainVelocityLimit = tf->adaptivePidIntegralGainVelocityLimit;
 		mcConfig.adaptivePidOutputLimit = tf->adaptivePidOutputLimit;
-		mcConfig.velocityFeedforward = tf->velocityFeedforward;
 		// 贝塞尔曲线移动参数
 		mcConfig.enableBezierMovement = cfg.enableBezierMovement;
 		mcConfig.bezierCurvature = cfg.bezierCurvature;

@@ -27,7 +27,6 @@ public:
         float integralDeadzone = 1.0f;       // 60Hz 等效积分死区
         float integralGainThreshold = 50.0f;
         float integralGainRate = 0.015f;     // 60Hz 等效每帧上升速率
-        float integralGainVelocityLimit = 30.0f;  // 误差变化率上限(px/s)：超过视为目标在飞走，禁积分
         float outputLimit = 10.0f;
         // 导数低通时间常数（秒）；0 = 关闭滤波
         float derivativeFilterTimeConstant = 0.0f;
@@ -127,11 +126,7 @@ private:
     float adjustIntegralGain(float error, float lastError, float dt) {
         const float errorSpeed = std::abs(error - lastError) / dt; // pixels/s
 
-        // 积分场景限制：误差小(在目标附近) 且 误差变化慢(目标没在飞走) 才允许积分。
-        // 否则(目标快速经过/正在追)积分误积累 → 追完就过冲。
-        // 用户建议: |e|<50 && |velocity|<20 && |errorSpeed|<30 → 积分
-        if (std::abs(error) < cfg_.integralGainThreshold &&
-            errorSpeed < cfg_.integralGainVelocityLimit) {
+        if (std::abs(error) < cfg_.integralGainThreshold) {
             // 旧版每帧 rise = rate * (1 - |Δe|/(threshold*2))
             // 时间化：ratePerSecond = rate * 60，motion 用 errorSpeed 归一
             const float ratePerSecond = cfg_.integralGainRate * kReferenceFps;
