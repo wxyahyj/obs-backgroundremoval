@@ -69,7 +69,7 @@ private:
 
 	bool initialized_;
 
-	void applyControl(float uMoveX, float uMoveY);
+	void applyControl(float dt, float uMoveX, float uMoveY);
 	void predictAxis(float dt, float& pos, float& vel,
 	                 float& p00, float& p01, float& p11);
 	void updateAxis(float meas, float& pos, float& vel,
@@ -112,11 +112,13 @@ inline void VariationalBayesFilter::setConfig(const Config& cfg)
 	cfg_.nu0 = std::max(1.1f, cfg_.nu0);
 }
 
-// 鼠标输出直接改变误差：error_new ≈ error_old - mouseMove（同 IMM）
-inline void VariationalBayesFilter::applyControl(float uMoveX, float uMoveY)
+// 鼠标输出直接改变误差：error_new ≈ error_old - mouseMove（同 IMM）。
+// 位置和速度都扣自己移动——只扣位置会把"自己移动"误判成目标运动。
+inline void VariationalBayesFilter::applyControl(float dt, float uMoveX, float uMoveY)
 {
-	x_[0] -= uMoveX;
-	x_[2] -= uMoveY;
+	float invDt = (dt > 1e-6f) ? (1.0f / dt) : 0.0f;
+	x_[0] -= uMoveX;          x_[1] -= uMoveX * invDt;
+	x_[2] -= uMoveY;          x_[3] -= uMoveY * invDt;
 }
 
 inline void VariationalBayesFilter::predictAxis(float dt, float& pos, float& vel,
@@ -197,8 +199,8 @@ inline void VariationalBayesFilter::predict(float dt, float uMoveX, float uMoveY
 	if (!initialized_ || dt <= 1e-6f)
 		return;
 
-	// 1) 先扣掉自己鼠标位移（控制输入）
-	applyControl(uMoveX, uMoveY);
+	// 1) 先扣掉自己鼠标位移（控制输入，位置+速度）
+	applyControl(dt, uMoveX, uMoveY);
 	// 2) 自由动力学预测（目标运动），两轴独立块对角
 	predictAxis(dt, x_[0], x_[1], P_[0][0], P_[0][1], P_[1][1]);
 	predictAxis(dt, x_[2], x_[3], P_[2][2], P_[2][3], P_[3][3]);
