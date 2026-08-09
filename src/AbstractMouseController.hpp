@@ -17,6 +17,7 @@
 #include "SlewRateController.hpp"
 #include "AdaptivePIDController.hpp"
 #include "IMMFilter.hpp"
+#include "VariationalBayesFilter.hpp"
 #include "OneEuroFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
@@ -125,6 +126,8 @@ protected:
     IMMFilter immFilter;
     bool immInitialized_;
 
+    VariationalBayesFilter vbFilter;
+
     OneEuroFilter oneEuroX_;
     OneEuroFilter oneEuroY_;
     int oneEuroLockedTrackId_ = -1;
@@ -210,10 +213,28 @@ protected:
     int logCounter_ = 0;
     int externalLogCounter_ = 0;
 
+    // 检测结果新鲜度: 双机/UDP 检测帧率低时, 无新结果期间移动输出指数衰减,
+    // 抑制"同一旧位置持续推"造成的来回过冲振荡 (单机高检测帧率不受影响).
+    std::chrono::steady_clock::time_point lastDetectionsUpdate_ = std::chrono::steady_clock::now();
+
+    // 移动输出 EMA 平滑状态 (aim_smoothing): 抑制低分辨率/双机画面检测框像素抖动造成的大幅突跳
+    // 目标中心平滑状态 (低分辨率/双机画面检测框每帧跳几十像素)
+    float smoothedTargetX_ = -1.0f;
+    float smoothedTargetY_ = -1.0f;
+
+    // 子像素累积器：SendInput 需要整数 mickey，但 PID/SlewRate 等输出常为 <1px 浮点数；
+    // 游戏 Raw Input 下小数被 static_cast<int> 截断为 0 → 视觉上"不动"。此处累积余数凑够 1 再发。
+    float subpixelAccumX_ = 0.0f;
+    float subpixelAccumY_ = 0.0f;
+
     virtual void moveMouse(int dx, int dy) = 0;
     virtual void performClickDown() = 0;
     virtual void performClickUp() = 0;
     virtual bool checkFiring() = 0;
+
+    // 热键物理按键状态。默认查本机键盘 (GetAsyncKeyState);
+    // MAKCU 等硬件控制器覆写为设备上报的按键状态 (双机场景: 主机的按键经 MAKCU 固件上报到辅机).
+    bool isPhysicalButtonPressed(int vk) override;
     
     // 神经网络轨迹初始化
     void initializeNeuralPathIfNeeded();

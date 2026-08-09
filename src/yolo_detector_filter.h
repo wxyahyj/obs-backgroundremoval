@@ -32,6 +32,7 @@
 #include "MouseControllerInterface.hpp"
 #include "MouseControllerFactory.hpp"
 #include "models/DmlPreprocessor.h"
+#include "udp/UdpReceiver.h"
 
 struct LostTarget {
 	int trackId;
@@ -170,11 +171,15 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::atomic<int64_t> lastResultTimestamp{0};
 	std::atomic<uint8_t> bufferState[BUFFER_COUNT] = {};
 
+	int64_t inputGrabbedMs[BUFFER_COUNT] = {0};
+
 	struct InferenceResult {
 		std::vector<Detection> detections;
 		std::vector<Detection> trackedTargets;
 		int frameWidth = 0, frameHeight = 0, cropX = 0, cropY = 0;
 		int64_t timestamp = 0;
+		int64_t timestampMs = 0;   // 推理完成时刻（steady ms，新鲜度 gate 用）
+		int64_t grabbedMs = 0;     // 帧采集时刻（steady ms，检测年龄 = now - grabbedMs）
 	};
 	std::shared_ptr<InferenceResult> inferenceResultPtr_{nullptr};
 	mutable std::mutex inferenceResultMutex_;
@@ -182,6 +187,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	std::chrono::high_resolution_clock::time_point lastFpsTime;
 	int fpsFrameCount;
 	double currentFps;
+	double inferenceFps = 0.0;         // 推理吞吐（帧/秒）
+	int64_t lastInferredCount = 0;     // 推理 fps 计数基准
+	int64_t lastDetectionAgeMs = 0;    // 最近一次检测年龄：采集→消费（含排队+推理+帧间隔）
 
 	gs_effect_t *solidEffect;
 	std::vector<std::thread> threadPool;
@@ -286,6 +294,9 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float smithModelTau = 0.02f;
 		bool smithAutoTau = true;
 
+		// 目标中心EMA平滑开关（低分辨率/双机专用，默认关）
+		bool aimSmoothingEnabled = false;
+
 		// IMM交互多模型滤波器
 		bool immFilterEnabled = false;
 		float immProcessNoisePos = 0.1f;
@@ -295,6 +306,17 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 		float immMeasurementNoiseX = 1.0f;
 		float immMeasurementNoiseY = 1.0f;
 		int immActiveModels = 3;
+
+		// 变分贝叶斯鲁棒滤波器（VB-AKF）
+		bool useVbFilter = false;
+		float vbProcessNoisePos = 0.1f;
+		float vbProcessNoiseVel = 0.5f;
+		float vbMeasurementNoiseX = 1.0f;
+		float vbMeasurementNoiseY = 1.0f;
+		float vbNu0 = 5.0f;
+		float vbRho = 0.97f;
+		int vbIterations = 5;
+		float vbOutlierGate = 4.0f;
 
 		// OneEuro 误差滤波
 		bool useOneEuroFilter = false;
@@ -369,6 +391,12 @@ struct yolo_detector_filter : public filter_data, public std::enable_shared_from
 	int crosshairCropOffsetX = 0, crosshairCropOffsetY = 0;
 #endif
 
+	// === UDP 直收通道 (绕过 OBS 渲染管线, 直接喂推理队列) ===
+	bool udpEnabled = false;
+	int udpPort = 12345;
+	std::unique_ptr<UdpReceiver> udpReceiver;
+	int udpFrameWidth = 0, udpFrameHeight = 0; // 最近 UDP 解码帧尺寸
+
 	~yolo_detector_filter() {
 		obs_log(LOG_INFO, "YOLO detector filter destructor called");
 #ifdef _WIN32
@@ -382,6 +410,18 @@ void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth,
 void renderFOV(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 void renderRegion(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 void exportCoordinatesToFile(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
+
+// === UDP 直收 (yolo-detector-filter.cpp) ===
+// 把一帧 BGRA 提交进推理四缓冲队列 (无锁 Fill-then-publish)。
+// 供 OBS 画面捕获 (video_render) 与 UDP 解码回调共用。
+bool publishFrameToInference(yolo_detector_filter *filter, const cv::Mat &frame,
+			     int width, int height,
+			     int frameCropX, int frameCropY,
+			     int frameCropWidth, int frameCropHeight);
+// UDP 模式: 把最新 detections 画到浮窗帧上 (锁内修改 floatingWindowFrame)。
+void drawDetectionsOnFloatingFrame(yolo_detector_filter *filter);
+// 按设置启停 UDP 接收线程。
+void startUdpReceiver(yolo_detector_filter *filter);
 
 // === UI (filter_properties.cpp) ===
 // yolo_detector_filter_properties 声明在yolo-detector-filter.h (extern "C")

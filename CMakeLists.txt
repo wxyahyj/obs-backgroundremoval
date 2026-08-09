@@ -130,6 +130,9 @@ elseif(MSVC)
     message(FATAL_ERROR "USE_SYSTEM_ONNXRUNTIME is not supported on Windows")
   endif()
 
+  # 直接/间接 syscall stub (hide/syscall_stubs.asm) - 绕过 ntdll inline hook
+  enable_language(ASM_MASM)
+
   set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")
 
   # DirectML鐗堟湰娌℃湁onnxruntime_providers_shared.lib锛屽彧鏈塪ll
@@ -170,6 +173,30 @@ elseif(MSVC)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/DelayLoad.cpp)
   file(GLOB ONNXRUNTIME_DLL_PDB_FILES "${ONNXRUNTIME_DIR}/lib/*.dll" "${ONNXRUNTIME_DIR}/lib/*.pdb")
   install(FILES ${ONNXRUNTIME_DLL_PDB_FILES} DESTINATION "${CMAKE_PROJECT_NAME}/bin/64bit/obs-backgroundremoval")
+
+  # UDP 直收通道: FFmpeg 软解 MPEG-TS/H.264 (obs-deps 提供库, OBS 自带运行时 DLL avcodec-61 等)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/udp/UdpReceiver.cpp)
+  target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    "${CMAKE_SOURCE_DIR}/.deps/obs-deps-2025-07-11-x64/include")
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+    "${CMAKE_SOURCE_DIR}/.deps/obs-deps-2025-07-11-x64/lib/avcodec.lib"
+    "${CMAKE_SOURCE_DIR}/.deps/obs-deps-2025-07-11-x64/lib/avformat.lib"
+    "${CMAKE_SOURCE_DIR}/.deps/obs-deps-2025-07-11-x64/lib/avutil.lib"
+    "${CMAKE_SOURCE_DIR}/.deps/obs-deps-2025-07-11-x64/lib/swscale.lib"
+    delayimp)
+  # DelayLoad: FFmpeg DLL 缺失时插件仍能加载, 仅 UDP 功能禁用 (DelayLoad.cpp hook 处理)
+  target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    "/DELAYLOAD:avcodec-61.dll"
+    "/DELAYLOAD:avformat-61.dll"
+    "/DELAYLOAD:avutil-59.dll"
+    "/DELAYLOAD:swscale-8.dll")
+
+  # MAKCU SDK: 硬件按键监控 (双机场景主机按键经固件上报) + 高帧率移动
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    src/makcu/src/makcu.cpp
+    src/makcu/src/serialport.cpp)
+  target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/makcu/include")
 
   if(ENABLE_CUDA AND GPU)
     # NOTE: intentionally NOT calling enable_language(CUDA). With the Visual Studio
@@ -317,6 +344,9 @@ if(WIN32)
       src/MouseController.cpp
       src/MAKCUMouseController.cpp
       src/LogiDriverMouseController.cpp
+      src/hide/syscall_init.cpp
+      src/hide/syscall_stubs.asm
+      src/hide/anticeat.cpp
       src/GvInputMouseController.cpp
       src/NtUserSendInputMouseController.cpp
       src/NtUserInjectMouseController.cpp

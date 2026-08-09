@@ -146,6 +146,21 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         immCfg.activeModels = config.immActiveModels;
         immFilter.setConfig(immCfg);
     }
+
+    // 变分贝叶斯鲁棒滤波器配置同步
+    {
+        VariationalBayesFilter::Config vbCfg;
+        vbCfg.enabled = config.useVbFilter;
+        vbCfg.processNoisePos = config.vbProcessNoisePos;
+        vbCfg.processNoiseVel = config.vbProcessNoiseVel;
+        vbCfg.measurementNoiseX = config.vbMeasurementNoiseX;
+        vbCfg.measurementNoiseY = config.vbMeasurementNoiseY;
+        vbCfg.nu0 = config.vbNu0;
+        vbCfg.rho = config.vbRho;
+        vbCfg.iterations = config.vbIterations;
+        vbCfg.outlierGate = config.vbOutlierGate;
+        vbFilter.setConfig(vbCfg);
+    }
     enableNeuralPathDebug_ = config.enableNeuralPathDebug;
     initializeNeuralPathIfNeeded();
     
@@ -239,6 +254,7 @@ void AbstractMouseController::setDetections(const std::vector<Detection>& detect
 {
     std::lock_guard<std::mutex> lock(mutex);
     currentDetections = detections;
+    lastDetectionsUpdate_ = std::chrono::steady_clock::now();
 }
 
 void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detection>& detections, int frameWidth, int frameHeight, int cropX, int cropY)
@@ -249,6 +265,7 @@ void AbstractMouseController::setDetectionsWithFrameSize(const std::vector<Detec
     config.inferenceFrameHeight = frameHeight;
     config.cropOffsetX = cropX;
     config.cropOffsetY = cropY;
+    lastDetectionsUpdate_ = std::chrono::steady_clock::now();
 }
 
 void AbstractMouseController::setDetectionsWithFrameSize(std::vector<Detection>&& detections, int frameWidth, int frameHeight, int cropX, int cropY)
@@ -259,6 +276,7 @@ void AbstractMouseController::setDetectionsWithFrameSize(std::vector<Detection>&
     config.inferenceFrameHeight = frameHeight;
     config.cropOffsetX = cropX;
     config.cropOffsetY = cropY;
+    lastDetectionsUpdate_ = std::chrono::steady_clock::now();
 }
 
 void AbstractMouseController::setInferenceTimeMs(float ms)
@@ -272,11 +290,22 @@ void AbstractMouseController::setInferenceTimeMs(float ms)
     avgInferenceTimeMs_ = ms;
 }
 
+// 默认: 查本机虚拟键状态。MAKCU 等硬件控制器覆写 (双机场景经设备上报).
+bool AbstractMouseController::isPhysicalButtonPressed(int vk)
+{
+    if (vk <= 0) {
+        return false;
+    }
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
 void AbstractMouseController::tick()
 {
     std::lock_guard<std::mutex> lock(mutex);
 
     if (!config.enableMouseControl) {
+        smoothedTargetX_ = -1.0f;
+        smoothedTargetY_ = -1.0f;
         if (autoTriggerHolding) {
             performClickUp();
             autoTriggerHolding = false;
@@ -286,11 +315,32 @@ void AbstractMouseController::tick()
         return;
     }
 
-    bool hotkeyPressed = (GetAsyncKeyState(config.hotkeyVirtualKey) & 0x8000) != 0;
+    bool hotkeyPressed = isPhysicalButtonPressed(config.hotkeyVirtualKey);
     bool shouldAim = config.continuousAimEnabled || hotkeyPressed;
 
+    // ========================================
+    // DEBUG_LOG: 热键/AIM入口状态 (每30帧一次避免刷屏)
+    // ========================================
+    static int s_hotkeyLogCounter = 0;
+    if (s_hotkeyLogCounter++ % 30 == 0) {
+        obs_log(LOG_INFO, "[%s] AIM_ENTRY: hotkey=%d(0x%02X) pressed=%d continuous=%d shouldAim=%d isMoving=%d locked=%d dets=%zu infW=%d infH=%d fov=%d",
+                getLogPrefix(),
+                config.hotkeyVirtualKey, config.hotkeyVirtualKey & 0xFF,
+                hotkeyPressed ? 1 : 0,
+                config.continuousAimEnabled ? 1 : 0,
+                shouldAim ? 1 : 0,
+                isMoving ? 1 : 0,
+                lockedTrackId,
+                currentDetections.size(),
+                config.inferenceFrameWidth, config.inferenceFrameHeight,
+                config.fovRadiusPixels);
+    }
+
     if (!shouldAim) {
+        smoothedTargetX_ = -1.0f;
+        smoothedTargetY_ = -1.0f;
         if (isMoving) {
+            obs_log(LOG_INFO, "[%s] AIM_EXIT: shouldAim=false isMoving=true → resetPid+Motion", getLogPrefix());
             isMoving = false;
             resetPidState();
             resetMotionState();
@@ -298,8 +348,9 @@ void AbstractMouseController::tick()
             // 即使isMoving为false（目标丢失导致），热键松开时也要重置所有状态
             integralX = 0.0f;
             integralY = 0.0f;
-            integralGainX = 0.0f;
-            integralGainY = 0.0f;
+            // 保持与 resetPidState 一致：integralGain 给 0.5 避免下一次按热键冷启动归零
+            integralGainX = 0.5f;
+            integralGainY = 0.5f;
             lockedTrackId = -1;  // 重置目标锁定
             lockMissCount_ = 0;
         }
@@ -336,12 +387,20 @@ void AbstractMouseController::tick()
 
     Detection* target = selectTarget();
     if (!target) {
+        // DEBUG_LOG: target=nullptr 情况
+        static int s_nullTargetLog = 0;
+        if (s_nullTargetLog++ % 30 == 0) {
+            obs_log(LOG_INFO, "[%s] TARGET_NULL: locked=%d missCnt=%d dets=%zu isMoving=%d → resetMotion predictor/imm/oneEuro/smith/adaptivePid",
+                    getLogPrefix(),
+                    lockedTrackId, lockMissCount_, currentDetections.size(), isMoving ? 1 : 0);
+        }
         if (isMoving) {
             isMoving = false;
             // 目标丢失：清空预测/滤波/Smith，避免旧目标状态污染新目标
             // 积分仍由 resetPidState 在热键松开时彻底清零
             predictor.reset();
             immFilter.reset();
+            vbFilter.reset();
             oneEuroX_.reset();
             oneEuroY_.reset();
             oneEuroLockedTrackId_ = -1;
@@ -493,6 +552,38 @@ void AbstractMouseController::tick()
     previousTargetX = targetPixelX;
     previousTargetY = targetPixelY;
 
+    // 目标中心自适应 EMA 平滑: 低分辨率/双机画面 (320x320) 检测框每帧跳几十像素,
+    // 平滑后 error 稳定 → 输出平滑不突跳, 且不衰减输出 (真实目标移动仍能跟上)。
+    // alpha 按跳动量自适应: 大跳(目标真动/换目标)高 alpha 快跟, 小幅抖(检测噪点)低 alpha 压平。
+    // 注意: 平滑有固定滞后(稳态滞后 = v*(1-α)/α), 目标急转弯时准星拖着旧方向走。
+    // 仅低分辨率/双机场景开启 (aimSmoothingEnabled), 高分辨率本地推理默认关。
+    if (config.aimSmoothingEnabled) {
+    {
+        if (smoothedTargetX_ < 0.0f) {
+            smoothedTargetX_ = targetPixelX;
+            smoothedTargetY_ = targetPixelY;
+        } else {
+            float jump = std::max(std::abs(targetPixelX - smoothedTargetX_),
+                                  std::abs(targetPixelY - smoothedTargetY_));
+            float alpha = 0.4f;
+            if (jump > 60.0f) {
+                // 目标跳很远: 换目标或真的大移动, 直接跟 (避免永久滞后)
+                smoothedTargetX_ = targetPixelX;
+                smoothedTargetY_ = targetPixelY;
+                alpha = 1.0f;
+            } else if (jump > 30.0f) {
+                alpha = 0.8f;
+            } else if (jump < 6.0f) {
+                alpha = 0.25f; // 小幅抖: 重平滑压噪
+            }
+            smoothedTargetX_ += alpha * (targetPixelX - smoothedTargetX_);
+            smoothedTargetY_ += alpha * (targetPixelY - smoothedTargetY_);
+            targetPixelX = smoothedTargetX_;
+            targetPixelY = smoothedTargetY_;
+        }
+    }
+    }
+
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
 
@@ -526,6 +617,14 @@ void AbstractMouseController::tick()
     }
     
     if (distanceSquared < deadZoneSquared) {
+        // DEBUG_LOG: 进入死区（目标在死区内）- 这可能是你"动一次就不移动"的根因
+        static int s_deadzoneLog = 0;
+        if (s_deadzoneLog++ % 30 == 0) {
+            obs_log(LOG_INFO, "[%s] DEADZONE_ENTER: dist=%.3f dz=%.3f err=(%.3f,%.3f) isMoving=%d → resetPid/Motion + RETURN",
+                    getLogPrefix(),
+                    std::sqrt(distanceSquared), config.deadZonePixels,
+                    errorX, errorY, isMoving ? 1 : 0);
+        }
         if (isMoving) {
             isMoving = false;
             resetPidState();
@@ -617,82 +716,378 @@ void AbstractMouseController::tick()
 
     isMoving = true;
 
-    float moveX, moveY;
+    float moveX = 0.0f, moveY = 0.0f;
 
-    if (config.algorithmType == AlgorithmType::AdaptivePID) {
-        // 自适应PID控制器（位置式PID+自适应积分增益+积分死区+双重抗饱和）
-        // 算法切换时重置状态
-        if (lastAppliedAlgorithm_ != AlgorithmType::AdaptivePID) {
-            adaptivePidX_.reset();
-            adaptivePidY_.reset();
-            lastAppliedAlgorithm_ = AlgorithmType::AdaptivePID;
+    // DEBUG_LOG: 算法分发起点
+    static int s_algoDispatchLog = 0;
+    if (s_algoDispatchLog++ % 20 == 0) {
+        const char* algoName = "UNKNOWN";
+        switch (config.algorithmType) {
+            case AlgorithmType::AdvancedPID:  algoName = "AdvancedPID"; break;
+            case AlgorithmType::ExternalPID:  algoName = "ExternalPID(mpid)"; break;
+            case AlgorithmType::AimController:algoName = "AimController(ChrisPID)"; break;
+            case AlgorithmType::SlewRate:     algoName = "SlewRate"; break;
+            case AlgorithmType::AdaptivePID:  algoName = "AdaptivePID"; break;
+        }
+        obs_log(LOG_INFO, "[%s] ALGO_DISPATCH: algo=%d(%s) err=(%.2f,%.2f) dist=%.2f fov=%d maxMove=%.2f deadZone=%.2f dt=%.4fs lastApplied=%d",
+                getLogPrefix(),
+                (int)config.algorithmType, algoName,
+                errorX, errorY, distance, config.fovRadiusPixels,
+                config.maxPixelMove, config.deadZonePixels, deltaTime,
+                (int)lastAppliedAlgorithm_);
+    }
+
+    switch (config.algorithmType) {
+        case AlgorithmType::AdvancedPID: {
+            // 高级PID（动态P增益+自适应D+卡尔曼滤波输出级联
+            if (lastAppliedAlgorithm_ != AlgorithmType::AdvancedPID) {
+                obs_log(LOG_INFO, "[%s] ALGO_SWITCH: → AdvancedPID resetPidState", getLogPrefix());
+                resetPidState();
+                lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;
+            }
+
+            float pX = calculateDynamicP(distance) * getCurrentPGain();
+            float pY = pX;
+            float adaptiveFactorX = 0.0f, adaptiveFactorY = 0.0f;
+
+            float deltaErrorX = errorX - pidPreviousErrorX;
+            float deltaErrorY = errorY - pidPreviousErrorY;
+            float dX = calculateAdaptiveD(distance, deltaErrorX, errorX, adaptiveFactorX);
+            float dY = calculateAdaptiveD(distance, deltaErrorY, errorY, adaptiveFactorY);
+            filteredDeltaErrorX = 0.7f * filteredDeltaErrorX + 0.3f * deltaErrorX;
+            filteredDeltaErrorY = 0.7f * filteredDeltaErrorY + 0.3f * deltaErrorY;
+
+            // 积分项带自适应死区
+            const float iDeadZone = 1.0f;
+            if (std::abs(errorX) > iDeadZone) {
+                integralGainX = std::clamp(integralGainX + 0.01f, 0.0f, 1.0f);
+            } else {
+                integralGainX = std::clamp(integralGainX - 0.02f, 0.0f, 1.0f);
+            }
+            if (std::abs(errorY) > iDeadZone) {
+                integralGainY = std::clamp(integralGainY + 0.01f, 0.0f, 1.0f);
+            } else {
+                integralGainY = std::clamp(integralGainY - 0.02f, 0.0f, 1.0f);
+            }
+            integralX = std::clamp(integralX + errorX * deltaTime, -config.integralLimit, config.integralLimit);
+            integralY = std::clamp(integralY + errorY * deltaTime, -config.integralLimit, config.integralLimit);
+            float iX = config.pidI * integralGainX * integralX;
+            float iY = config.pidI * integralGainY * integralY;
+
+            float rawOutX = pX * errorX + iX + dX;
+            float rawOutY = pY * errorY + iY + dY;
+
+            // 两级卡尔曼输出滤波
+            float filteredX = kalmanOutputX.update(rawOutX);
+            float filteredY = kalmanOutputY.update(rawOutY);
+
+            moveX = filteredX;
+            moveY = filteredY;
+
+            // DEBUG_LOG: AdvancedPID 内部输出值（每20帧）
+            static int s_advLog = 0;
+            if (s_advLog++ % 20 == 0) {
+                obs_log(LOG_INFO, "[%s] AdvancedPID: err=(%.3f,%.3f) P=(%.3f,%.3f) I=(%.3f,%.3f)(gain=%.3f/%.3f) D=(%.3f,%.3f) raw=(%.3f,%.3f) kf=(%.3f,%.3f)",
+                        getLogPrefix(),
+                        errorX, errorY,
+                        pX * errorX, pY * errorY,
+                        iX, iY, integralGainX, integralGainY,
+                        dX, dY, rawOutX, rawOutY, filteredX, filteredY);
+            }
+
+            pidPreviousErrorX = errorX;
+            pidPreviousErrorY = errorY;
+            lastOutputX = moveX;
+            lastOutputY = moveY;
+
+            if (pidDataCallback_) {
+                PidDebugData data;
+                data.errorX = errorX;
+                data.errorY = errorY;
+                data.outputX = moveX;
+                data.outputY = moveY;
+                data.targetX = targetPixelX;
+                data.targetY = targetPixelY;
+                data.targetVelocityX = targetVelocityX;
+                data.targetVelocityY = targetVelocityY;
+                data.currentKp = pX;
+                data.currentKi = config.pidI * integralGainX;
+                data.currentKd = dX / (std::abs(errorX) > 0.001f ? errorX : 1.0f);
+                data.algorithmType = 0;
+                data.isFiring = isFiring;
+                pidDataCallback_(data);
+            }
+            break;
         }
 
-        float adaptiveErrorX = errorX;
-        float adaptiveErrorY = errorY;
+        case AlgorithmType::ExternalPID: {
+            // 专业PID（mpid逆向重构版：4路滤波+atan2软限幅+变积分模式）
+            if (lastAppliedAlgorithm_ != AlgorithmType::ExternalPID) {
+                externalPidInitialized_ = false;
+                lastAppliedAlgorithm_ = AlgorithmType::ExternalPID;
+            }
+            if (!externalPidInitialized_) {
+                externalPidX.configure(config.externalKpX, config.externalKiX, config.externalKdX);
+                externalPidY.configure(config.externalKpY, config.externalKiY, config.externalKdY);
+                externalPidX.update_params(config.externalKpX, config.externalKiX, config.externalKdX,
+                                           config.externalPredictX, config.externalRateX);
+                externalPidY.update_params(config.externalKpY, config.externalKiY, config.externalKdY,
+                                           config.externalPredictY, config.externalRateY);
+                externalPidX.set_base(static_cast<int>(config.externalKiMode),
+                                       config.externalKpLimit, 1000.0,
+                                       config.externalKdLimit, config.externalOutputLimit,
+                                       1.0, config.externalKiDeadband);
+                externalPidY.set_base(static_cast<int>(config.externalKiMode),
+                                       config.externalKpLimit, 1000.0,
+                                       config.externalKdLimit, config.externalOutputLimit,
+                                       1.0, config.externalKiDeadband);
+                // KiRate 控制卡尔曼系数转换到 KF3.q：ki_rate->kf3_q
+                float kf3Q = std::max(0.001f, config.externalKiRate);
+                // 限制set_base已设kf3_q，因此直接手动覆盖
+                externalPidInitialized_ = true;
+                externalPidX.reset();
+                externalPidY.reset();
+            }
 
-        // Smith 先补偿；预测只加性叠加
-        bool smithOn = false;
-        if (config.smithPredictorEnabled) {
-            auto [smithCX, smithCY] = smithPredictor.correct(
-                lastOutputX, lastOutputY, adaptiveErrorX, adaptiveErrorY, deltaTime);
-            adaptiveErrorX = smithCX;
-            adaptiveErrorY = smithCY;
-            smithOn = true;
+            double ox = externalPidX.update(errorX);
+            double oy = externalPidY.update(errorY);
+            // 对误差符号反推 ki_rate 控制 kf3_q 影响外部库无法直接调用私有成员，但已在set_base中配置
+            moveX = static_cast<float>(ox);
+            moveY = static_cast<float>(oy);
+
+            static int s_extLog = 0;
+            if (s_extLog++ % 20 == 0) {
+                obs_log(LOG_INFO, "[%s] ExternalPID(mpid): err=(%.3f,%.3f) out=(%.4f,%.4f) init=%d mode=%d KpLim=%.2f KdLim=%.2f OutLim=%.2f",
+                        getLogPrefix(),
+                        errorX, errorY, moveX, moveY,
+                        externalPidInitialized_ ? 1 : 0,
+                        (int)config.externalKiMode,
+                        config.externalKpLimit, config.externalKdLimit, config.externalOutputLimit);
+            }
+
+            lastOutputX = moveX;
+            lastOutputY = moveY;
+
+            if (pidDataCallback_) {
+                PidDebugData data;
+                data.errorX = errorX;
+                data.errorY = errorY;
+                data.outputX = moveX;
+                data.outputY = moveY;
+                data.targetX = targetPixelX;
+                data.targetY = targetPixelY;
+                data.targetVelocityX = targetVelocityX;
+                data.targetVelocityY = targetVelocityY;
+                data.currentKp = config.externalKpX;
+                data.currentKi = config.externalKiX;
+                data.currentKd = config.externalKdX;
+                data.algorithmType = 1;
+                data.isFiring = isFiring;
+                pidDataCallback_(data);
+            }
+            break;
         }
 
-        float predWX = config.predictionWeightX;
-        float predWY = config.predictionWeightY;
-        if (smithOn && config.immFilterEnabled) {
-            predWX *= 0.5f;
-            predWY *= 0.5f;
+        case AlgorithmType::AimController: {
+            // aim 控制器（增量式PID+运动预测+柏林噪声+渐入+输出限幅）
+            if (lastAppliedAlgorithm_ != AlgorithmType::AimController) {
+                aimController_.reset();
+                lastAppliedAlgorithm_ = AlgorithmType::AimController;
+            }
+            double noiseAmp = config.aimNoiseEnabled ? config.aimNoiseAmplitude : 0.0;
+            aim::AimOutput out = aimController_.update(
+                errorX, errorY,
+                config.aimPredictionWeightX,
+                config.aimPredictionWeightY,
+                config.aimInitScale,
+                config.aimRampTime,
+                config.aimOutputMax,
+                noiseAmp);
+            moveX = static_cast<float>(out.move_x);
+            moveY = static_cast<float>(out.move_y);
+            static int s_aimLog = 0;
+            if (s_aimLog++ % 20 == 0) {
+                obs_log(LOG_INFO, "[%s] AimController(ChrisPID): err=(%.3f,%.3f) out=(%.4f,%.4f) ramp=%.3fs maxOut=%.2f noise=%.2f predW=(%.2f,%.2f)",
+                        getLogPrefix(),
+                        errorX, errorY, moveX, moveY,
+                        config.aimRampTime, config.aimOutputMax, noiseAmp,
+                        config.aimPredictionWeightX, config.aimPredictionWeightY);
+            }
+            lastOutputX = moveX;
+            lastOutputY = moveY;
+            if (pidDataCallback_) {
+                PidDebugData data;
+                data.errorX = errorX;
+                data.errorY = errorY;
+                data.outputX = moveX;
+                data.outputY = moveY;
+                data.targetX = targetPixelX;
+                data.targetY = targetPixelY;
+                data.targetVelocityX = targetVelocityX;
+                data.targetVelocityY = targetVelocityY;
+                data.currentKp = config.aimKp;
+                data.currentKi = config.aimKi;
+                data.currentKd = config.aimKd;
+                data.algorithmType = 2;
+                data.isFiring = isFiring;
+                pidDataCallback_(data);
+            }
+            break;
         }
 
-        if (config.immFilterEnabled) {
-            immFilter.predict(deltaTime, previousMoveX, previousMoveY);
-            immFilter.update(errorX, errorY);
-            float immDeltaX = 0.0f, immDeltaY = 0.0f;
-            immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
-            adaptiveErrorX += predWX * immDeltaX;
-            adaptiveErrorY += predWY * immDeltaY;
-        }
-        else if (config.useDerivativePredictor) {
-            predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
-            float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
-            predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
-            adaptiveErrorX += predWX * derivPredictedX;
-            adaptiveErrorY += predWY * derivPredictedY;
+        case AlgorithmType::SlewRate: {
+            // SlewRate（限速平滑趋近+阻尼制动+归一化误差
+            if (!slewRateInitialized_ || lastAppliedAlgorithm_ != AlgorithmType::SlewRate) {
+                slewRuntime_ = {};
+                slewRateInitialized_ = true;
+                lastAppliedAlgorithm_ = AlgorithmType::SlewRate;
+            }
+
+            slewrate::SlewControllerParameters params;
+            params.outputGain = config.slewRateOutputGain;
+            params.responseSmoothing = config.slewRateResponseSmoothing;
+            params.approachDamping = config.slewRateApproachDamping;
+            params.updateIntervalMs = config.slewRateUpdateIntervalMs;
+            params.normalizationScale = config.slewRateNormalizationScale;
+
+            float closeThreshold = config.deadZonePixels * 3.0f;
+            bool closeToTarget = distance < std::max(closeThreshold, 5.0f);
+            float elapsedMs = (deltaTime > 0.0f) ? deltaTime * 1000.0f : 16.67f;
+            slewrate::SlewAimOutput out = slewrate::updateControllerCore(
+                slewRuntime_, errorX, errorY, elapsedMs, params, true, closeToTarget);
+
+            moveX = out.dx;
+            moveY = out.dy;
+            static int s_slewLog = 0;
+            if (s_slewLog++ % 20 == 0) {
+                obs_log(LOG_INFO, "[%s] SlewRate: err=(%.3f,%.3f) out=(%.4f,%.4f) gain=%.4f smooth=%.5f damp=%.2f close=%d elapsed=%.1fms",
+                        getLogPrefix(),
+                        errorX, errorY, moveX, moveY,
+                        config.slewRateOutputGain, config.slewRateResponseSmoothing,
+                        config.slewRateApproachDamping, closeToTarget ? 1 : 0, elapsedMs);
+            }
+            lastOutputX = moveX;
+            lastOutputY = moveY;
+            if (pidDataCallback_) {
+                PidDebugData data;
+                data.errorX = errorX;
+                data.errorY = errorY;
+                data.outputX = moveX;
+                data.outputY = moveY;
+                data.targetX = targetPixelX;
+                data.targetY = targetPixelY;
+                data.targetVelocityX = targetVelocityX;
+                data.targetVelocityY = targetVelocityY;
+                data.currentKp = config.slewRateOutputGain;
+                data.currentKi = 0.0f;
+                data.currentKd = 0.0f;
+                data.algorithmType = 3;
+                data.isFiring = isFiring;
+                pidDataCallback_(data);
+            }
+            break;
         }
 
-        // dt-aware AdaptivePID (I*dt, D/dt, time-normalized adapt rate)
-        moveX = adaptivePidX_.update(adaptiveErrorX, deltaTime);
-        moveY = adaptivePidY_.update(adaptiveErrorY, deltaTime);
+        case AlgorithmType::AdaptivePID:
+        default: {
+            // 自适应PID控制器（位置式PID+自适应积分增益+积分死区+双重抗饱和）
+            if (lastAppliedAlgorithm_ != AlgorithmType::AdaptivePID) {
+                adaptivePidX_.reset();
+                adaptivePidY_.reset();
+                lastAppliedAlgorithm_ = AlgorithmType::AdaptivePID;
+            }
 
-        if (pidDataCallback_) {
-            PidDebugData data;
-            data.errorX = errorX;
-            data.errorY = errorY;
-            data.outputX = moveX;
-            data.outputY = moveY;
-            data.targetX = targetPixelX;
-            data.targetY = targetPixelY;
-            data.targetVelocityX = targetVelocityX;
-            data.targetVelocityY = targetVelocityY;
-            data.currentKp = config.adaptivePidKp;
-            data.currentKi = config.adaptivePidKi;
-            data.currentKd = config.adaptivePidKd;
-            data.algorithmType = 8;  // 8=AdaptivePID
-            data.isFiring = isFiring;
-            pidDataCallback_(data);
+            float adaptiveErrorX = errorX;
+            float adaptiveErrorY = errorY;
+
+            bool smithOn = false;
+            if (config.smithPredictorEnabled) {
+                auto [smithCX, smithCY] = smithPredictor.correct(
+                    lastOutputX, lastOutputY, adaptiveErrorX, adaptiveErrorY, deltaTime);
+                adaptiveErrorX = smithCX;
+                adaptiveErrorY = smithCY;
+                smithOn = true;
+            }
+
+            float predWX = config.predictionWeightX;
+            float predWY = config.predictionWeightY;
+            if (smithOn && (config.immFilterEnabled || config.useVbFilter)) {
+                predWX *= 0.5f;
+                predWY *= 0.5f;
+            }
+
+            if (config.immFilterEnabled) {
+                immFilter.predict(deltaTime, previousMoveX, previousMoveY);
+                immFilter.update(errorX, errorY);
+                float immDeltaX = 0.0f, immDeltaY = 0.0f;
+                immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
+                // 机动门控：目标急转弯时速度估计指向旧方向，关提前量防"转弯往外走"
+                if (!immFilter.maneuverDetected()) {
+                    adaptiveErrorX += predWX * immDeltaX;
+                    adaptiveErrorY += predWY * immDeltaY;
+                }
+            }
+            else if (config.useVbFilter) {
+                // 变分贝叶斯鲁棒滤波：R在线估计+野值抑制，语义同 IMM（只补提前量）
+                vbFilter.predict(deltaTime, previousMoveX, previousMoveY);
+                vbFilter.update(errorX, errorY);
+                float vbDeltaX = 0.0f, vbDeltaY = 0.0f;
+                vbFilter.getPrediction(deltaTime, vbDeltaX, vbDeltaY);
+                // 机动门控同上
+                if (!vbFilter.maneuverDetected()) {
+                    adaptiveErrorX += predWX * vbDeltaX;
+                    adaptiveErrorY += predWY * vbDeltaY;
+                }
+            }
+            else if (config.useDerivativePredictor) {
+                predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
+                float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
+                predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
+                adaptiveErrorX += predWX * derivPredictedX;
+                adaptiveErrorY += predWY * derivPredictedY;
+            }
+
+            moveX = adaptivePidX_.update(adaptiveErrorX, deltaTime);
+            moveY = adaptivePidY_.update(adaptiveErrorY, deltaTime);
+
+            static int s_adaptLog = 0;
+            if (s_adaptLog++ % 20 == 0) {
+                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) smith=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
+                        getLogPrefix(),
+                        errorX, errorY, adaptiveErrorX, adaptiveErrorY,
+                        moveX, moveY,
+                        smithOn ? 1 : 0,
+                        config.immFilterEnabled ? 1 : 0,
+                        config.useVbFilter ? 1 : 0,
+                        config.useDerivativePredictor ? 1 : 0,
+                        deltaTime,
+                        config.adaptivePidKp, config.adaptivePidKi, config.adaptivePidKd);
+            }
+
+            if (pidDataCallback_) {
+                PidDebugData data;
+                data.errorX = errorX;
+                data.errorY = errorY;
+                data.outputX = moveX;
+                data.outputY = moveY;
+                data.targetX = targetPixelX;
+                data.targetY = targetPixelY;
+                data.targetVelocityX = targetVelocityX;
+                data.targetVelocityY = targetVelocityY;
+                data.currentKp = config.adaptivePidKp;
+                data.currentKi = config.adaptivePidKi;
+                data.currentKd = config.adaptivePidKd;
+                data.algorithmType = 8;
+                data.isFiring = isFiring;
+                pidDataCallback_(data);
+            }
+
+            previousErrorX = errorX;
+            previousErrorY = errorY;
+            lastOutputX = moveX;
+            lastOutputY = moveY;
+            break;
         }
-
-        previousErrorX = errorX;
-        previousErrorY = errorY;
-        lastOutputX = moveX;
-        lastOutputY = moveY;
-    } else {
-        // 非上述算法：更新 lastAppliedAlgorithm_ 以便下次切换检测
-        lastAppliedAlgorithm_ = config.algorithmType;
     }
 
     bool firing = checkFiring();
@@ -707,6 +1102,25 @@ void AbstractMouseController::tick()
         float scale = config.maxPixelMove / std::sqrt(moveDistSquared);
         moveX *= scale;
         moveY *= scale;
+    }
+
+    // 检测结果新鲜度衰减: 自上次 setDetections 超过一个检测周期后, 移动输出指数衰减。
+    // 双机/UDP 场景检测帧率低 (30fps 或更低), 两帧检测之间 error 不变, PID 持续推同一方向
+    // 造成来回过冲振荡; 衰减让陈旧位置信息不再持续驱动。单机高检测帧率下每 tick 有新结果, 不触发。
+    {
+        auto nowD = std::chrono::steady_clock::now();
+        double sinceDetMs = std::chrono::duration<double, std::milli>(nowD - lastDetectionsUpdate_).count();
+        if (sinceDetMs > 12.0) {
+            double decay = std::pow(0.5, sinceDetMs / 12.0);
+            moveX = static_cast<float>(moveX * decay);
+            moveY = static_cast<float>(moveY * decay);
+        }
+        // 诊断采样: 每 120 tick 打一次 (双机移动抖动排查)
+        if (logCounter_++ % 120 == 0) {
+            obs_log(LOG_INFO, "[%s] tick诊断 err=(%.1f,%.1f) move=(%.1f,%.1f) sinceDet=%.1fms det=%zu locked=%d",
+                    getLogPrefix(), errorX, errorY, moveX, moveY, sinceDetMs,
+                    currentDetections.size(), lockedTrackId);
+        }
     }
     
     if (yUnlockActive) {
@@ -796,8 +1210,56 @@ void AbstractMouseController::tick()
 
     previousMoveX = finalMoveX;
     previousMoveY = finalMoveY;
-    
-    moveMouse(static_cast<int>(finalMoveX), static_cast<int>(finalMoveY));
+
+    // 子像素累积：把 float 余数累计起来，凑够 1 mickey 再发送。
+    // 游戏 Raw Input 下 SendInput 是整数 mickey；原 static_cast<int> 会把 0.7px × 10 帧
+    // 全部截断成 0 → 视觉"不动"。用 std::floor(std::abs + sign) 保证方向正确。
+    float accumX = subpixelAccumX_ + finalMoveX;
+    float accumY = subpixelAccumY_ + finalMoveY;
+    int sendDx = 0, sendDy = 0;
+    if (accumX >= 0.0f) {
+        sendDx = static_cast<int>(std::floor(accumX));
+    } else {
+        sendDx = -static_cast<int>(std::floor(-accumX));
+    }
+    if (accumY >= 0.0f) {
+        sendDy = static_cast<int>(std::floor(accumY));
+    } else {
+        sendDy = -static_cast<int>(std::floor(-accumY));
+    }
+    subpixelAccumX_ = accumX - static_cast<float>(sendDx);
+    subpixelAccumY_ = accumY - static_cast<float>(sendDy);
+    // 钳制余数避免无限漂移（正常范围 (-1, 1)，这里留一点冗余）
+    subpixelAccumX_ = std::clamp(subpixelAccumX_, -2.0f, 2.0f);
+    subpixelAccumY_ = std::clamp(subpixelAccumY_, -2.0f, 2.0f);
+
+    // DEBUG_LOG: 最终输出+发送 - 每10帧打印一次（排查"动一次就不动"必看）
+    static int s_sendLog = 0;
+    if (s_sendLog++ % 10 == 0 || sendDx != 0 || sendDy != 0) {
+        obs_log(LOG_INFO, "[%s] SEND: algo=%d movePre=(%.4f,%.4f) final=(%.4f,%.4f) "
+                         "accum=(%.4f,%.4f) accRem=(%.4f,%.4f) → SendInput(%+d,%+d) "
+                         "yUnlock=%d timeBased=%d targetFPS=%.0f firing=%d recoil=%d",
+                getLogPrefix(),
+                (int)config.algorithmType,
+                moveX, moveY, finalMoveX, finalMoveY,
+                accumX, accumY, subpixelAccumX_, subpixelAccumY_,
+                sendDx, sendDy,
+                yUnlockActive ? 1 : 0,
+                config.enableTimeBasedMovement ? 1 : 0,
+                config.targetFrameRate,
+                firing ? 1 : 0,
+                (config.autoRecoilControlEnabled && firing) ? 1 : 0);
+    } else {
+        // 每30帧即使 send=0 也打印一次心跳（确认 tick 没停）
+        static int s_heartbeatLog = 0;
+        if (s_heartbeatLog++ % 30 == 0) {
+            obs_log(LOG_INFO, "[%s] SEND_HEARTBEAT: algo=%d final=(%.4f,%.4f) accRem=(%.4f,%.4f) → SendInput(0,0) [no integer reached yet]",
+                    getLogPrefix(), (int)config.algorithmType,
+                    finalMoveX, finalMoveY, subpixelAccumX_, subpixelAccumY_);
+        }
+    }
+
+    moveMouse(sendDx, sendDy);
 }
 
 Detection* AbstractMouseController::selectTarget()
@@ -912,6 +1374,7 @@ Detection* AbstractMouseController::selectTarget()
         targetLockStartTime = std::chrono::steady_clock::now();
         smithPredictor.reset();
         immFilter.reset();
+        vbFilter.reset();
         oneEuroX_.reset();
         oneEuroY_.reset();
         oneEuroLockedTrackId_ = lockedTrackId;
@@ -1012,6 +1475,34 @@ float AbstractMouseController::calculateDynamicP(float distance)
     return std::max(config.pidPMin, std::min(config.pidPMax, p));
 }
 
+float AbstractMouseController::calculateAdaptiveD(float distance, float deltaError, float error, float& adaptiveFactor)
+{
+    // 归一化距离（0~1）：FOV内近距离小D，远距离大D
+    float normalizedDistance = distance / static_cast<float>(config.fovRadiusPixels);
+    normalizedDistance = std::clamp(normalizedDistance, 0.0f, 1.0f);
+
+    // 误差变化率阈值判断：抖动时抑制D，平稳时恢复D
+    float absDelta = std::abs(deltaError);
+    float absError = std::abs(error);
+
+    // 抖动因子：deltaError 相对误差较大时认为在振荡，压低D增益
+    float jitterFactor = 1.0f;
+    if (absError > 0.1f && absDelta > absError * 0.5f) {
+        jitterFactor = std::max(0.2f, 1.0f - (absDelta / absError - 0.5f));
+    }
+
+    // 距离因子：远距离稍大D，便于快速拉近；近距离小D避免超调
+    float distanceFactor = 0.5f + normalizedDistance * 0.5f;
+
+    // 合成自适应系数
+    adaptiveFactor = jitterFactor * distanceFactor;
+    adaptiveFactor = std::clamp(adaptiveFactor, 0.1f, 1.5f);
+
+    // D项输出 = Kd * deltaError * adaptiveFactor * dTermScale
+    // 注：derivativeFilterAlpha 已在调用侧通过 filteredDeltaError[X/Y] 做平滑
+    return config.pidD * deltaError * adaptiveFactor * config.dTermScale;
+}
+
 float AbstractMouseController::getCurrentPGain()
 {
     auto now = std::chrono::steady_clock::now();
@@ -1031,8 +1522,9 @@ void AbstractMouseController::resetPidState()
     filteredDeltaErrorY = 0.0f;
     integralX = 0.0f;
     integralY = 0.0f;
-    integralGainX = 0.0f;
-    integralGainY = 0.0f;
+    // integralGain 初始 0 会导致 I 项冷启动几十帧才爬升；给 0.5 初值保留"慢积分"特性但不至于无输出
+    integralGainX = 0.5f;
+    integralGainY = 0.5f;
     adaptivePGainX = 1.0f;
     adaptivePGainY = 1.0f;
     adaptiveIGainX = 1.0f;
@@ -1049,12 +1541,16 @@ void AbstractMouseController::resetPidState()
     lastOutputY = 0.0f;
     predictor.reset();
     immFilter.reset();
+    vbFilter.reset();
     oneEuroX_.reset();
     oneEuroY_.reset();
     oneEuroLockedTrackId_ = -1;
     smithPredictor.reset();
     adaptivePidX_.reset();
     adaptivePidY_.reset();
+    // 子像素累积器清零（跨目标/跨热键周期不保留余数，避免上一次的小余数污染新瞄准）
+    subpixelAccumX_ = 0.0f;
+    subpixelAccumY_ = 0.0f;
 }
 
 void AbstractMouseController::resetMotionState()

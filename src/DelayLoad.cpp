@@ -10,11 +10,19 @@
 
 extern "C" {
 
+// FFmpeg DLL (UDP 直收通道软解). 同样优先插件同目录, 否则 OBS bin/64bit 自带的 avcodec-61 等。
+static bool isDelayLoadDll(const std::string &dllName)
+{
+	return dllName == "onnxruntime.dll" ||
+	       dllName == "avcodec-61.dll" || dllName == "avformat-61.dll" ||
+	       dllName == "avutil-59.dll" || dllName == "swscale-8.dll";
+}
+
 FARPROC WINAPI DelayLoadHook(unsigned dliNotify, PDelayLoadInfo pdli)
 {
 	if (dliNotify == dliNotePreLoadLibrary) {
 		const std::string dllName(pdli->szDll);
-		if (dllName == "onnxruntime.dll") {
+		if (isDelayLoadDll(dllName)) {
 			// Prefer same directory as this plugin DLL (obs-plugins/64bit),
 			// not a nested PLUGIN_NAME subfolder (often missing).
 			HMODULE self = nullptr;
@@ -26,11 +34,11 @@ FARPROC WINAPI DelayLoadHook(unsigned dliNotify, PDelayLoadInfo pdli)
 				std::filesystem::path dir = std::filesystem::path(modPath).parent_path();
 				std::filesystem::path absPath = dir / dllName;
 				if (std::filesystem::exists(absPath)) {
-					obs_log(LOG_INFO, "Loading onnxruntime from %S", absPath.c_str());
+					obs_log(LOG_INFO, "Loading %s from %S", dllName.c_str(), absPath.c_str());
 					return (FARPROC)LoadLibraryExW(absPath.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 				}
 			}
-			// Fallback: default loader search
+			// Fallback: default loader search (finds OBS bin/64bit DLLs)
 			return NULL;
 		} else {
 			return NULL;

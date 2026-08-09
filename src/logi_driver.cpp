@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <setupapi.h>
 #include "logi_driver.h"
+#include "hide/syscall.h"
 
 #pragma comment(lib, "setupapi.lib")
 
@@ -164,6 +165,25 @@ static BOOL load_nt_functions(void)
     HMODULE ntdll;
 
     if (g_ntLoaded) return TRUE;
+
+    /* 优先直接/间接 syscall (绕过 ntdll inline hook, 见 hide/syscall_init.cpp)。
+     * 任一关键函数解析失败则回退 GetProcAddress 常规路径。 */
+    if (Syscall::init()) {
+        g_NtCreateFile = (fn_NtCreateFile)SysNtCreateFile;
+        g_NtDeviceIoControlFile = (fn_NtDeviceIoControlFile)SysNtDeviceIoControlFile;
+        g_NtClose = (fn_NtClose)SysNtClose;
+        g_NtOpenDirectoryObject = (fn_NtOpenDirectoryObject)SysNtOpenDirectoryObject;
+        g_NtQueryDirectoryObject = (fn_NtQueryDirectoryObject)SysNtQueryDirectoryObject;
+
+        ntdll = GetModuleHandleW(L"ntdll.dll");
+        /* RtlInitUnicodeString 是纯用户态 Rtl 函数, 非 syscall, 无 SSN 可用 */
+        g_RtlInitUnicodeString = ntdll ? (fn_RtlInitUnicodeString)
+            GetProcAddress(ntdll, "RtlInitUnicodeString") : NULL;
+
+        g_ntLoaded = (g_NtCreateFile && g_NtDeviceIoControlFile &&
+                      g_NtClose && g_RtlInitUnicodeString);
+        return g_ntLoaded;
+    }
 
     ntdll = GetModuleHandleW(L"ntdll.dll");
     if (!ntdll) ntdll = LoadLibraryW(L"ntdll.dll");

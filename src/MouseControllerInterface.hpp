@@ -5,6 +5,10 @@
 #include <string>
 #include <functional>
 #include <chrono>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include "models/Detection.h"
 
 enum class ControllerType {
@@ -163,11 +167,27 @@ struct MouseControllerConfig {
     float immMeasurementNoiseY = 1.0f;
     int immActiveModels = 3;
 
+    // 变分贝叶斯鲁棒滤波器（VB-AKF，Särkkä & Nummenmaa 2009）
+    // 测量噪声 R 在线估计（逆Gamma先验+定点迭代），含野值抑制。替代 DerivativePredictor/IMM
+    bool useVbFilter = false;
+    float vbProcessNoisePos = 0.1f;
+    float vbProcessNoiseVel = 0.5f;
+    float vbMeasurementNoiseX = 1.0f;
+    float vbMeasurementNoiseY = 1.0f;
+    float vbNu0 = 5.0f;             // 逆Gamma先验自由度
+    float vbRho = 0.97f;            // 遗忘因子
+    int vbIterations = 5;           // 变分迭代次数
+    float vbOutlierGate = 4.0f;     // 野值门限(σ倍数)，0=关
+
     // OneEuro 误差滤波（压检测/关联抖动，快移时自动提高截止频率）
     bool useOneEuroFilter = false;
     float oneEuroMinCutoff = 1.0f;
     float oneEuroBeta = 0.007f;
     float oneEuroDCutoff = 1.0f;
+
+    // 目标中心自适应EMA平滑（低分辨率/双机检测框跳帧专用）
+    // 默认关：平滑会引入固定滞后，目标转弯时准星拖着旧方向走。高分辨率本地推理必须关。
+    bool aimSmoothingEnabled = false;
 
     // SlewRate控制器（限速平滑趋近）
     bool slewRateEnabled = false;
@@ -283,6 +303,18 @@ public:
     // 设备连接状态(MAKCU 串口/Logi 驱动等硬件后端 override;
     // 系统 API 后端默认 true)
     virtual bool isDeviceConnected() const { return true; }
+
+    // 热键物理按键状态。默认查本机 (GetAsyncKeyState);
+    // MAKCU 等硬件控制器 override 为设备上报状态 (双机场景: 主机按键经固件上报到辅机).
+    virtual bool isPhysicalButtonPressed(int vk)
+    {
+#ifdef _WIN32
+        if (vk > 0) {
+            return (GetAsyncKeyState(vk) & 0x8000) != 0;
+        }
+#endif
+        return false;
+    }
 
     // 閻犱礁澧介悿鍝朓D闁轰胶澧楀畵渚€宕堕悙鍓佹闁告垼濮ら弳鐔兼晬閸垺鏆忓ù婊冩唉閻ㄧ喓鎷犻弴鐐茶閻熸瑥妫楃€垫煡鏁?
     virtual void setPidDataCallback(PidDataCallback callback) = 0;

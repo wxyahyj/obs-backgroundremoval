@@ -46,6 +46,7 @@
 #include "KalmanFilter.hpp"
 #include "CrosshairDetector.hpp"
 #include "models/DmlPreprocessor.h"
+#include "udp/UdpReceiver.h"
 
 // 目标重识别结构体
 struct LostTarget {
@@ -216,6 +217,8 @@ std::atomic<int> framesSubmitted{0};
 			int cropY = 0;
 			// Steady-clock ms for age gate (not wall clock)
 			int64_t timestampMs = 0;
+			// 帧采集时刻（steady ms）：检测年龄 = now - grabbedMs
+			int64_t grabbedMs = 0;
 			// Monotonic generation so consumers can detect "new result"
 			uint64_t generation = 0;
 		};
@@ -231,6 +234,11 @@ std::atomic<int> framesSubmitted{0};
 	std::chrono::high_resolution_clock::time_point lastFpsTime;
 	int fpsFrameCount;
 	double currentFps;
+	double inferenceFps = 0.0;         // 推理吞吐（帧/秒）
+	int64_t lastInferredCount = 0;     // 推理 fps 计数基准
+	int64_t lastDetectionAgeMs = 0;    // 检测年龄：采集→消费（含排队+推理+帧间隔）
+	// 帧采集时刻（steady ms），随四缓冲记录，推理结果消费时算检测年龄
+	int64_t inputGrabbedMs[BUFFER_COUNT] = {0};
 
 	gs_effect_t *solidEffect;
 
@@ -425,8 +433,10 @@ std::atomic<int> framesSubmitted{0};
 		bool smithPredictorEnabled;
 		float smithModelGain;
 		float smithModelTau;
-		bool smithAutoTau;
-		// IMM交互多模型滤波器参数
+			bool smithAutoTau;
+			// 目标中心EMA平滑开关
+			bool aimSmoothingEnabled;
+			// IMM交互多模型滤波器参数
 		bool immFilterEnabled;
 		float immProcessNoisePos;
 		float immProcessNoiseVel;
@@ -435,6 +445,16 @@ std::atomic<int> framesSubmitted{0};
 		float immMeasurementNoiseX;
 		float immMeasurementNoiseY;
 		int immActiveModels;
+		// 变分贝叶斯鲁棒滤波器参数
+		bool useVbFilter;
+		float vbProcessNoisePos;
+		float vbProcessNoiseVel;
+		float vbMeasurementNoiseX;
+		float vbMeasurementNoiseY;
+		float vbNu0;
+		float vbRho;
+		int vbIterations;
+		float vbOutlierGate;
 		// OneEuro 误差滤波
 		bool useOneEuroFilter;
 		float oneEuroMinCutoff;
@@ -537,6 +557,8 @@ useDerivativePredictor = false;
 			smithModelGain = 1.0f;
 			smithModelTau = 0.02f;
 			smithAutoTau = true;
+			// 目标中心EMA平滑开关
+			aimSmoothingEnabled = false;
 			// IMM交互多模型滤波器默认值
 			immFilterEnabled = false;
 			immProcessNoisePos = 0.1f;
@@ -546,6 +568,16 @@ useDerivativePredictor = false;
 			immMeasurementNoiseX = 1.0f;
 			immMeasurementNoiseY = 1.0f;
 			immActiveModels = 3;
+			// 变分贝叶斯鲁棒滤波器默认值
+			useVbFilter = false;
+			vbProcessNoisePos = 0.1f;
+			vbProcessNoiseVel = 0.5f;
+			vbMeasurementNoiseX = 1.0f;
+			vbMeasurementNoiseY = 1.0f;
+			vbNu0 = 5.0f;
+			vbRho = 0.97f;
+			vbIterations = 5;
+			vbOutlierGate = 4.0f;
 			// OneEuro 误差滤波默认值
 			useOneEuroFilter = false;
 			oneEuroMinCutoff = 1.0f;
@@ -673,10 +705,28 @@ float aimOutputMax;
 	int crosshairCropOffsetX = 0, crosshairCropOffsetY = 0;
 #endif
 
+	// === UDP 直收通道 (绕过 OBS 渲染管线, 直接喂推理队列) ===
+	bool udpEnabled = false;
+	int udpPort = 12345;
+	std::unique_ptr<UdpReceiver> udpReceiver;
+	int udpFrameWidth = 0, udpFrameHeight = 0; // 最近 UDP 解码帧尺寸
+
+	// 控制器检测同步门控: 只在推理结果 generation 变化 (或清空) 时 setDetectionsWithFrameSize,
+	// 让 controller 感知真实检测新鲜度 (双机低检测帧率下输出衰减防振荡).
+	uint64_t lastControllerDetectionsGeneration_ = 0;
+	bool controllerDetectionsEmpty_ = true;
+
 	~yolo_detector_filter() {
 		obs_log(LOG_INFO, "YOLO detector filter destructor called");
 	}
 };
+
+// UDP 直收 (实现见文件后半):
+bool publishFrameToInference(yolo_detector_filter *filter, const cv::Mat &frame, int width, int height,
+			     int frameCropX, int frameCropY, int frameCropWidth, int frameCropHeight);
+void startUdpReceiver(yolo_detector_filter *filter);
+void drawDetectionsOnFloatingFrame(yolo_detector_filter *filter);
+
 static void renderDetectionBoxes(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderKalmanPredictions(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
 static void renderKalmanTrajectories(yolo_detector_filter *filter, uint32_t frameWidth, uint32_t frameHeight);
@@ -724,6 +774,41 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 
 	obs_property_t *toggleBtn = obs_properties_add_button(props, "toggle_inference", obs_module_text("ToggleInference"), toggleInference);
 	obs_properties_add_text(props, "inference_status", obs_module_text("InferenceStatus"), OBS_TEXT_INFO);
+
+	// ---- UDP 直收通道 (绕过 OBS 渲染管线, 直接喂推理队列) ----
+	obs_properties_add_group(props, "udp_receiver_group", "UDP 直收通道", OBS_GROUP_NORMAL, nullptr);
+	obs_property_t *udpEnabledProp = obs_properties_add_bool(props, "udp_enabled", "启用 UDP 直收 (绕过 OBS 渲染)");
+	obs_property_set_long_description(udpEnabledProp,
+		"直接接收 UDP MPEG-TS(H.264) 画面喂给检测器, 不经过 OBS 渲染管线, 降低延迟。"
+		"发送端: OBS 设置 -> 输出 -> 输出模式[高级] -> 串流 -> 自定义: ffmpeg muxer settings 填 "
+		"udp://<本机IP>:<端口>?pkt_size=1316 (mpegts H.264)。开启后本滤镜的 OBS 画面输出被跳过, "
+		"画面显示在浮动窗口中。");
+	obs_property_t *udpPortProp = obs_properties_add_int(props, "udp_port", "UDP 端口", 1024, 65535, 1);
+	obs_property_set_long_description(udpPortProp, "监听端口, 发送端需推流到此端口");
+	obs_property_t *udpStatusProp = obs_properties_add_text(props, "udp_status", "接收状态", OBS_TEXT_INFO);
+	{
+		if (data) {
+			auto *ptr = static_cast<std::shared_ptr<yolo_detector_filter> *>(data);
+			if (ptr && *ptr) {
+				auto &tf = *ptr;
+				char status[256];
+				if (tf->udpEnabled && tf->udpReceiver && tf->udpReceiver->isRunning()) {
+					snprintf(status, sizeof(status), "运行中: %dx%d @ %.1f fps | 解码 %llu 帧",
+						 tf->udpReceiver->frameWidth(), tf->udpReceiver->frameHeight(),
+						 tf->udpReceiver->fps(),
+						 (unsigned long long)tf->udpReceiver->decodedFrames());
+				} else if (tf->udpEnabled) {
+					snprintf(status, sizeof(status), "未运行: %s",
+						 (tf->udpReceiver && !tf->udpReceiver->lastError().empty())
+							 ? tf->udpReceiver->lastError().c_str()
+							 : "未启动");
+				} else {
+					snprintf(status, sizeof(status), "已禁用");
+				}
+				obs_property_set_description(udpStatusProp, status);
+			}
+		}
+	}
 
 	obs_property_t *pageList = obs_properties_add_list(props, "settings_page", "设置页面", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(pageList, "模型与检测", 0);
@@ -902,6 +987,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *enableConfigProp = obs_properties_add_bool(props, propName, "启用此配置");
 		obs_property_set_long_description(enableConfigProp, "启用当前鼠标控制配置");
 
+		snprintf(propName, sizeof(propName), "aim_smoothing_enabled_%d", i);
+		obs_property_t *aimSmoothingProp = obs_properties_add_bool(props, propName, "目标中心平滑(低分辨率/双机)");
+		obs_property_set_long_description(aimSmoothingProp, "检测框每帧跳几十像素时才开。平滑有固定滞后，目标急转弯时准星会拖着旧方向走。高分辨率本地推理必须关(默认)");
+
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
 		obs_property_t *continuousAimProp = obs_properties_add_bool(props, propName, "启用持续自瞄");
 		obs_property_set_long_description(continuousAimProp, "启用后无需按住热键，自动持续瞄准目标");
@@ -910,6 +999,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_t *hotkeyList = obs_properties_add_list(props, propName, "热键", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(hotkeyList, "鼠标左键", VK_LBUTTON);
 		obs_property_list_add_int(hotkeyList, "鼠标右键", VK_RBUTTON);
+		obs_property_list_add_int(hotkeyList, "鼠标中键", VK_MBUTTON);
 		obs_property_list_add_int(hotkeyList, "侧键1", VK_XBUTTON1);
 		obs_property_list_add_int(hotkeyList, "侧键2", VK_XBUTTON2);
 		obs_property_list_add_int(hotkeyList, "空格", VK_SPACE);
@@ -928,8 +1018,9 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_property_list_add_int(controllerTypeList, "Windows API", 0);
 		obs_property_list_add_int(controllerTypeList, "MAKCU", 1);
 		obs_property_list_add_int(controllerTypeList, "罗技/雷蛇驱动", 2);
-		obs_property_list_add_int(controllerTypeList, "UU remote GvInput", 3);
-		obs_property_list_add_int(controllerTypeList, "NtUserSendInput", 5);
+			obs_property_list_add_int(controllerTypeList, "UU remote GvInput", 3);
+			obs_property_list_add_int(controllerTypeList, "TencInput", 4);
+			obs_property_list_add_int(controllerTypeList, "NtUserSendInput", 5);
 		obs_property_list_add_int(controllerTypeList, "NtUserInjectMouse", 6);
 		obs_property_list_add_int(controllerTypeList, "NtUserInjectPointer", 7);
         obs_property_set_long_description(controllerTypeList, "mouse control: WindowsAPI=system API, MAKCU=serial, Logi/Razer=kernel driver, GvInput=Netease WHQL HID, NtUserSendInput=direct NtUserSendInput call, NtUserInjectMouse=virtual pointer device injection, NtUserInjectPointer=low-level pointer injection");
@@ -1170,6 +1261,24 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		obs_properties_add_group(props, immPropName, "IMM交互多模型", OBS_GROUP_CHECKABLE, immProps);
 	}
 
+		// 变分贝叶斯鲁棒滤波器（VB-AKF，Särkkä & Nummenmaa 2009）
+	for (int i = 0; i < 5; i++) {
+		char vbPropName[64];
+		snprintf(vbPropName, sizeof(vbPropName), "vb_filter_group_%d", i);
+		obs_properties_t *vbProps = obs_properties_create();
+
+		snprintf(vbPropName, sizeof(vbPropName), "vb_rho_%d", i);
+		obs_property_t *vbRhoProp = obs_properties_add_float_slider(vbProps, vbPropName, "遗忘因子ρ", 0.5f, 0.999f, 0.001f);
+		obs_property_set_long_description(vbRhoProp, "R估计时变跟踪速度。越大→越平滑，越小→越跟手。默认0.97，一般不用改");
+
+		snprintf(vbPropName, sizeof(vbPropName), "vb_outlier_gate_%d", i);
+		obs_property_t *vbGateProp = obs_properties_add_float_slider(vbProps, vbPropName, "野值门限(σ倍数)", 0.0f, 10.0f, 0.1f);
+		obs_property_set_long_description(vbGateProp, "新息超过门限则Huber截断，检测框瞬跳不会打飞状态。0=关闭。默认4");
+
+		snprintf(vbPropName, sizeof(vbPropName), "vb_filter_group_%d", i);
+		obs_properties_add_group(props, vbPropName, "变分贝叶斯鲁棒滤波", OBS_GROUP_CHECKABLE, vbProps);
+	}
+
 		// 贝塞尔曲线移动分组
 	for (int i = 0; i < 5; i++) {
 		char propName[64];
@@ -1271,7 +1380,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "SlewRate (限速平滑趋近)", 3);
 	obs_property_list_add_int(algorithmTypeList, "自适应PID (位置式+自适应积分)", 4);
 	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含动态P增益、预测等功能；专业PID内置卡尔曼滤波和自适应增益；aim 控制器集成增量式PID+运动预测+柏林噪声；SlewRate 使用限速平滑趋近+阻尼制动；自适应PID采用位置式PID+自适应积分增益+积分死区+双重抗饱和");
-	obs_property_set_modified_callback(algorithmTypeList, onPageChanged);
+	obs_property_set_modified_callback(algorithmTypeList, onConfigChanged);
 	
 	// 专业PID参数组
 	obs_properties_add_group(props, "external_pid_group", "专业PID配置", OBS_GROUP_NORMAL, nullptr);
@@ -1321,7 +1430,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_set_long_description(aimKdProp, "aim 控制器微分增益，抑制超调");
 	obs_property_t *aimNoiseEnabledProp = obs_properties_add_bool(aimProps, "aim_noise_enabled", "启用人类化抖动");
 	obs_property_set_long_description(aimNoiseEnabledProp, "启用柏林噪声模拟人类操作的自然抖动");
-	obs_property_set_modified_callback(aimNoiseEnabledProp, onPageChanged);
+	obs_property_set_modified_callback(aimNoiseEnabledProp, onConfigChanged);
 	obs_property_t *aimNoiseAmpProp = obs_properties_add_float_slider(aimProps, "aim_noise_amplitude", "噪声幅度", 0.0, 20.0, 0.1);
 	obs_property_set_long_description(aimNoiseAmpProp, "柏林噪声幅度（像素），仅启用抖动时生效");
 	obs_property_t *aimPredWeightXProp = obs_properties_add_float_slider(aimProps, "aim_prediction_weight_x", "X轴预测权重", 0.0, 1.0, 0.01);
@@ -1538,6 +1647,8 @@ obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", O
 		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
 		snprintf(propName, sizeof(propName), "imm_filter_group_%d", i);
 		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
+		snprintf(propName, sizeof(propName), "vb_filter_group_%d", i);
+		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
 		snprintf(propName, sizeof(propName), "bezier_movement_group_%d", i);
 		p = obs_properties_get(props, propName); if (p) obs_property_set_visible(p, false);
 		snprintf(propName, sizeof(propName), "ghost_tracker_group_%d", i);
@@ -1658,6 +1769,9 @@ static void setPredictorPropertiesVisible(obs_properties_t *props, int configInd
 	// IMM 交互多模型（与导数/Smith 同属预测页 page==6，按当前配置槽显示）
 	snprintf(propName, sizeof(propName), "imm_filter_group_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// 变分贝叶斯鲁棒滤波（与 IMM 同页）
+	snprintf(propName, sizeof(propName), "vb_filter_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
 // 设置鼠标控制-扳机页面的控件可见性
@@ -1710,13 +1824,6 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 		obs_property_set_visible(obs_properties_get(props, propName), showLogi);
 	}
 
-	// 动态PID参数只在algorithm == 3时显示
-	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
-
 	// 专业PID参数只在algorithm == 1时显示
 	obs_property_set_visible(obs_properties_get(props, "external_pid_group"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_kp_x"), page == 3 && algorithm == 1);
@@ -1738,24 +1845,24 @@ static bool onConfigChanged(obs_properties_t *props, obs_property_t *property, o
 	obs_property_set_visible(obs_properties_get(props, "external_ki_deadband"), page == 3 && algorithm == 1);
 
 	// aim 控制器参数只在 algorithm == 2 时显示
-	// 子属性在子容器中，组可见时自动跟随；仅 aim_noise_amplitude 需根据开关单独控制
 	{
 		bool aimVis = (page == 3 && algorithm == 2);
 		bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
 		obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVis);
 		obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVis);
 	}
-// SlewRate控制器参数只在 algorithm == 3 时显示
-		{
-			bool slewVis = (page == 3 && algorithm == 3);
-			obs_property_set_visible(obs_properties_get(props, "slew_rate_controller_group"), slewVis);
-		}
 
-		// 自适应PID控制器参数只在 algorithm == 4 时显示
-		{
-			bool adaptiveVis = (page == 3 && algorithm == 4);
-			obs_property_set_visible(obs_properties_get(props, "adaptive_pid_controller_group"), adaptiveVis);
-		}
+	// SlewRate控制器参数只在 algorithm == 3 时显示
+	{
+		bool slewVis = (page == 3 && algorithm == 3);
+		obs_property_set_visible(obs_properties_get(props, "slew_rate_controller_group"), slewVis);
+	}
+
+	// 自适应PID控制器参数只在 algorithm == 4 时显示
+	{
+		bool adaptiveVis = (page == 3 && algorithm == 4);
+		obs_property_set_visible(obs_properties_get(props, "adaptive_pid_controller_group"), adaptiveVis);
+	}
 
 		obs_property_set_visible(obs_properties_get(props, "mouse_config_select"), page == 2 || page == 3 || page == 4 || page == 6 || page == 7);
 	obs_property_set_visible(obs_properties_get(props, "test_makcu_connection"), page == 2);
@@ -1881,13 +1988,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 		obs_property_set_visible(obs_properties_get(props, propName), showLogi);
 	}
 
-	// 动态PID参数只在algorithm == 3时显示
-	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 3);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 3);
-
 	// 专业PID参数只在algorithm == 1时显示
 	obs_property_set_visible(obs_properties_get(props, "external_pid_group"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_kp_x"), page == 3 && algorithm == 1);
@@ -1900,15 +2000,22 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	obs_property_set_visible(obs_properties_get(props, "external_predict_y"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_rate_x"), page == 3 && algorithm == 1);
 	obs_property_set_visible(obs_properties_get(props, "external_rate_y"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_mode"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kp_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_kd_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_output_limit"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_rate"), page == 3 && algorithm == 1);
+	obs_property_set_visible(obs_properties_get(props, "external_ki_deadband"), page == 3 && algorithm == 1);
 
 	// aim 控制器参数只在 algorithm == 2 时显示
-	// 子属性在子容器中，组可见时自动跟随；仅 aim_noise_amplitude 需根据开关单独控制
 	{
 		bool aimVis = (page == 3 && algorithm == 2);
 		bool aimNoiseVis = aimVis && obs_data_get_bool(settings, "aim_noise_enabled");
 		obs_property_set_visible(obs_properties_get(props, "aim_controller_group"), aimVis);
 		obs_property_set_visible(obs_properties_get(props, "aim_noise_amplitude"), aimNoiseVis);
 	}
+
 	// SlewRate控制器参数只在 algorithm == 3 时显示
 	{
 		bool slewVis = (page == 3 && algorithm == 3);
@@ -1974,21 +2081,6 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 	// 页面3: 鼠标控制 - PID参数（整合所有控制算法）
 	// 算法选择（在页面3始终显示）
 	obs_property_set_visible(obs_properties_get(props, "algorithm_type_global"), page == 3);
-	
-	// 动态PID参数组（选择1时显示，因为现在只有两种算法：AdvancedPID=0, DynamicPID=1）
-	obs_property_set_visible(obs_properties_get(props, "dynamic_pid_group"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kp"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_ki"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_kd"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_target_threshold"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_speed_multiplier"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_min_coefficient"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_max_coefficient"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_sharpness"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_transition_midpoint"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_min_data_points"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_error_tolerance"), page == 3 && algorithm == 1);
-	obs_property_set_visible(obs_properties_get(props, "dynamic_smoothing_factor"), page == 3 && algorithm == 1);
 
 	// 页面6: 预测与滤波（整合预测器、贝塞尔）
 	obs_property_set_visible(obs_properties_get(props, "predictor_group"), page == 6);
@@ -2043,6 +2135,9 @@ static bool onPageChanged(obs_properties_t *props, obs_property_t *property, obs
 void yolo_detector_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "model_path", "");
+	// UDP 直收通道
+	obs_data_set_default_bool(settings, "udp_enabled", false);
+	obs_data_set_default_int(settings, "udp_port", 12345);
 	obs_data_set_default_int(settings, "model_version", static_cast<int>(IYoloModel::Version::YOLOv8));
 	obs_data_set_default_string(settings, "use_gpu", USEGPU_DML);
 #ifdef _WIN32
@@ -2142,6 +2237,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		char propName[64];
 
 		snprintf(propName, sizeof(propName), "enable_config_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "aim_smoothing_enabled_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
 
 		snprintf(propName, sizeof(propName), "hotkey_%d", i);
@@ -2278,6 +2375,25 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_double(settings, propName, 1.0);
 		snprintf(propName, sizeof(propName), "imm_measurement_noise_y_%d", i);
 		obs_data_set_default_double(settings, propName, 1.0);
+		// 变分贝叶斯鲁棒滤波默认值（键名必须带 _%d，与 UI/读取一致）
+		snprintf(propName, sizeof(propName), "vb_filter_group_%d", i);
+		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "vb_process_noise_pos_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
+		snprintf(propName, sizeof(propName), "vb_process_noise_vel_%d", i);
+		obs_data_set_default_double(settings, propName, 0.5);
+		snprintf(propName, sizeof(propName), "vb_measurement_noise_x_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "vb_measurement_noise_y_%d", i);
+		obs_data_set_default_double(settings, propName, 1.0);
+		snprintf(propName, sizeof(propName), "vb_nu0_%d", i);
+		obs_data_set_default_double(settings, propName, 5.0);
+		snprintf(propName, sizeof(propName), "vb_rho_%d", i);
+		obs_data_set_default_double(settings, propName, 0.97);
+		snprintf(propName, sizeof(propName), "vb_iterations_%d", i);
+		obs_data_set_default_int(settings, propName, 5);
+		snprintf(propName, sizeof(propName), "vb_outlier_gate_%d", i);
+		obs_data_set_default_double(settings, propName, 4.0);
 		// OneEuro 默认值
 		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
@@ -2742,6 +2858,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 
 		snprintf(propName, sizeof(propName), "enable_config_%d", i);
 		tf->mouseConfigs[i].enabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "aim_smoothing_enabled_%d", i);
+		tf->mouseConfigs[i].aimSmoothingEnabled = obs_data_get_bool(settings, propName);
 
 		snprintf(propName, sizeof(propName), "hotkey_%d", i);
 		tf->mouseConfigs[i].hotkey = (int)obs_data_get_int(settings, propName);
@@ -2882,6 +3000,25 @@ tf->mouseConfigs[i].smithAutoTau = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "imm_measurement_noise_y_%d", i);
 		tf->mouseConfigs[i].immMeasurementNoiseY = (float)obs_data_get_double(settings, propName);
 		tf->mouseConfigs[i].immActiveModels = 3;
+		// 变分贝叶斯鲁棒滤波器参数
+		snprintf(propName, sizeof(propName), "vb_filter_group_%d", i);
+		tf->mouseConfigs[i].useVbFilter = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_process_noise_pos_%d", i);
+		tf->mouseConfigs[i].vbProcessNoisePos = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_process_noise_vel_%d", i);
+		tf->mouseConfigs[i].vbProcessNoiseVel = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_measurement_noise_x_%d", i);
+		tf->mouseConfigs[i].vbMeasurementNoiseX = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_measurement_noise_y_%d", i);
+		tf->mouseConfigs[i].vbMeasurementNoiseY = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_nu0_%d", i);
+		tf->mouseConfigs[i].vbNu0 = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_rho_%d", i);
+		tf->mouseConfigs[i].vbRho = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_iterations_%d", i);
+		tf->mouseConfigs[i].vbIterations = (int)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "vb_outlier_gate_%d", i);
+		tf->mouseConfigs[i].vbOutlierGate = (float)obs_data_get_double(settings, propName);
 		// OneEuro 误差滤波
 		snprintf(propName, sizeof(propName), "use_one_euro_filter_%d", i);
 		tf->mouseConfigs[i].useOneEuroFilter = obs_data_get_bool(settings, propName);
@@ -3050,6 +3187,11 @@ tf->aimOutputMax = (float)obs_data_get_double(settings, "aim_output_max");
 	}
 
 #endif
+
+	// UDP 直收通道设置 (变更时启停接收线程)
+	tf->udpEnabled = obs_data_get_bool(settings, "udp_enabled");
+	tf->udpPort = (int)obs_data_get_int(settings, "udp_port");
+	startUdpReceiver(tf.get());
 
 	tf->isDisabled = false;
 }
@@ -3763,12 +3905,15 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 		cv::Scalar textColor(255, 255, 255);
 		cv::Scalar shadowColor(0, 0, 0);
 		
-		// 第一行：FPS和推理时间
+		// 第一行：FPS和推理时间 (UDP 直收模式下显示实际解码帧率)
 		char buf[256];
-		snprintf(buf, sizeof(buf), "FPS: %.1f | Inference: %.1fms | Detections: %zu",
-			filter->currentFps,
-			filter->avgInferenceTimeMs,
-			filter->detections.size());
+		double displayFps = filter->currentFps;
+		if (filter->udpEnabled && filter->udpReceiver && filter->udpReceiver->isRunning())
+			displayFps = filter->udpReceiver->fps();
+		// 检测年龄(采集→消费)是目标位置真实滞后量，Smith 自动τ/延迟补偿的依据
+		snprintf(buf, sizeof(buf), "FPS: %.1f | InfFPS: %.1f | Infer: %.1fms | Age: %lldms | Dets: %zu",
+			displayFps, filter->inferenceFps, filter->avgInferenceTimeMs,
+			(long long)filter->lastDetectionAgeMs, filter->detections.size());
 		// 绘制阴影提高可读性
 		cv::putText(filter->floatingWindowFrame, buf, 
 			cv::Point(11, textY + 1), cv::FONT_HERSHEY_SIMPLEX, fontScale, shadowColor, thickness + 1);
@@ -3800,6 +3945,56 @@ static void updateFloatingWindowFrame(yolo_detector_filter *filter, const cv::Ma
 
 #endif
 }
+
+// UDP 直收模式: 把最新 detections 叠加到浮窗帧上 (浮窗画面来自 UDP, 不进 OBS 场景)。
+// 在 video_tick (OBS 线程) 调用; 与接收线程 updateFloatingWindowFrame 同享 mutex。
+#ifdef _WIN32
+void drawDetectionsOnFloatingFrame(yolo_detector_filter *filter)
+{
+	std::vector<Detection> detectionsCopy;
+	{
+		std::lock_guard<std::mutex> lock(filter->detectionsMutex);
+		if (filter->detections.empty()) {
+			return;
+		}
+		detectionsCopy = filter->detections;
+	}
+
+	std::lock_guard<std::mutex> lock(filter->floatingWindowMutex);
+	if (filter->floatingWindowFrame.empty()) {
+		return;
+	}
+
+	const int frameWidth = filter->floatingWindowFrame.cols;
+	const int frameHeight = filter->floatingWindowFrame.rows;
+	int lineWidth = filter->bboxLineWidth > 0 ? std::max(1, filter->bboxLineWidth) : 2;
+	float r = ((filter->bboxColor >> 16) & 0xFF) / 255.0f;
+	float g = ((filter->bboxColor >> 8) & 0xFF) / 255.0f;
+	float b = (filter->bboxColor & 0xFF) / 255.0f;
+	cv::Scalar bboxColor(b * 255, g * 255, r * 255, 255);
+
+	for (const auto &det : detectionsCopy) {
+		int x = static_cast<int>(det.x * frameWidth);
+		int y = static_cast<int>(det.y * frameHeight);
+		int w = static_cast<int>(det.width * frameWidth);
+		int h = static_cast<int>(det.height * frameHeight);
+		cv::rectangle(filter->floatingWindowFrame, cv::Point(x, y),
+			      cv::Point(x + w, y + h), bboxColor, lineWidth);
+		if (filter->showTrackIdInFloatingWindow) {
+			std::string idText = "ID:" + std::to_string(det.trackId);
+			cv::putText(filter->floatingWindowFrame, idText, cv::Point(x + 4, y + 18),
+				    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
+		}
+		if (filter->showLabel || filter->showConfidence) {
+			char labelText[64];
+			snprintf(labelText, sizeof(labelText), "%d: %.2f",
+				 det.classId, det.confidence);
+			cv::putText(filter->floatingWindowFrame, labelText, cv::Point(x + 4, y + 34),
+				    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+		}
+	}
+}
+#endif
 
 // ============================================================
 // PID 调试面板 - 增强版绘制函数
@@ -4547,6 +4742,118 @@ void releaseDetectionBuffer(yolo_detector_filter *filter, std::vector<Detection>
 	}
 }
 
+// ============================================================================
+// 四缓冲无锁帧提交 (公共): OBS 画面捕获 (video_render) 与 UDP 解码回调共用。
+// Fill-then-publish: 锁内写帧, 再置 state=1 并 notify 推理线程。
+// ============================================================================
+bool publishFrameToInference(yolo_detector_filter *filter, const cv::Mat &frame,
+			     int width, int height,
+			     int frameCropX, int frameCropY,
+			     int frameCropWidth, int frameCropHeight)
+{
+	int currentWrite = filter->inputWriteIdx.load(std::memory_order_relaxed);
+	bool submitted = false;
+
+	// Prefer free slots; if none, overwrite oldest pending (state=1).
+	int freeIdx = -1;
+	int pendingIdx = -1;
+	for (int i = 0; i < filter->BUFFER_COUNT; i++) {
+		int checkIdx = (currentWrite + i) % filter->BUFFER_COUNT;
+		uint8_t st = filter->bufferState[checkIdx].load(std::memory_order_acquire);
+		if (st == 0 && freeIdx < 0) freeIdx = checkIdx;
+		else if (st == 1 && pendingIdx < 0) pendingIdx = checkIdx;
+	}
+	int targetIdx = (freeIdx >= 0) ? freeIdx : pendingIdx;
+	if (targetIdx >= 0) {
+		if (freeIdx < 0) {
+			// If overwriting pending, count as drop of old frame
+			uint8_t exp = 1;
+			if (!filter->bufferState[targetIdx].compare_exchange_strong(
+				exp, 0, std::memory_order_acq_rel)) {
+				targetIdx = -1; // lost race, skip this frame
+			} else {
+				filter->framesDropped.fetch_add(1, std::memory_order_relaxed);
+			}
+		} else {
+			uint8_t exp = 0;
+			if (!filter->bufferState[targetIdx].compare_exchange_strong(
+				exp, 0, std::memory_order_acq_rel)) {
+				// race: someone else grabbed it; leave for next frame
+				targetIdx = -1;
+			}
+		}
+	}
+	if (targetIdx >= 0) {
+		{
+			std::lock_guard<std::mutex> lock(filter->inputFramesMutex);
+			if (filter->inputFrames[targetIdx].rows != height ||
+			    filter->inputFrames[targetIdx].cols != width) {
+				filter->inputFrames[targetIdx] = cv::Mat(height, width, CV_8UC4);
+			}
+			frame.copyTo(filter->inputFrames[targetIdx]);
+			filter->inputFrameWidths[targetIdx] = width;
+			filter->inputFrameHeights[targetIdx] = height;
+			filter->inputCropX[targetIdx] = frameCropX;
+			filter->inputCropY[targetIdx] = frameCropY;
+			filter->inputCropWidth[targetIdx] = frameCropWidth;
+			filter->inputCropHeight[targetIdx] = frameCropHeight;
+			// 采集时刻（steady ms）：推理结果消费时算检测年龄用
+			filter->inputGrabbedMs[targetIdx] = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count();
+		}
+		// Publish only after data is fully written
+		filter->bufferState[targetIdx].store(1, std::memory_order_release);
+		filter->inputWriteIdx.store((targetIdx + 1) % filter->BUFFER_COUNT, std::memory_order_release);
+		filter->framesSubmitted.fetch_add(1, std::memory_order_relaxed);
+		filter->frameReadyCv.notify_one();
+		submitted = true;
+	}
+
+	if (!submitted) {
+		filter->framesDropped.fetch_add(1, std::memory_order_relaxed);
+	}
+	return submitted;
+}
+
+// ============================================================================
+// UDP 直收通道启停 (滤镜设置变化时调用)。
+// 解码回调运行在接收线程: 整帧 BGRA 直接进推理四缓冲, 顺带更新浮窗基础帧。
+// ============================================================================
+void startUdpReceiver(yolo_detector_filter *filter)
+{
+	bool want = filter->udpEnabled;
+	bool running = filter->udpReceiver && filter->udpReceiver->isRunning();
+
+	if (want && !running) {
+		filter->udpReceiver = std::make_unique<UdpReceiver>();
+		bool ok = filter->udpReceiver->start(filter->udpPort, [filter](const cv::Mat &bgra) {
+			if (!filter->udpEnabled) {
+				return; // 已停用, 丢弃残留帧
+			}
+			int w = bgra.cols;
+			int h = bgra.rows;
+			filter->udpFrameWidth = w;
+			filter->udpFrameHeight = h;
+#ifdef _WIN32
+			if (filter->showFloatingWindow) {
+				// 浮窗基础帧 (检测框由 video_tick 叠加绘制)
+				updateFloatingWindowFrame(filter, bgra);
+				// UDP 模式 video_render 提前 return, 需在此主动触发浮窗重绘
+				renderFloatingWindow(filter);
+			}
+#endif
+			// UDP 帧无 region 裁切概念: 全帧交给推理
+			publishFrameToInference(filter, bgra, w, h, 0, 0, w, h);
+		});
+		if (!ok) {
+			filter->udpReceiver.reset();
+		}
+	} else if (!want && running) {
+		filter->udpReceiver->stop();
+		filter->udpReceiver.reset();
+	}
+}
+
 void inferenceThreadWorker(yolo_detector_filter *filter)
 {
 	obs_log(LOG_INFO, "[YOLO Detector] Async inference thread started (4-buffer mode)");
@@ -4620,6 +4927,7 @@ int inferenceFrameCounter = 0;
 		int fullWidth, fullHeight;
 		int cropX, cropY;
 		int cropWidth, cropHeight;
+		int64_t frameGrabbedMs = 0;   // 该帧采集时刻（检测年龄用）
 		{
 			std::lock_guard<std::mutex> lock(filter->inputFramesMutex);
 			frame = filter->inputFrames[readIdx];
@@ -4629,6 +4937,7 @@ int inferenceFrameCounter = 0;
 			cropY = filter->inputCropY[readIdx];
 			cropWidth = filter->inputCropWidth[readIdx];
 			cropHeight = filter->inputCropHeight[readIdx];
+			frameGrabbedMs = filter->inputGrabbedMs[readIdx];
 		}
 
 		// 安全检查：确保帧数据有效
@@ -4970,6 +5279,7 @@ if (modelSnap) {
 				const auto nowSteady = std::chrono::steady_clock::now();
 				result->timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
 					nowSteady.time_since_epoch()).count();
+				result->grabbedMs = frameGrabbedMs;
 				result->generation = filter->resultGeneration_.fetch_add(1, std::memory_order_relaxed) + 1;
 				
 				std::lock_guard<std::mutex> resultLock(filter->inferenceResultMutex_);
@@ -5530,6 +5840,12 @@ void yolo_detector_filter_destroy(void *data)
 	// Mark as disabled to prevent further processing
 	tf->isDisabled = true;
 
+	// Stop UDP receiver first: 回调线程会并发提交帧, 必须先停再等推理线程
+	if (tf->udpReceiver) {
+		tf->udpReceiver->stop();
+		tf->udpReceiver.reset();
+	}
+
 	// Stop inference thread
 	tf->inferenceRunning = false;
 	if (tf->inferenceThread.joinable()) {
@@ -5629,6 +5945,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 	if (elapsed >= 1000) {
 		tf->currentFps = (double)tf->fpsFrameCount * 1000.0 / (double)elapsed;
 		tf->fpsFrameCount = 0;
+		// 推理吞吐：每秒实际完成的推理数（区别于画面接收帧率）
+		int64_t inferredNow = tf->framesInferred.load(std::memory_order_relaxed);
+		tf->inferenceFps = (double)(inferredNow - tf->lastInferredCount) * 1000.0 / (double)elapsed;
+		tf->lastInferredCount = inferredNow;
 		tf->lastFpsTime = now;
 	}
 
@@ -5645,6 +5965,10 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 			const int64_t ageMs = nowMs - inferenceResult->timestampMs;
 			if (ageMs >= 0 && ageMs <= yolo_detector_filter::kMaxResultAgeMs) {
 				resultValid = true;
+				// 检测年龄 = 帧采集时刻 → 当前时刻（含排队+推理+帧间隔），
+				// 比 avgInferenceTimeMs 更真实地反映目标位置滞后量
+				if (inferenceResult->grabbedMs > 0)
+					tf->lastDetectionAgeMs = nowMs - inferenceResult->grabbedMs;
 				// Always refresh detections from the latest valid result (same gen is OK —
 				// controller needs current boxes each tick). Age gate handles staleness.
 				{
@@ -5679,6 +6003,15 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 				tf->detections.clear();
 			}
 		}
+
+#ifdef _WIN32
+		// UDP 直收模式: 把最新检测框叠加到浮窗帧 (画面不进 OBS 场景)
+		if (tf->udpEnabled && tf->udpReceiver && tf->udpReceiver->isRunning() &&
+		    tf->showFloatingWindow && tf->showDetectionResults) {
+			drawDetectionsOnFloatingFrame(tf.get());
+			renderFloatingWindow(tf.get()); // 触发浮窗重绘显示检测框
+		}
+#endif
 
 #ifdef _WIN32
 	// === 准星检测：吸管取色 + HSV检测管线 ===
@@ -5784,7 +6117,29 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 					return i;
 				}
 				// 热键模式：检查热键是否按下
-				if ((GetAsyncKeyState(tf->mouseConfigs[i].hotkey) & 0x8000) != 0) {
+				// MAKCU 配置: 走硬件上报按键 (双机场景主机按键经固件上报), 未创建则先创建;
+				// 其他配置: 本机 GetAsyncKeyState (单机兼容).
+				ControllerType cfgType = static_cast<ControllerType>(tf->mouseConfigs[i].controllerType);
+				bool hotkeyDown = false;
+				if (tf->mouseController &&
+				    tf->mouseController->getControllerType() == cfgType) {
+					hotkeyDown = tf->mouseController->isPhysicalButtonPressed(tf->mouseConfigs[i].hotkey);
+				} else if (cfgType == ControllerType::MAKCU) {
+					obs_log(LOG_INFO, "[YOLO Filter] getActiveConfig: MAKCU 配置#%d 预创建 (port=%s baud=%d hotkey=%d)",
+						i, tf->mouseConfigs[i].makcuPort.c_str(),
+						tf->mouseConfigs[i].makcuBaudRate, tf->mouseConfigs[i].hotkey);
+					tf->mouseController = MouseControllerFactory::createController(
+						cfgType, tf->mouseConfigs[i].makcuPort,
+						tf->mouseConfigs[i].makcuBaudRate, tf->mouseConfigs[i].logiDriverType);
+					setupPidDataCallback(tf.get());
+					if (tf->mouseController &&
+					    tf->mouseController->getControllerType() == cfgType) {
+						hotkeyDown = tf->mouseController->isPhysicalButtonPressed(tf->mouseConfigs[i].hotkey);
+					}
+				} else {
+					hotkeyDown = (GetAsyncKeyState(tf->mouseConfigs[i].hotkey) & 0x8000) != 0;
+				}
+				if (hotkeyDown) {
 					return i;
 				}
 			}
@@ -5872,6 +6227,8 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.smithModelGain = cfg.smithModelGain;
 		mcConfig.smithModelTau = cfg.smithModelTau;
 		mcConfig.smithAutoTau = cfg.smithAutoTau;
+		// 目标中心EMA平滑开关
+		mcConfig.aimSmoothingEnabled = cfg.aimSmoothingEnabled;
 		// IMM交互多模型滤波器参数
 		mcConfig.immFilterEnabled = cfg.immFilterEnabled;
 		mcConfig.immProcessNoisePos = cfg.immProcessNoisePos;
@@ -5881,6 +6238,16 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.immMeasurementNoiseX = cfg.immMeasurementNoiseX;
 		mcConfig.immMeasurementNoiseY = cfg.immMeasurementNoiseY;
 		mcConfig.immActiveModels = cfg.immActiveModels;
+		// 变分贝叶斯鲁棒滤波器参数
+		mcConfig.useVbFilter = cfg.useVbFilter;
+		mcConfig.vbProcessNoisePos = cfg.vbProcessNoisePos;
+		mcConfig.vbProcessNoiseVel = cfg.vbProcessNoiseVel;
+		mcConfig.vbMeasurementNoiseX = cfg.vbMeasurementNoiseX;
+		mcConfig.vbMeasurementNoiseY = cfg.vbMeasurementNoiseY;
+		mcConfig.vbNu0 = cfg.vbNu0;
+		mcConfig.vbRho = cfg.vbRho;
+		mcConfig.vbIterations = cfg.vbIterations;
+		mcConfig.vbOutlierGate = cfg.vbOutlierGate;
 		// OneEuro 误差滤波
 		mcConfig.useOneEuroFilter = cfg.useOneEuroFilter;
 		mcConfig.oneEuroMinCutoff = cfg.oneEuroMinCutoff;
@@ -6081,8 +6448,20 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropX = tf->cropOffsetX;
 						cropY = tf->cropOffsetY;
 					}
-					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-					tf->mouseController->setInferenceTimeMs((float)tf->avgInferenceTimeMs);
+					// 只在推理结果更新 (generation 变化) 或清空时同步检测,
+					// 让 controller 感知真实检测新鲜度 (双机低检测帧率下输出衰减防振荡)
+					{
+						bool detsEmpty = detectionsCopy.empty();
+						uint64_t curGen = tf->lastConsumedGeneration_;
+						if (curGen != tf->lastControllerDetectionsGeneration_ ||
+						    (detsEmpty && !tf->controllerDetectionsEmpty_)) {
+							tf->lastControllerDetectionsGeneration_ = curGen;
+							tf->controllerDetectionsEmpty_ = detsEmpty;
+							tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+						}
+					}
+					// 检测年龄(采集→消费)才是目标位置真实滞后量；avgInferenceTimeMs 不含排队+帧间隔
+					tf->mouseController->setInferenceTimeMs((float)tf->lastDetectionAgeMs);
 					// 传递准星位置作为瞄准起点（后坐力补偿）
 					if (tf->crosshairDetected) {
 						tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
@@ -6124,8 +6503,20 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 						cropX = tf->cropOffsetX;
 						cropY = tf->cropOffsetY;
 					}
-					tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
-					tf->mouseController->setInferenceTimeMs((float)tf->avgInferenceTimeMs);
+					// 只在推理结果更新 (generation 变化) 或清空时同步检测,
+					// 让 controller 感知真实检测新鲜度 (双机低检测帧率下输出衰减防振荡)
+					{
+						bool detsEmpty = detectionsCopy.empty();
+						uint64_t curGen = tf->lastConsumedGeneration_;
+						if (curGen != tf->lastControllerDetectionsGeneration_ ||
+						    (detsEmpty && !tf->controllerDetectionsEmpty_)) {
+							tf->lastControllerDetectionsGeneration_ = curGen;
+							tf->controllerDetectionsEmpty_ = detsEmpty;
+							tf->mouseController->setDetectionsWithFrameSize(detectionsCopy, frameWidth, frameHeight, cropX, cropY);
+						}
+					}
+					// 检测年龄(采集→消费)才是目标位置真实滞后量；avgInferenceTimeMs 不含排队+帧间隔
+					tf->mouseController->setInferenceTimeMs((float)tf->lastDetectionAgeMs);
 					// 传递准星位置作为瞄准起点（后坐力补偿）
 					if (tf->crosshairDetected) {
 						tf->mouseController->setAimOrigin(tf->crosshairPixelX, tf->crosshairPixelY);
@@ -6163,6 +6554,15 @@ void yolo_detector_filter_video_render(void *data, gs_effect_t *_effect)
 	std::shared_ptr<yolo_detector_filter> tf = *ptr;
 	if (!tf || tf->isDisabled) {
 		if (tf && tf->source) {
+			obs_source_skip_video_filter(tf->source);
+		}
+		return;
+	}
+
+	// UDP 直收模式: 画面由 UDP 解码回调注入推理队列 (绕过 OBS 渲染管线),
+	// 这里跳过 OBS 场景输出, 不捕获 target 帧, 推理完全由 UDP 帧驱动。
+	if (tf->udpEnabled && tf->udpReceiver && tf->udpReceiver->isRunning()) {
+		if (tf->source) {
 			obs_source_skip_video_filter(tf->source);
 		}
 		return;
@@ -6245,14 +6645,9 @@ gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 						// 直接使用映射数据，避免克隆
 						cv::Mat temp(height, width, CV_8UC4, video_data, linesize);
 						
-						// === 四缓冲区无锁帧提交 ===
-						int currentWrite = tf->inputWriteIdx.load(std::memory_order_relaxed);
-						bool submitted = false;
-
-						// 计算裁切区域信息
+// 计算裁切区域信息
 						int frameCropX = 0, frameCropY = 0;
 						int frameCropWidth = static_cast<int>(width), frameCropHeight = static_cast<int>(height);
-						
 						if (tf->useRegion) {
 							frameCropX = std::max(0, tf->regionX);
 							frameCropY = std::max(0, tf->regionY);
@@ -6265,63 +6660,10 @@ gs_texture_t *tex = gs_texrender_get_texture(tf->texrender);
 								frameCropHeight = height;
 							}
 						}
-
-// Fill-then-publish: write frame under lock, THEN mark state=1.
-							// Prefer free slots; if none, overwrite oldest pending (state=1).
-							int freeIdx = -1;
-							int pendingIdx = -1;
-							for (int i = 0; i < tf->BUFFER_COUNT; i++) {
-								int checkIdx = (currentWrite + i) % tf->BUFFER_COUNT;
-								uint8_t st = tf->bufferState[checkIdx].load(std::memory_order_acquire);
-								if (st == 0 && freeIdx < 0) freeIdx = checkIdx;
-								else if (st == 1 && pendingIdx < 0) pendingIdx = checkIdx;
-							}
-							int targetIdx = (freeIdx >= 0) ? freeIdx : pendingIdx;
-							if (targetIdx >= 0) {
-								// If overwriting pending, count as drop of old frame
-								if (freeIdx < 0) {
-									uint8_t exp = 1;
-									if (!tf->bufferState[targetIdx].compare_exchange_strong(
-										exp, 0, std::memory_order_acq_rel)) {
-										targetIdx = -1; // lost race, skip this frame
-									} else {
-										tf->framesDropped.fetch_add(1, std::memory_order_relaxed);
-									}
-								} else {
-									uint8_t exp = 0;
-									if (!tf->bufferState[targetIdx].compare_exchange_strong(
-										exp, 0, std::memory_order_acq_rel)) {
-										// race: someone else grabbed it; leave for next frame
-										targetIdx = -1;
-									}
-								}
-							}
-							if (targetIdx >= 0) {
-								{
-									std::lock_guard<std::mutex> lock(tf->inputFramesMutex);
-									if (tf->inputFrames[targetIdx].rows != height ||
-										tf->inputFrames[targetIdx].cols != width) {
-										tf->inputFrames[targetIdx] = cv::Mat(height, width, CV_8UC4);
-									}
-									temp.copyTo(tf->inputFrames[targetIdx]);
-									tf->inputFrameWidths[targetIdx] = width;
-									tf->inputFrameHeights[targetIdx] = height;
-									tf->inputCropX[targetIdx] = frameCropX;
-									tf->inputCropY[targetIdx] = frameCropY;
-									tf->inputCropWidth[targetIdx] = frameCropWidth;
-									tf->inputCropHeight[targetIdx] = frameCropHeight;
-								}
-								// Publish only after data is fully written
-								tf->bufferState[targetIdx].store(1, std::memory_order_release);
-								tf->inputWriteIdx.store((targetIdx + 1) % tf->BUFFER_COUNT, std::memory_order_release);
-								tf->framesSubmitted.fetch_add(1, std::memory_order_relaxed);
-								tf->frameReadyCv.notify_one();
-								submitted = true;
-							}
-
-							if (!submitted) {
-								tf->framesDropped.fetch_add(1, std::memory_order_relaxed);
-						}
+// === 四缓冲区无锁帧提交 ===
+							publishFrameToInference(tf.get(), temp, width, height,
+									       frameCropX, frameCropY,
+									       frameCropWidth, frameCropHeight);
 						
 						// 只在悬浮窗开启时才克隆裁切后的区域
 						if (tf->showFloatingWindow) {

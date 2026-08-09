@@ -34,6 +34,10 @@ public:
 	void getState(float& estX, float& estY, float& velX, float& velY) const;
 	void getPrediction(float predictDt, float& deltaX, float& deltaY) const;
 
+	// 机动检测：本帧最大新息 z-score 超 3.5σ → 目标急转弯，速度估计不可信，
+	// 调用方应关闭提前量外推（防"转弯往外走"）。
+	bool maneuverDetected() const { return lastInnovZ_ > 3.5f; }
+
 private:
 	Config cfg_;
 
@@ -68,6 +72,7 @@ private:
 	float probCA_;
 	float probCT_;
 	float transMatrix_[3][3];
+	float lastInnovZ_ = 0.0f;  // 最近一次 update 的最大新息 z-score（机动检测）
 	bool initialized_;
 };
 
@@ -414,19 +419,27 @@ inline void IMMFilter::updateModelProbabilities(float mx, float my)
 	float innovCV_Y = my - xCV_[2];
 	float SCV_X = std::max(PxCV_[0][0] + cfg_.measurementNoiseX, TINY);
 	float SCV_Y = std::max(PxCV_[2][2] + cfg_.measurementNoiseY, TINY);
+	// 机动检测：最大新息 z-score（各模型）
+	float z = std::max(std::abs(innovCV_X) / std::sqrt(SCV_X),
+	                   std::abs(innovCV_Y) / std::sqrt(SCV_Y));
 	float logLCV = -0.5f * (innovCV_X * innovCV_X / SCV_X + innovCV_Y * innovCV_Y / SCV_Y);
 
 	float innovCA_X = mx - xCA_[0];
 	float innovCA_Y = my - xCA_[3];
 	float SCA_X = std::max(PxCA_[0][0] + cfg_.measurementNoiseX, TINY);
 	float SCA_Y = std::max(PxCA_[3][3] + cfg_.measurementNoiseY, TINY);
+	z = std::max(z, std::max(std::abs(innovCA_X) / std::sqrt(SCA_X),
+	                         std::abs(innovCA_Y) / std::sqrt(SCA_Y)));
 	float logLCA = -0.5f * (innovCA_X * innovCA_X / SCA_X + innovCA_Y * innovCA_Y / SCA_Y);
 
 	float innovCT_X = mx - xCT_[0];
 	float innovCT_Y = my - xCT_[2];
 	float SCT_X = std::max(PxCT_[0][0] + cfg_.measurementNoiseX, TINY);
 	float SCT_Y = std::max(PxCT_[2][2] + cfg_.measurementNoiseY, TINY);
+	z = std::max(z, std::max(std::abs(innovCT_X) / std::sqrt(SCT_X),
+	                         std::abs(innovCT_Y) / std::sqrt(SCT_Y)));
 	float logLCT = -0.5f * (innovCT_X * innovCT_X / SCT_X + innovCT_Y * innovCT_Y / SCT_Y);
+	lastInnovZ_ = z;
 
 	// 数值稳定：相对最大似然
 	float maxLog = std::max(logLCV, std::max(logLCA, logLCT));

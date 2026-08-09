@@ -9,6 +9,8 @@
 #include <setupapi.h>
 #include <hidsdi.h>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "hid.lib")
@@ -21,8 +23,11 @@ struct GvInputHidReport {
     BYTE  dx;
     BYTE  dy;
     BYTE  wheel;
-    BYTE  padding[58];
+	BYTE  padding[58];
 };
+
+// Tencent MyApp HID protocol: absolute 0-63 coordinates
+// Byte 0 = ReportID=0x50, Byte 1 = X(0-63), Byte 2 = Y(0-63), Bytes 3-64 = zero
 #pragma pack(pop)
 
 static HANDLE findAndCreateHidDevice(const wchar_t* matchStr, bool printFirst, const char* logPrefix)
@@ -60,15 +65,27 @@ static HANDLE findAndCreateHidDevice(const wchar_t* matchStr, bool printFirst, c
             if (devPath.find(matchStr) != std::wstring::npos) {
                 obs_log(LOG_INFO, "[%s] Found target device, trying CreateFile...", logPrefix);
                 HANDLE h = CreateFile(detail->DevicePath,
-                    GENERIC_WRITE | GENERIC_READ,
+                    GENERIC_WRITE,
                     FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    NULL, OPEN_EXISTING, 0, NULL);
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
                 if (h != INVALID_HANDLE_VALUE) {
                     free(detail);
                     SetupDiDestroyDeviceInfoList(devInfo);
                     return h;
                 } else {
-                    obs_log(LOG_WARNING, "[%s] CreateFile failed, error: %lu", logPrefix, GetLastError());
+                    DWORD err = GetLastError();
+                    obs_log(LOG_WARNING, "[%s] CreateFile(GENERIC_WRITE) failed, error: %lu", logPrefix, err);
+                    // Try with both read+write as fallback
+                    h = CreateFile(detail->DevicePath,
+                        GENERIC_WRITE | GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        NULL, OPEN_EXISTING, 0, NULL);
+                    if (h != INVALID_HANDLE_VALUE) {
+                        free(detail);
+                        SetupDiDestroyDeviceInfoList(devInfo);
+                        return h;
+                    }
+                    obs_log(LOG_WARNING, "[%s] CreateFile(GENERIC_WRITE|READ) also failed, error: %lu", logPrefix, GetLastError());
                 }
             }
         }
@@ -180,17 +197,20 @@ TencInputMouseController::~TencInputMouseController()
 
 bool TencInputMouseController::openDevice()
 {
-    // Probe all tencent collections for HID caps, then open first writable
+    // Enumerate all tencent collections, select the one with largest OutLen
     GUID hidGuid;
     HidD_GetHidGuid(&hidGuid);
 
+    std::wstring bestPath;
+    int bestOutLen = 0;
+
+    // First pass: probe all collections
     HDEVINFO devInfo = SetupDiGetClassDevs(&hidGuid, NULL, NULL,
         DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
     if (devInfo == INVALID_HANDLE_VALUE) return false;
 
     DWORD idx = 0;
     SP_DEVICE_INTERFACE_DATA ifaceData = { sizeof(SP_DEVICE_INTERFACE_DATA) };
-
     while (SetupDiEnumDeviceInterfaces(devInfo, NULL, &hidGuid, idx, &ifaceData)) {
         DWORD required = 0;
         SetupDiGetDeviceInterfaceDetail(devInfo, &ifaceData, NULL, 0, &required, NULL);
@@ -203,9 +223,7 @@ bool TencInputMouseController::openDevice()
 
         if (SetupDiGetDeviceInterfaceDetail(devInfo, &ifaceData, detail, required, NULL, NULL)) {
             std::wstring devPath(detail->DevicePath);
-
             if (devPath.find(L"tencentmyappshidbus") != std::wstring::npos) {
-                // Probe this collection without opening for write
                 HANDLE hProbe = CreateFile(detail->DevicePath, 0,
                     FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
                 if (hProbe != INVALID_HANDLE_VALUE) {
@@ -213,11 +231,16 @@ bool TencInputMouseController::openDevice()
                     if (HidD_GetPreparsedData(hProbe, &ppd)) {
                         HIDP_CAPS caps = {};
                         if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS) {
-                            obs_log(LOG_INFO, "[TencInput] Col%ls: UsagePage=0x%04X Usage=0x%04X In=%d Out=%d Feat=%d",
+                            obs_log(LOG_INFO, "[TencInput] Col%ls: Page=0x%04X Usage=0x%04X In=%d Out=%d Feat=%d",
                                 devPath.substr(devPath.find(L"col"), 5).c_str(),
                                 caps.UsagePage, caps.Usage,
                                 caps.InputReportByteLength, caps.OutputReportByteLength,
                                 caps.FeatureReportByteLength);
+                            int outLen = caps.OutputReportByteLength;
+                            if (outLen > bestOutLen) {
+                                bestOutLen = outLen;
+                                bestPath = detail->DevicePath;
+                            }
                         }
                         HidD_FreePreparsedData(ppd);
                     }
@@ -230,22 +253,35 @@ bool TencInputMouseController::openDevice()
     }
     SetupDiDestroyDeviceInfoList(devInfo);
 
-    // Now open the first tencent device with write access (same as before)
+    // Open the best collection (largest OutLen)
+    if (!bestPath.empty() && bestOutLen >= 65) {
+        hDevice = CreateFile(bestPath.c_str(), GENERIC_WRITE | GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+        if (hDevice == INVALID_HANDLE_VALUE) {
+            hDevice = CreateFile(bestPath.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+        }
+        if (hDevice != INVALID_HANDLE_VALUE) {
+            reportSize = bestOutLen;
+            reportMagic = 0;
+            deviceConnected = true;
+            obs_log(LOG_INFO, "[TencInput] Opened: OutLen=%d", reportSize);
+            return true;
+        }
+        obs_log(LOG_WARNING, "[TencInput] CreateFile failed for best path, err=%lu", GetLastError());
+    }
+
+    // Fallback: try findAndCreateHidDevice (tries GENERIC_WRITE first, then GENERIC_WRITE|GENERIC_READ)
     hDevice = findAndCreateHidDevice(L"tencentmyappshidbus", false, "TencInput");
     if (hDevice != INVALID_HANDLE_VALUE) {
-        PHIDP_PREPARSED_DATA ppd = NULL;
-        if (HidD_GetPreparsedData(hDevice, &ppd)) {
-            HIDP_CAPS caps = {};
-            if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS) {
-                reportSize = caps.OutputReportByteLength;
-                reportMagic = caps.UsagePage == 1 && caps.Usage == 2 ? 0 : 0x0540;
-                obs_log(LOG_INFO, "[TencInput] Opened: UsagePage=0x%04X Usage=0x%04X OutLen=%d",
-                    caps.UsagePage, caps.Usage, reportSize);
-            }
-            HidD_FreePreparsedData(ppd);
-        }
+        reportSize = 65;
+        reportMagic = 0;
+        deviceConnected = true;
+        obs_log(LOG_INFO, "[TencInput] Fallback opened, OutLen=%d", reportSize);
         return true;
     }
+
+    obs_log(LOG_WARNING, "[TencInput] No suitable device found");
     return false;
 }
 
@@ -264,16 +300,21 @@ void TencInputMouseController::moveMouse(int dx, int dy)
         if (!openDevice()) return;
     }
 
-    GvInputHidReport report = {};
-    report.magic  = reportMagic;
-    report.length = 4;
-    report.flags  = 0;
-    report.dx     = (BYTE)(char)(dx > 127 ? 127 : (dx < -128 ? -128 : dx));
-    report.dy     = (BYTE)(char)(dy > 127 ? 127 : (dy < -128 ? -128 : dy));
-    report.wheel  = 0;
+    // Tencent HID sub-report protocol:
+    // Byte 0: ReportID = 0x50
+    // Bytes 1-2: sub_report_length (LE16) = 2 for [dx,dy] pair
+    // Bytes 3-4: sub_report data = dx, dy as signed 8-bit
+    // Bytes 5-64: zero padding
+
+    BYTE report[65] = {};
+    report[0] = 0x50;          // ReportID
+    report[1] = 2;             // sub_report_length LE16 = 2
+    report[2] = 0;
+    report[3] = (BYTE)(char)(dx > 127 ? 127 : (dx < -128 ? -128 : dx));
+    report[4] = (BYTE)(char)(dy > 127 ? 127 : (dy < -128 ? -128 : dy));
 
     DWORD written;
-    if (!WriteFile(hDevice, &report, sizeof(report), &written, NULL)) {
+    if (!WriteFile(hDevice, report, reportSize, &written, NULL)) {
         obs_log(LOG_WARNING, "[TencInput] WriteFile failed: %lu", GetLastError());
         closeDevice();
     }
