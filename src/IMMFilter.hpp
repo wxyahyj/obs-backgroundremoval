@@ -34,9 +34,12 @@ public:
 	void getState(float& estX, float& estY, float& velX, float& velY) const;
 	void getPrediction(float predictDt, float& deltaX, float& deltaY) const;
 
-	// 机动检测：本帧最大新息 z-score 超 3.5σ → 目标急转弯，速度估计不可信，
-	// 调用方应关闭提前量外推（防"转弯往外走"）。
-	bool maneuverDetected() const { return lastInnovZ_ > 3.5f; }
+	// 机动检测：目标急转弯时速度估计指向旧方向不可信，调用方应关闭提前量外推。
+	// 判定 = 绝对位移(像素) + 统计σ 双阈值——纯 z-score 会把检测框噪声跳误判为机动
+	// （320x320 画面框跳几十px是常态，z 巨大但并非目标真动）。
+	bool maneuverDetected() const {
+		return lastInnovPx_ > kManeuverAbsPx && lastInnovZ_ > kManeuverZ;
+	}
 
 private:
 	Config cfg_;
@@ -72,7 +75,10 @@ private:
 	float probCA_;
 	float probCT_;
 	float transMatrix_[3][3];
-	float lastInnovZ_ = 0.0f;  // 最近一次 update 的最大新息 z-score（机动检测）
+	static constexpr float kManeuverAbsPx = 32.0f;  // 机动绝对位移门限（像素）
+	static constexpr float kManeuverZ = 3.0f;       // 机动统计门限（σ）
+	float lastInnovZ_ = 0.0f;  // 最近一次 update 的最大新息 z-score
+	float lastInnovPx_ = 0.0f; // 最近一次 update 的最大新息绝对值（像素）
 	bool initialized_;
 };
 
@@ -440,6 +446,9 @@ inline void IMMFilter::updateModelProbabilities(float mx, float my)
 	                         std::abs(innovCT_Y) / std::sqrt(SCT_Y)));
 	float logLCT = -0.5f * (innovCT_X * innovCT_X / SCT_X + innovCT_Y * innovCT_Y / SCT_Y);
 	lastInnovZ_ = z;
+	lastInnovPx_ = std::max({std::abs(innovCV_X), std::abs(innovCV_Y),
+	                         std::abs(innovCA_X), std::abs(innovCA_Y),
+	                         std::abs(innovCT_X), std::abs(innovCT_Y)});
 
 	// 数值稳定：相对最大似然
 	float maxLog = std::max(logLCV, std::max(logLCA, logLCT));

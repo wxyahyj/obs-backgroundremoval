@@ -128,6 +128,10 @@ protected:
 
     VariationalBayesFilter vbFilter;
 
+    // 目标切换保护：换目标帧强制关预测 + 平滑重置（预测状态属于旧目标）
+    int lastPredictionTrackId_ = -1;
+    int smoothedTrackId_ = -1;
+
     OneEuroFilter oneEuroX_;
     OneEuroFilter oneEuroY_;
     int oneEuroLockedTrackId_ = -1;

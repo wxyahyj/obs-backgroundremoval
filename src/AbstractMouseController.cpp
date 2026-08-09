@@ -561,6 +561,12 @@ void AbstractMouseController::tick()
     // 仅低分辨率/双机场景开启 (aimSmoothingEnabled), 高分辨率本地推理默认关。
     if (config.aimSmoothingEnabled) {
     {
+        // 目标切换 → 强制重置平滑状态（旧目标的平滑位置属于旧目标，不能带入）
+        if (lockedTrackId != smoothedTrackId_) {
+            smoothedTrackId_ = lockedTrackId;
+            smoothedTargetX_ = -1.0f;
+            smoothedTargetY_ = -1.0f;
+        }
         if (smoothedTargetX_ < 0.0f) {
             smoothedTargetX_ = targetPixelX;
             smoothedTargetY_ = targetPixelY;
@@ -1034,8 +1040,11 @@ void AbstractMouseController::tick()
                     immDeltaX = std::clamp(immDeltaX, -maxPredPx, maxPredPx);
                     immDeltaY = std::clamp(immDeltaY, -maxPredPx, maxPredPx);
                 }
-                // 机动门控：目标急转弯时速度估计指向旧方向，关提前量防"转弯往外走"
-                if (!immFilter.maneuverDetected()) {
+                // 机动门控：真机动（位移+σ双阈值，排除检测框噪声跳）时速度估计不可信，关提前量
+                // 目标切换帧：预测状态属于旧目标，强制关
+                bool trackSwitched = (lockedTrackId != lastPredictionTrackId_);
+                lastPredictionTrackId_ = lockedTrackId;
+                if (!immFilter.maneuverDetected() && !trackSwitched) {
                     adaptiveErrorX += predWX * immDeltaX;
                     adaptiveErrorY += predWY * immDeltaY;
                 }
@@ -1051,7 +1060,9 @@ void AbstractMouseController::tick()
                     vbDeltaY = std::clamp(vbDeltaY, -maxPredPx, maxPredPx);
                 }
                 // 机动门控同上
-                if (!vbFilter.maneuverDetected()) {
+                bool trackSwitched = (lockedTrackId != lastPredictionTrackId_);
+                lastPredictionTrackId_ = lockedTrackId;
+                if (!vbFilter.maneuverDetected() && !trackSwitched) {
                     adaptiveErrorX += predWX * vbDeltaX;
                     adaptiveErrorY += predWY * vbDeltaY;
                 }

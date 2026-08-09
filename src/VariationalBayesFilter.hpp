@@ -43,13 +43,19 @@ public:
 	// 诊断用：当前 R 估计
 	void getNoiseEstimates(float& rX, float& rY) const { rX = estRX_; rY = estRY_; }
 
-	// 机动检测：本帧最大新息 z-score。目标急转弯时 z 突增，
-	// 此时速度估计指向旧方向不可信，调用方应关闭提前量外推（防"转弯往外走"）。
-	bool maneuverDetected() const { return lastInnovZ_ > maneuverZ_; }
+	// 机动检测：目标急转弯时速度估计指向旧方向不可信，调用方应关闭提前量外推。
+	// 判定 = 绝对位移(像素) + 统计σ 双阈值——纯 z-score 会把检测框噪声跳误判为机动
+	// （320x320 画面框跳几十px是常态，z 巨大但并非目标真动）。
+	bool maneuverDetected() const {
+		return lastInnovPx_ > kManeuverAbsPx && lastInnovZ_ > kManeuverZ;
+	}
 
 private:
-	float maneuverZ_ = 4.0f;    // 机动判定门限（σ），随 outlierGate 默认
+	static constexpr float kManeuverAbsPx = 32.0f;  // 绝对位移门限（像素）
+	static constexpr float kManeuverZ = 3.0f;       // 统计门限（σ）
+	float maneuverZ_ = 4.0f;    // 野值截断门限（随 outlierGate），与机动判定独立
 	float lastInnovZ_ = 0.0f;   // 最近一次 update 的最大新息 z-score
+	float lastInnovPx_ = 0.0f;  // 最近一次 update 的最大新息绝对值（像素）
 	Config cfg_;
 
 	// 状态 [posX, velX, posY, velY]，每轴独立 2 状态 CV（与 IMM CV 同布局）
@@ -69,7 +75,7 @@ private:
 	void updateAxis(float meas, float& pos, float& vel,
 	                float& p00, float& p01, float& p11,
 	                float& alpha, float& beta, float& estR,
-	                float& maxZ);
+	                float& maxZ, float& maxPx);
 };
 
 inline VariationalBayesFilter::VariationalBayesFilter()
@@ -134,7 +140,7 @@ inline void VariationalBayesFilter::predictAxis(float dt, float& pos, float& vel
 inline void VariationalBayesFilter::updateAxis(float meas, float& pos, float& vel,
                                                float& p00, float& p01, float& p11,
                                                float& alpha, float& beta, float& estR,
-                                               float& maxZ)
+                                               float& maxZ, float& maxPx)
 {
 	// 1) 遗忘：α^- = ρ·α, β^- = ρ·β
 	float alphaPred = cfg_.rho * alpha;
@@ -149,11 +155,13 @@ inline void VariationalBayesFilter::updateAxis(float meas, float& pos, float& ve
 		float innov = meas - pos;
 		float S = p00 + R;
 
-		// 机动检测：原始（未截断）新息 z-score，供 maneuverDetected 用
+		// 机动检测：原始（未截断）新息，z-score + 像素双尺度，供 maneuverDetected 用
 		if (S > 0.0f) {
 			float z = std::abs(innov) / std::sqrt(S);
 			if (z > maxZ) maxZ = z;
 		}
+		float apx = std::abs(innov);
+		if (apx > maxPx) maxPx = apx;
 
 		// 野值抑制：Huber 式截断新息（以 sqrt(S) 为标准差尺度）
 		if (cfg_.outlierGate > 0.0f && S > 0.0f) {
@@ -208,6 +216,7 @@ inline void VariationalBayesFilter::update(float measuredErrorX, float measuredE
 			for (size_t j = 0; j < 4; j++)
 				P_[i][j] = (i == j) ? 50.0f : 0.0f;
 		lastInnovZ_ = 0.0f;
+		lastInnovPx_ = 0.0f;
 		initialized_ = true;
 		return;
 	}
@@ -215,12 +224,13 @@ inline void VariationalBayesFilter::update(float measuredErrorX, float measuredE
 	// 机动检测门限：outlierGate 关闭(0)时用固定 3.5σ
 	maneuverZ_ = (cfg_.outlierGate > 0.0f) ? cfg_.outlierGate : 3.5f;
 
-	float maxZ = 0.0f;
+	float maxZ = 0.0f, maxPx = 0.0f;
 	updateAxis(measuredErrorX, x_[0], x_[1], P_[0][0], P_[0][1], P_[1][1],
-	           alphaX_, betaX_, estRX_, maxZ);
+	           alphaX_, betaX_, estRX_, maxZ, maxPx);
 	updateAxis(measuredErrorY, x_[2], x_[3], P_[2][2], P_[2][3], P_[3][3],
-	           alphaY_, betaY_, estRY_, maxZ);
+	           alphaY_, betaY_, estRY_, maxZ, maxPx);
 	lastInnovZ_ = maxZ;
+	lastInnovPx_ = maxPx;
 }
 
 inline void VariationalBayesFilter::getState(float& estX, float& estY, float& velX, float& velY) const
