@@ -1289,6 +1289,9 @@ void AbstractMouseController::tick()
     // 子像素累积：把 float 余数累计起来，凑够 1 mickey 再发送。
     // 游戏 Raw Input 下 SendInput 是整数 mickey；原 static_cast<int> 会把 0.7px × 10 帧
     // 全部截断成 0 → 视觉"不动"。用 std::floor(std::abs + sign) 保证方向正确。
+    // 最后防线：非有限值(NaN/Inf)直接置 0——任何上游除零/发散不再飞鼠标(INT_MIN)
+    if (!std::isfinite(finalMoveX)) finalMoveX = 0.0f;
+    if (!std::isfinite(finalMoveY)) finalMoveY = 0.0f;
     float accumX = subpixelAccumX_ + finalMoveX;
     float accumY = subpixelAccumY_ + finalMoveY;
     int sendDx = 0, sendDy = 0;
@@ -1583,7 +1586,10 @@ float AbstractMouseController::getCurrentPGain()
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - targetLockStartTime).count() / 1000.0f;
     
-    float rampFactor = std::min(elapsed / config.pGainRampDuration, 1.0f);
+    // 防除零：rampDuration=0 或刚锁定(elapsed≈0)时 0/0=NaN → pX NaN → 输出 NaN
+    // → SendInput(INT_MIN) 鼠标飞屏角。下限 1ms 保持合理行为
+    float duration = std::max(config.pGainRampDuration, 0.001f);
+    float rampFactor = std::min(elapsed / duration, 1.0f);
     float currentScale = config.pGainRampInitialScale + (1.0f - config.pGainRampInitialScale) * rampFactor;
     
     return currentScale;
