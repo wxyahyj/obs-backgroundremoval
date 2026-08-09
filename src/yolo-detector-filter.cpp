@@ -439,6 +439,7 @@ std::atomic<int> framesSubmitted{0};
 			bool smithAutoTau;
 			// 目标中心EMA平滑开关
 			bool aimSmoothingEnabled;
+			bool useBoxEdgeAiming;
 			// IMM交互多模型滤波器参数
 		bool immFilterEnabled;
 		float immProcessNoisePos;
@@ -564,6 +565,7 @@ useDerivativePredictor = false;
 			smithAutoTau = true;
 			// 目标中心EMA平滑开关
 			aimSmoothingEnabled = false;
+			useBoxEdgeAiming = true;
 			// IMM交互多模型滤波器默认值
 			immFilterEnabled = false;
 			immProcessNoisePos = 0.1f;
@@ -995,6 +997,10 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		snprintf(propName, sizeof(propName), "aim_smoothing_enabled_%d", i);
 		obs_property_t *aimSmoothingProp = obs_properties_add_bool(props, propName, "目标中心平滑(低分辨率/双机)");
 		obs_property_set_long_description(aimSmoothingProp, "检测框每帧跳几十像素时才开。平滑有固定滞后，目标急转弯时准星会拖着旧方向走。高分辨率本地推理必须关(默认)");
+
+		snprintf(propName, sizeof(propName), "box_edge_aiming_%d", i);
+		obs_property_t *boxEdgeProp = obs_properties_add_bool(props, propName, "检测框边界瞄准");
+		obs_property_set_long_description(boxEdgeProp, "误差=准星到检测框最近边距离，准星在框内→0。天然死区=框尺寸：中心抖动不影响输出，积分不累积无残留。默认开");
 
 		snprintf(propName, sizeof(propName), "continuous_aim_%d", i);
 		obs_property_t *continuousAimProp = obs_properties_add_bool(props, propName, "启用持续自瞄");
@@ -2259,6 +2265,8 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 		obs_data_set_default_bool(settings, propName, false);
 		snprintf(propName, sizeof(propName), "aim_smoothing_enabled_%d", i);
 		obs_data_set_default_bool(settings, propName, false);
+		snprintf(propName, sizeof(propName), "box_edge_aiming_%d", i);
+		obs_data_set_default_bool(settings, propName, true);
 
 		snprintf(propName, sizeof(propName), "hotkey_%d", i);
 		obs_data_set_default_int(settings, propName, VK_XBUTTON1);
@@ -2883,6 +2891,8 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].enabled = obs_data_get_bool(settings, propName);
 		snprintf(propName, sizeof(propName), "aim_smoothing_enabled_%d", i);
 		tf->mouseConfigs[i].aimSmoothingEnabled = obs_data_get_bool(settings, propName);
+		snprintf(propName, sizeof(propName), "box_edge_aiming_%d", i);
+		tf->mouseConfigs[i].useBoxEdgeAiming = obs_data_get_bool(settings, propName);
 
 		snprintf(propName, sizeof(propName), "hotkey_%d", i);
 		tf->mouseConfigs[i].hotkey = (int)obs_data_get_int(settings, propName);
@@ -6259,6 +6269,7 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.smithAutoTau = cfg.smithAutoTau;
 		// 目标中心EMA平滑开关
 		mcConfig.aimSmoothingEnabled = cfg.aimSmoothingEnabled;
+		mcConfig.useBoxEdgeAiming = cfg.useBoxEdgeAiming;
 		// IMM交互多模型滤波器参数
 		mcConfig.immFilterEnabled = cfg.immFilterEnabled;
 		mcConfig.immProcessNoisePos = cfg.immProcessNoisePos;

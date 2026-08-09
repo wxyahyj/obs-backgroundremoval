@@ -603,6 +603,20 @@ void AbstractMouseController::tick()
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
 
+    // 检测框边界瞄准：误差 = 准星到检测框最近边的距离，准星在框内 → 0。
+    // 天然死区 = 框尺寸：中心抖动不影响输出（框覆盖即命中），
+    // 且框内误差=0 → 积分不累积 → 无"小误差大输出"残留。
+    if (config.useBoxEdgeAiming) {
+        float halfW = targetPixelW * 0.5f;
+        float halfH = targetPixelH * 0.5f;
+        float boxX0 = targetPixelX - halfW;
+        float boxX1 = targetPixelX + halfW;
+        float boxY0 = targetPixelY - halfH;
+        float boxY1 = targetPixelY + halfH;
+        errorX = (fovCenterX < boxX0) ? (fovCenterX - boxX0) : (fovCenterX > boxX1 ? (fovCenterX - boxX1) : 0.0f);
+        errorY = (fovCenterY < boxY0) ? (fovCenterY - boxY0) : (fovCenterY > boxY1 ? (fovCenterY - boxY1) : 0.0f);
+    }
+
     // OneEuro：自适应截止，静止压抖、快移少滞后（Casiez 2012）
     if (config.useOneEuroFilter) {
         if (lockedTrackId != oneEuroLockedTrackId_) {
