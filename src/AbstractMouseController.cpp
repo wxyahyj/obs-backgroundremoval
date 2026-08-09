@@ -207,6 +207,7 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         adaptiveCfg.integralDeadzone = config.adaptivePidIntegralDeadzone;
         adaptiveCfg.integralGainThreshold = config.adaptivePidIntegralGainThreshold;
         adaptiveCfg.integralGainRate = config.adaptivePidIntegralGainRate;
+        adaptiveCfg.integralGainVelocityLimit = config.adaptivePidIntegralGainVelocityLimit;
         adaptiveCfg.outputLimit = config.adaptivePidOutputLimit;
         adaptivePidX_.configure(adaptiveCfg);
         adaptivePidY_.configure(adaptiveCfg);
@@ -1118,15 +1119,26 @@ void AbstractMouseController::tick()
             moveX = adaptivePidX_.update(adaptiveErrorX, deltaTime);
             moveY = adaptivePidY_.update(adaptiveErrorY, deltaTime);
 
+            // 速度前馈：目标速度估计直接进输出 u += Kv·v·dt（独立通道）。
+            // 当前"预测进误差"等效前馈 = Kp×predW×dt ≈ 0.0017 几乎为零，
+            // P 独自扛高速跟踪 → 静差 = v/Kp 数学必然追不上。
+            // 机动/换目标时速度不可信，前馈随预测一起关
+            if (predGated == 0.0f && config.velocityFeedforward > 0.0f) {
+                moveX += config.velocityFeedforward * predVelX * deltaTime;
+                moveY += config.velocityFeedforward * predVelY * deltaTime;
+            }
+
             static int s_adaptLog = 0;
             if (s_adaptLog++ % 20 == 0) {
-                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) pid=(P:%.2f,%.2f I:%.2f,%.2f D:%.2f,%.2f) smith=%d smithΔ=(%.2f,%.2f) predΔ=(%.2f,%.2f) vel=(%.1f,%.1f) gate=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
+                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) pid=(P:%.2f,%.2f I:%.2f,%.2f D:%.2f,%.2f) ff=(%.2f,%.2f) smith=%d smithΔ=(%.2f,%.2f) predΔ=(%.2f,%.2f) vel=(%.1f,%.1f) gate=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
                         getLogPrefix(),
                         errorX, errorY, adaptiveErrorX, adaptiveErrorY,
                         moveX, moveY,
                         adaptivePidX_.lastPOut_, adaptivePidY_.lastPOut_,
                         adaptivePidX_.lastIOut_, adaptivePidY_.lastIOut_,
                         adaptivePidX_.lastDOut_, adaptivePidY_.lastDOut_,
+                        config.velocityFeedforward * predVelX * deltaTime,
+                        config.velocityFeedforward * predVelY * deltaTime,
                         smithOn ? 1 : 0,
                         smithDx, smithDy,
                         predAddX, predAddY,
