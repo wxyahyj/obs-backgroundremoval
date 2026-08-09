@@ -1227,7 +1227,10 @@ void AbstractMouseController::tick()
     float finalMoveY = moveY;
 
     if (config.enableTimeBasedMovement && deltaTime > 0.0f) {
-        float timeFactor = deltaTime * config.targetFrameRate;
+        // 时间缩放 = dt×目标帧率。限幅 [0.1, 2.0]：首帧/卡顿帧 dt 被 clamp 到 50ms 时
+        // 无上限会 ×3 突跳输出（日志实证 final=3×movePre），限幅后单帧最多补 2 参考帧，
+        // 余量由后续帧自然补（PID 误差仍在）
+        float timeFactor = std::clamp(deltaTime * config.targetFrameRate, 0.1f, 2.0f);
         finalMoveX *= timeFactor;
         finalMoveY *= timeFactor;
     }
