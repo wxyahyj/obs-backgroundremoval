@@ -1066,7 +1066,6 @@ void AbstractMouseController::tick()
                 }
                 // 机动门控：真机动（位移+σ双阈值，排除检测框噪声跳）时速度估计不可信，关提前量
                 // 目标切换帧：预测状态属于旧目标，强制关
-                // 机动/换目标同时清积分——积分存着旧方向历史，不清会导致转向后继续往旧方向推
                 bool trackSwitched = (lockedTrackId != lastPredictionTrackId_);
                 lastPredictionTrackId_ = lockedTrackId;
                 if (!immFilter.maneuverDetected() && !trackSwitched) {
@@ -1076,8 +1075,6 @@ void AbstractMouseController::tick()
                     adaptiveErrorY += predAddY;
                 } else {
                     predGated = 1.0f;
-                    adaptivePidX_.resetIntegral();
-                    adaptivePidY_.resetIntegral();
                 }
             }
             else if (config.useVbFilter) {
@@ -1102,8 +1099,6 @@ void AbstractMouseController::tick()
                     adaptiveErrorY += predAddY;
                 } else {
                     predGated = 1.0f;
-                    adaptivePidX_.resetIntegral();
-                    adaptivePidY_.resetIntegral();
                 }
             }
             else if (config.useDerivativePredictor) {

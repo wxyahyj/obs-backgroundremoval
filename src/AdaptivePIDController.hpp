@@ -50,22 +50,12 @@ public:
         filteredDerivative_ = 0.0f;
     }
 
-    // 只清积分：目标机动/转向时积分存着旧方向历史，必须清。
-    // 保留 lastError_/integralGain_（P/D 和增益状态仍有效）
-    void resetIntegral() {
-        integral_ = 0.0f;
-    }
-
     float update(float error, float dtSeconds) {
         const float dt = std::clamp(dtSeconds, kMinDt, kMaxDt);
 
         // 输入死区
         if (std::abs(error) < cfg_.deadZone) {
             error = 0.0f;
-            // 目标已到位：泄积分防残留（日志实证 err≈0.5 时 I 项仍输出 6.9px）。
-            // 注意：只泄严格死区内——接近到位段的积分是匀速跟随稳态动力，
-            // 泄了追不上目标（实测'追着走'），机动转向清积分由 resetIntegral() 负责
-            integral_ *= 0.9f;
         }
 
         // 比例项
