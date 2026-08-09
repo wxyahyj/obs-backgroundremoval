@@ -81,9 +81,9 @@ protected:
     float filteredDeltaErrorY;
     float previousErrorX;
     float previousErrorY;
-    // 检测跳变限幅状态（上一帧误差，哨兵值表示未初始化）
-    float prevErrorX_ = -1e9f;
-    float prevErrorY_ = -1e9f;
+    // 目标丢失恢复后的预测衰减计数：冻结期 IMM 速度估计仍指向旧方向，
+    // 恢复后前 N 帧压低预测权重，防止旧速度持续注入导致"一直往一个方向跑"
+    int freezeRecoverFrames_ = 0;
     
     float previousTargetX;
     float previousTargetY;

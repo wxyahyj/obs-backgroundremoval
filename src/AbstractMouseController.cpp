@@ -415,7 +415,9 @@ void AbstractMouseController::tick()
                 resetMotionState();
             }
             // 宽限内（missCnt<8）：不 reset，滤波器状态自然冻结（本帧不 predict/update），
-            // 目标回来(同ID)从旧速度/位置续跟，快速目标不掉速不重收敛
+            // 目标回来(同ID)从旧速度/位置续跟。但冻结期速度估计仍指向旧方向，
+            // 恢复后前几帧压低预测权重，防止旧速度持续注入推偏
+            freezeRecoverFrames_ = kMaxLockMissFrames;
         }
         // 目标丢失时重置自动扳机
         if (autoTriggerHolding) {
@@ -600,20 +602,6 @@ void AbstractMouseController::tick()
 
     float errorX = targetPixelX - fovCenterX + config.screenOffsetX;
     float errorY = targetPixelY - fovCenterY + config.screenOffsetY;
-
-    // 检测跳变限幅：YOLO 帧间坐标瞬跳(误检/关联切换)直接打 PID 会输出过猛。
-    // 每帧误差变化上限 40px（≈2400px/s，真实目标运动远低于此），
-    // 超限按上一帧误差钳制——大跳第一帧被抑制，后续帧 PID 正常追。
-    // 与滤波器内部 Huber 截断互补：那管状态估计，这管 PID 输入。
-    {
-        const float kMaxErrJumpPx = 40.0f;
-        if (prevErrorX_ >= -1e9f) {
-            errorX = std::clamp(errorX, prevErrorX_ - kMaxErrJumpPx, prevErrorX_ + kMaxErrJumpPx);
-            errorY = std::clamp(errorY, prevErrorY_ - kMaxErrJumpPx, prevErrorY_ + kMaxErrJumpPx);
-        }
-        prevErrorX_ = errorX;
-        prevErrorY_ = errorY;
-    }
 
     // OneEuro：自适应截止，静止压抖、快移少滞后（Casiez 2012）
     if (config.useOneEuroFilter) {
@@ -1050,6 +1038,12 @@ void AbstractMouseController::tick()
             if (smithOn && (config.immFilterEnabled || config.useVbFilter)) {
                 predWX *= 0.5f;
                 predWY *= 0.5f;
+            }
+            // 目标丢失恢复期预测衰减：冻结期速度估计不可信（旧方向），渐进恢复
+            if (freezeRecoverFrames_ > 0) {
+                predWX *= 0.25f;
+                predWY *= 0.25f;
+                freezeRecoverFrames_--;
             }
 
             // 预测外推时间尺度：一帧控制周期。
