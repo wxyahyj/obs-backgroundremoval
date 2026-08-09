@@ -1008,10 +1008,18 @@ void AbstractMouseController::tick()
             float adaptiveErrorX = errorX;
             float adaptiveErrorY = errorY;
 
+            // 诊断：预测/Smith 各级贡献量（定位"预测开着但没输出"问题）
+            float smithDx = 0.0f, smithDy = 0.0f;   // Smith 补偿量
+            float predAddX = 0.0f, predAddY = 0.0f; // 实际加入的预测增量
+            float predVelX = 0.0f, predVelY = 0.0f; // 滤波器速度估计
+            float predGated = 0.0f;                 // 1=门控关预测 0=预测生效
+
             bool smithOn = false;
             if (config.smithPredictorEnabled) {
                 auto [smithCX, smithCY] = smithPredictor.correct(
                     lastOutputX, lastOutputY, adaptiveErrorX, adaptiveErrorY, deltaTime);
+                smithDx = smithCX - adaptiveErrorX;
+                smithDy = smithCY - adaptiveErrorY;
                 adaptiveErrorX = smithCX;
                 adaptiveErrorY = smithCY;
                 smithOn = true;
@@ -1036,6 +1044,8 @@ void AbstractMouseController::tick()
                 immFilter.update(errorX, errorY);
                 float immDeltaX = 0.0f, immDeltaY = 0.0f;
                 immFilter.getPrediction(predHorizonSec, immDeltaX, immDeltaY);
+                float estX = 0.0f, estY = 0.0f;
+                immFilter.getState(estX, estY, predVelX, predVelY);
                 if (maxPredPx > 0.0f) {
                     immDeltaX = std::clamp(immDeltaX, -maxPredPx, maxPredPx);
                     immDeltaY = std::clamp(immDeltaY, -maxPredPx, maxPredPx);
@@ -1045,8 +1055,12 @@ void AbstractMouseController::tick()
                 bool trackSwitched = (lockedTrackId != lastPredictionTrackId_);
                 lastPredictionTrackId_ = lockedTrackId;
                 if (!immFilter.maneuverDetected() && !trackSwitched) {
-                    adaptiveErrorX += predWX * immDeltaX;
-                    adaptiveErrorY += predWY * immDeltaY;
+                    predAddX = predWX * immDeltaX;
+                    predAddY = predWY * immDeltaY;
+                    adaptiveErrorX += predAddX;
+                    adaptiveErrorY += predAddY;
+                } else {
+                    predGated = 1.0f;
                 }
             }
             else if (config.useVbFilter) {
@@ -1055,6 +1069,8 @@ void AbstractMouseController::tick()
                 vbFilter.update(errorX, errorY);
                 float vbDeltaX = 0.0f, vbDeltaY = 0.0f;
                 vbFilter.getPrediction(predHorizonSec, vbDeltaX, vbDeltaY);
+                float estX = 0.0f, estY = 0.0f;
+                vbFilter.getState(estX, estY, predVelX, predVelY);
                 if (maxPredPx > 0.0f) {
                     vbDeltaX = std::clamp(vbDeltaX, -maxPredPx, maxPredPx);
                     vbDeltaY = std::clamp(vbDeltaY, -maxPredPx, maxPredPx);
@@ -1063,8 +1079,12 @@ void AbstractMouseController::tick()
                 bool trackSwitched = (lockedTrackId != lastPredictionTrackId_);
                 lastPredictionTrackId_ = lockedTrackId;
                 if (!vbFilter.maneuverDetected() && !trackSwitched) {
-                    adaptiveErrorX += predWX * vbDeltaX;
-                    adaptiveErrorY += predWY * vbDeltaY;
+                    predAddX = predWX * vbDeltaX;
+                    predAddY = predWY * vbDeltaY;
+                    adaptiveErrorX += predAddX;
+                    adaptiveErrorY += predAddY;
+                } else {
+                    predGated = 1.0f;
                 }
             }
             else if (config.useDerivativePredictor) {
@@ -1075,8 +1095,10 @@ void AbstractMouseController::tick()
                     derivPredictedX = std::clamp(derivPredictedX, -maxPredPx, maxPredPx);
                     derivPredictedY = std::clamp(derivPredictedY, -maxPredPx, maxPredPx);
                 }
-                adaptiveErrorX += predWX * derivPredictedX;
-                adaptiveErrorY += predWY * derivPredictedY;
+                predAddX = predWX * derivPredictedX;
+                predAddY = predWY * derivPredictedY;
+                adaptiveErrorX += predAddX;
+                adaptiveErrorY += predAddY;
             }
 
             moveX = adaptivePidX_.update(adaptiveErrorX, deltaTime);
@@ -1084,11 +1106,15 @@ void AbstractMouseController::tick()
 
             static int s_adaptLog = 0;
             if (s_adaptLog++ % 20 == 0) {
-                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) smith=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
+                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) smith=%d smithΔ=(%.2f,%.2f) predΔ=(%.2f,%.2f) vel=(%.1f,%.1f) gate=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
                         getLogPrefix(),
                         errorX, errorY, adaptiveErrorX, adaptiveErrorY,
                         moveX, moveY,
                         smithOn ? 1 : 0,
+                        smithDx, smithDy,
+                        predAddX, predAddY,
+                        predVelX, predVelY,
+                        (int)predGated,
                         config.immFilterEnabled ? 1 : 0,
                         config.useVbFilter ? 1 : 0,
                         config.useDerivativePredictor ? 1 : 0,
