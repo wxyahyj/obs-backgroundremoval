@@ -175,6 +175,8 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
             float baseTau = avgInferenceTimeMs_ > 0.0f
                 ? avgInferenceTimeMs_ / 1000.0f * 2.0f   // 2倍安全系数
                 : 0.060f;                                 // 未推理时默认60ms
+            // 执行延迟（鼠标→游戏→画面反馈）加到输出端模型延迟上
+            baseTau += config.mouseLatencyMs * 0.001f;
             smithCfg.delayTau = std::max(baseTau, 0.030f); // 最小30ms地板
         } else {
             smithCfg.delayTau = config.smithModelTau;
@@ -1016,11 +1018,22 @@ void AbstractMouseController::tick()
                 predWY *= 0.5f;
             }
 
+            // 预测外推时间尺度：一帧控制周期。
+            // 注：曾用"检测年龄+执行延迟"外推(仿真验证)，速度估计噪声×h放大，
+            // 直线段 RMS 恶化(IMM 6.7→12.1)，且测量延迟被PID闭环天然吸收 → 回滚。
+            // 执行延迟(输出端)由 Smith 预估器补偿(delayTau含mouseLatencyMs)。
+            const float predHorizonSec = deltaTime;
+            const float maxPredPx = std::max(0.0f, config.maxPredictionPixels);
+
             if (config.immFilterEnabled) {
                 immFilter.predict(deltaTime, previousMoveX, previousMoveY);
                 immFilter.update(errorX, errorY);
                 float immDeltaX = 0.0f, immDeltaY = 0.0f;
-                immFilter.getPrediction(deltaTime, immDeltaX, immDeltaY);
+                immFilter.getPrediction(predHorizonSec, immDeltaX, immDeltaY);
+                if (maxPredPx > 0.0f) {
+                    immDeltaX = std::clamp(immDeltaX, -maxPredPx, maxPredPx);
+                    immDeltaY = std::clamp(immDeltaY, -maxPredPx, maxPredPx);
+                }
                 // 机动门控：目标急转弯时速度估计指向旧方向，关提前量防"转弯往外走"
                 if (!immFilter.maneuverDetected()) {
                     adaptiveErrorX += predWX * immDeltaX;
@@ -1032,7 +1045,11 @@ void AbstractMouseController::tick()
                 vbFilter.predict(deltaTime, previousMoveX, previousMoveY);
                 vbFilter.update(errorX, errorY);
                 float vbDeltaX = 0.0f, vbDeltaY = 0.0f;
-                vbFilter.getPrediction(deltaTime, vbDeltaX, vbDeltaY);
+                vbFilter.getPrediction(predHorizonSec, vbDeltaX, vbDeltaY);
+                if (maxPredPx > 0.0f) {
+                    vbDeltaX = std::clamp(vbDeltaX, -maxPredPx, maxPredPx);
+                    vbDeltaY = std::clamp(vbDeltaY, -maxPredPx, maxPredPx);
+                }
                 // 机动门控同上
                 if (!vbFilter.maneuverDetected()) {
                     adaptiveErrorX += predWX * vbDeltaX;
@@ -1042,7 +1059,11 @@ void AbstractMouseController::tick()
             else if (config.useDerivativePredictor) {
                 predictor.update(errorX, errorY, previousMoveX, previousMoveY, deltaTime);
                 float derivPredictedX = 0.0f, derivPredictedY = 0.0f;
-                predictor.predict(deltaTime, derivPredictedX, derivPredictedY);
+                predictor.predict(predHorizonSec, derivPredictedX, derivPredictedY);
+                if (maxPredPx > 0.0f) {
+                    derivPredictedX = std::clamp(derivPredictedX, -maxPredPx, maxPredPx);
+                    derivPredictedY = std::clamp(derivPredictedY, -maxPredPx, maxPredPx);
+                }
                 adaptiveErrorX += predWX * derivPredictedX;
                 adaptiveErrorY += predWY * derivPredictedY;
             }

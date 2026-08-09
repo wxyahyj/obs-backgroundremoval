@@ -150,6 +150,8 @@ struct MouseControllerConfig {
     float predictionWeightX = 0.5f;
     float predictionWeightY = 0.1f;
     float maxPredictionTime = 0.1f;
+    float mouseLatencyMs = 15.0f;      // 执行延迟估计：鼠标输出→游戏响应→画面反馈
+    float maxPredictionPixels = 30.0f; // 预测提前量像素限幅（防误检/速度爆炸）
 
     // Smith预估器（纯滞后补偿控制）
     bool smithPredictorEnabled = false;

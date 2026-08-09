@@ -429,6 +429,9 @@ std::atomic<int> framesSubmitted{0};
 		float velocitySmoothFactor;
 		float accelerationSmoothFactor;
 		float maxPredictionTime;
+		// 延迟补偿/预测限幅
+		float mouseLatencyMs;       // 执行延迟估计（鼠标→游戏→画面反馈）
+		float maxPredictionPixels;  // 预测提前量限幅
 		// Smith预估器参数
 		bool smithPredictorEnabled;
 		float smithModelGain;
@@ -552,6 +555,8 @@ std::atomic<int> framesSubmitted{0};
 		predictionWeightY = 0.1f;
 useDerivativePredictor = false;
 				maxPredictionTime = 0.1f;
+				mouseLatencyMs = 15.0f;
+				maxPredictionPixels = 30.0f;
 			// Smith预估器默认值
 			smithPredictorEnabled = false;
 			smithModelGain = 1.0f;
@@ -1200,6 +1205,15 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 		
 		snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 		obs_properties_add_group(props, propName, "导数预测器", OBS_GROUP_CHECKABLE, derivPredProps);
+
+		// 延迟补偿与预测限幅（预测页独立控件，作用于所有预测器）
+		snprintf(propName, sizeof(propName), "mouse_latency_ms_%d", i);
+		obs_property_t *mouseLatProp = obs_properties_add_int_slider(props, propName, "执行延迟(ms)", 0, 100, 1);
+		obs_property_set_long_description(mouseLatProp, "鼠标输出→游戏响应→下一帧画面反馈的延迟估计。预测外推h = 检测年龄 + 此值。默认15ms，可后续实测标定");
+
+		snprintf(propName, sizeof(propName), "max_prediction_pixels_%d", i);
+		obs_property_t *maxPredPixProp = obs_properties_add_int_slider(props, propName, "预测限幅(像素)", 0, 200, 1);
+		obs_property_set_long_description(maxPredPixProp, "提前量最大像素数。防YOLO误检/速度估计爆炸导致大幅过冲。0=不限幅。默认30");
 	}
 
 // Smith预估器分组（CHECKABLE 组勾选即启用，无内层冗余 enabled）
@@ -1771,6 +1785,11 @@ static void setPredictorPropertiesVisible(obs_properties_t *props, int configInd
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 	// 变分贝叶斯鲁棒滤波（与 IMM 同页）
 	snprintf(propName, sizeof(propName), "vb_filter_group_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	// 延迟补偿与预测限幅（独立控件）
+	snprintf(propName, sizeof(propName), "mouse_latency_ms_%d", configIndex);
+	obs_property_set_visible(obs_properties_get(props, propName), visible);
+	snprintf(propName, sizeof(propName), "max_prediction_pixels_%d", configIndex);
 	obs_property_set_visible(obs_properties_get(props, propName), visible);
 }
 
@@ -2349,9 +2368,13 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
 // DerivativePredictor参数默认值（不重复写 prediction_weight，沿用上面 0.3/0.1）
 			snprintf(propName, sizeof(propName), "derivative_predictor_group_%d", i);
 			obs_data_set_default_bool(settings, propName, false); // 默认关，避免与 Smith/PID 叠加重
-			snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
-			obs_data_set_default_double(settings, propName, 0.1);
-			// Smith 默认值（组 CHECKABLE 默认关）
+		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
+		obs_data_set_default_double(settings, propName, 0.1);
+		snprintf(propName, sizeof(propName), "mouse_latency_ms_%d", i);
+		obs_data_set_default_int(settings, propName, 15);
+		snprintf(propName, sizeof(propName), "max_prediction_pixels_%d", i);
+		obs_data_set_default_int(settings, propName, 30);
+		// Smith 默认值（组 CHECKABLE 默认关）
 			snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
 			obs_data_set_default_bool(settings, propName, false);
 			snprintf(propName, sizeof(propName), "smith_model_gain_%d", i);
@@ -2975,6 +2998,10 @@ void yolo_detector_filter_update(void *data, obs_data_t *settings)
 		tf->mouseConfigs[i].predictionWeightY = (float)obs_data_get_double(settings, propName);
 		snprintf(propName, sizeof(propName), "max_prediction_time_%d", i);
 		tf->mouseConfigs[i].maxPredictionTime = (float)obs_data_get_double(settings, propName);
+		snprintf(propName, sizeof(propName), "mouse_latency_ms_%d", i);
+		tf->mouseConfigs[i].mouseLatencyMs = (float)obs_data_get_int(settings, propName);
+		snprintf(propName, sizeof(propName), "max_prediction_pixels_%d", i);
+		tf->mouseConfigs[i].maxPredictionPixels = (float)obs_data_get_int(settings, propName);
 		// Smith预估器参数
 		snprintf(propName, sizeof(propName), "smith_predictor_group_%d", i);
 		tf->mouseConfigs[i].smithPredictorEnabled = obs_data_get_bool(settings, propName);
@@ -6222,6 +6249,9 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.predictionWeightX = cfg.predictionWeightX;
 		mcConfig.predictionWeightY = cfg.predictionWeightY;
 		mcConfig.maxPredictionTime = cfg.maxPredictionTime;
+		// 延迟补偿与预测限幅
+		mcConfig.mouseLatencyMs = cfg.mouseLatencyMs;
+		mcConfig.maxPredictionPixels = cfg.maxPredictionPixels;
 		// Smith预估器参数
 		mcConfig.smithPredictorEnabled = cfg.smithPredictorEnabled;
 		mcConfig.smithModelGain = cfg.smithModelGain;
