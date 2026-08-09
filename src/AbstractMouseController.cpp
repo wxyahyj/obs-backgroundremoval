@@ -1120,10 +1120,13 @@ void AbstractMouseController::tick()
 
             static int s_adaptLog = 0;
             if (s_adaptLog++ % 20 == 0) {
-                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) smith=%d smithΔ=(%.2f,%.2f) predΔ=(%.2f,%.2f) vel=(%.1f,%.1f) gate=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
+                obs_log(LOG_INFO, "[%s] AdaptivePID: rawErr=(%.3f,%.3f) adapErr=(%.3f,%.3f) out=(%.4f,%.4f) pid=(P:%.2f,%.2f I:%.2f,%.2f D:%.2f,%.2f) smith=%d smithΔ=(%.2f,%.2f) predΔ=(%.2f,%.2f) vel=(%.1f,%.1f) gate=%d imm=%d vb=%d derivPred=%d dt=%.4f K=(%.2f,%.2f,%.2f)",
                         getLogPrefix(),
                         errorX, errorY, adaptiveErrorX, adaptiveErrorY,
                         moveX, moveY,
+                        adaptivePidX_.lastPOut_, adaptivePidY_.lastPOut_,
+                        adaptivePidX_.lastIOut_, adaptivePidY_.lastIOut_,
+                        adaptivePidX_.lastDOut_, adaptivePidY_.lastDOut_,
                         smithOn ? 1 : 0,
                         smithDx, smithDy,
                         predAddX, predAddY,

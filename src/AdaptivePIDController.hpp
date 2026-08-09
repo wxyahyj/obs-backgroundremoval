@@ -95,6 +95,11 @@ public:
         float output = pOut + iOut + dOut;
         output = std::clamp(output, -cfg_.outputLimit, cfg_.outputLimit);
 
+        // 诊断：分项输出（定位"小误差大输出"来源——积分残留/D项过冲/前馈）
+        lastPOut_ = pOut;
+        lastIOut_ = iOut;
+        lastDOut_ = dOut;
+
         lastError_ = error;
         return output;
     }
@@ -105,6 +110,10 @@ public:
     }
 
     const Config& config() const { return cfg_; }
+    // 诊断用分项输出（最近一次 update）
+    float lastPOut_ = 0.0f;
+    float lastIOut_ = 0.0f;
+    float lastDOut_ = 0.0f;
 
 private:
     Config cfg_;
