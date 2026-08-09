@@ -56,6 +56,12 @@ public:
         // 输入死区
         if (std::abs(error) < cfg_.deadZone) {
             error = 0.0f;
+            // 目标已到位：泄积分防残留（日志实证 err≈0.5 时 I 项仍输出 6.9px，
+            // 高速跟枪期积分积累到上限，目标停下后不泄 → 持续过冲/漂移）
+            integral_ *= 0.9f;  // 每帧泄 10%，约 0.5s 泄完
+        } else if (std::abs(error) < cfg_.deadZone * 5.0f) {
+            // 接近到位（死区外）：慢泄，防残留同时保留小幅纠偏能力
+            integral_ *= 0.95f;
         }
 
         // 比例项
