@@ -81,6 +81,9 @@ protected:
     float filteredDeltaErrorY;
     float previousErrorX;
     float previousErrorY;
+    // 检测跳变限幅状态（上一帧误差，哨兵值表示未初始化）
+    float prevErrorX_ = -1e9f;
+    float prevErrorY_ = -1e9f;
     
     float previousTargetX;
     float previousTargetY;
