@@ -1198,7 +1198,8 @@ void AbstractMouseController::tick()
             // 书屋控制器（AiMod 完整移植）：
             // MotionSimulator 拟人瞄准仿真(过冲/停顿/头部偏好/点击节奏)
             // → P_PID(双卡尔曼+双调制积分+atan2软限幅+突变重置)
-            // → 神经网络曲线逐点输出
+            // 与 AiMod 一致：case 内直接发送，不走公共链
+            // (timeBased缩放/bezier/ghost/recoil/衰减会二次加工输出 → 参数打架)
             if (lastAppliedAlgorithm_ != AlgorithmType::ShuWuPID) {
                 shuwuPidX_.reset();
                 shuwuPidY_.reset();
@@ -1217,17 +1218,15 @@ void AbstractMouseController::tick()
                     double simDy = shuwuMotionSim_.lastDy();
                     moveX = static_cast<float>(shuwuPidX_.update(simDx));
                     moveY = static_cast<float>(shuwuPidY_.update(simDy));
-                } else {
-                    moveX = 0.0f;
-                    moveY = 0.0f;
+                    int sendX = static_cast<int>(std::round(moveX));
+                    int sendY = static_cast<int>(std::round(moveY));
+                    moveMouse(sendX, sendY);
                 }
-            } else {
-                moveX = 0.0f;
-                moveY = 0.0f;
             }
             lastOutputX = moveX;
             lastOutputY = moveY;
-            break;
+            // 跳过公共链（timeBased/bezier/ghost/recoil/衰减/subpixel 不再二次加工）
+            return;
         }
     }
 
