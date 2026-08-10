@@ -212,17 +212,28 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         adaptivePidY_.configure(adaptiveCfg);
     }
 
-    // 书屋控制器配置同步（pid.lib 语义：setName 解锁守卫 → init → setBase）
+    // 书屋控制器配置同步（AiMod 完全一致：MotionSimulator 拟人仿真 + P_PID）
     {
+        // MotionSimulator: configSwitches(全开) → configParams → configDy → initializeImage
+        shuwuMotionSim_.configSwitches(true, true, true, true, true, true, true, true);
+        shuwuMotionSim_.configParams(config.shuwuMaxRetry, config.shuwuTargetDelayMs,
+                                     config.shuwuDirectProb, config.shuwuOvershootProb,
+                                     config.shuwuMicroOvsProb);
+        shuwuMotionSim_.configDy(config.shuwuDyMinRatio, config.shuwuDyDefaultRatio,
+                                 config.shuwuDyUpperLimit);
+        int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320;
+        int fh = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320;
+        shuwuMotionSim_.initializeImage(fw, fh);
+        // P_PID X/Y 分轴（AiMod 原值）
         shuwuPidX_.setName("1458679219");
-        shuwuPidX_.init(config.shuwuKp, config.shuwuKi, config.shuwuKd,
-                        config.shuwuPredict, config.shuwuRate);
+        shuwuPidX_.init(config.shuwuKpX, config.shuwuKiX, config.shuwuKdX,
+                        config.shuwuPredictX, config.shuwuRateX);
         shuwuPidX_.setBase(config.shuwuKiMode, config.shuwuKpLimit, config.shuwuKiLimit,
                            config.shuwuKdLimit, config.shuwuLimit,
                            config.shuwuKiRate, config.shuwuKiDeadband);
         shuwuPidY_.setName("1458679219");
-        shuwuPidY_.init(config.shuwuKp, config.shuwuKi, config.shuwuKd,
-                        config.shuwuPredict, config.shuwuRate);
+        shuwuPidY_.init(config.shuwuKpY, config.shuwuKiY, config.shuwuKdY,
+                        config.shuwuPredictY, config.shuwuRateY);
         shuwuPidY_.setBase(config.shuwuKiMode, config.shuwuKpLimit, config.shuwuKiLimit,
                            config.shuwuKdLimit, config.shuwuLimit,
                            config.shuwuKiRate, config.shuwuKiDeadband);
@@ -428,6 +439,9 @@ void AbstractMouseController::tick()
                 smithPredictor.reset();
                 adaptivePidX_.reset();
                 adaptivePidY_.reset();
+                shuwuPidX_.reset();
+                shuwuPidY_.reset();
+                shuwuMotionSim_.onTargetLost();
                 resetMotionState();
             }
             // 宽限内（missCnt<8）：不 reset，滤波器状态自然冻结（本帧不 predict/update），
@@ -1181,16 +1195,36 @@ void AbstractMouseController::tick()
             break;
         }
         case AlgorithmType::ShuWuPID: {
-            // 书屋控制器（pid_x64.lib 逆向还原移植，与 pid.h 语义完全一致）：
-            // 双卡尔曼平滑 + 双调制积分 + atan2 软限幅 + 突变重置(|Δe|>30 全清)
-            // 直通原始误差，不走 Smith/预测链——原库即此结构
+            // 书屋控制器（AiMod 完整移植）：
+            // MotionSimulator 拟人瞄准仿真(过冲/停顿/头部偏好/点击节奏)
+            // → P_PID(双卡尔曼+双调制积分+atan2软限幅+突变重置)
+            // → 神经网络曲线逐点输出
             if (lastAppliedAlgorithm_ != AlgorithmType::ShuWuPID) {
                 shuwuPidX_.reset();
                 shuwuPidY_.reset();
+                shuwuMotionSim_.reset();
                 lastAppliedAlgorithm_ = AlgorithmType::ShuWuPID;
             }
-            moveX = static_cast<float>(shuwuPidX_.update(errorX));
-            moveY = static_cast<float>(shuwuPidY_.update(errorY));
+            if (target) {
+                // 目标延迟检查（AiMod: checkTargetDelay 未到延迟跳过本帧）
+                if (shuwuMotionSim_.checkTargetDelay(1)) {
+                    float boxX = target->centerX * ((config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320);
+                    float boxY = target->centerY * ((config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320);
+                    float boxW = target->width * ((config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320);
+                    float boxH = target->height * ((config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320);
+                    shuwuMotionSim_.tick(boxX, boxY, boxW, boxH, isFiring);
+                    double simDx = shuwuMotionSim_.lastDx();
+                    double simDy = shuwuMotionSim_.lastDy();
+                    moveX = static_cast<float>(shuwuPidX_.update(simDx));
+                    moveY = static_cast<float>(shuwuPidY_.update(simDy));
+                } else {
+                    moveX = 0.0f;
+                    moveY = 0.0f;
+                }
+            } else {
+                moveX = 0.0f;
+                moveY = 0.0f;
+            }
             lastOutputX = moveX;
             lastOutputY = moveY;
             break;

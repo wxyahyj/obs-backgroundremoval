@@ -19,6 +19,7 @@
 #include "IMMFilter.hpp"
 #include "VariationalBayesFilter.hpp"
 #include "shuwu_pid.hpp"
+#include "MotionSimulator.h"
 #include "OneEuroFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
@@ -163,9 +164,10 @@ protected:
     AdaptivePIDController adaptivePidX_;
     AdaptivePIDController adaptivePidY_;
 
-    // 书屋控制器（双卡尔曼+双调制积分+atan2软限幅+突变重置）
+    // 书屋控制器（AiMod 完整移植：MotionSimulator 拟人仿真 + P_PID）
     shuwu::ShuWuPid shuwuPidX_;
     shuwu::ShuWuPid shuwuPidY_;
+    MotionSimulator shuwuMotionSim_;
 
     AlgorithmType lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;  // 上次应用的算法类型，用于检测算法切换
 
