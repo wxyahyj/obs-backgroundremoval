@@ -363,12 +363,11 @@ if(WIN32)
       src/DynamicPIDController.cpp
       src/mpid.cpp
       src/OneEuroFilter.cpp
-	      src/curve.cpp
-	      src/utils/GhostTracker.cpp
-	      src/CrosshairDetector.cpp
-	      src/TargetTracker.cpp
-	      src/MotionSimulator.cpp
-	  )
+      src/curve.cpp
+      src/utils/GhostTracker.cpp
+      src/CrosshairDetector.cpp
+      src/TargetTracker.cpp
+  )
 endif()
 
 if(ENABLE_QT)

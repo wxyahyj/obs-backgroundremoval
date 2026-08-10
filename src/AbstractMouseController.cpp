@@ -211,35 +211,6 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         adaptivePidX_.configure(adaptiveCfg);
         adaptivePidY_.configure(adaptiveCfg);
     }
-
-    // 书屋控制器配置同步（AiMod 完全一致：MotionSimulator 拟人仿真 + P_PID）
-    {
-        // MotionSimulator: configSwitches(全开) → configParams → configDy → initializeImage
-        shuwuMotionSim_.configSwitches(true, true, true, true, true, true, true, true);
-        shuwuMotionSim_.configParams(config.shuwuMaxRetry, config.shuwuTargetDelayMs,
-                                     config.shuwuDirectProb, config.shuwuOvershootProb,
-                                     config.shuwuMicroOvsProb);
-        shuwuMotionSim_.configDy(config.shuwuDyMinRatio, config.shuwuDyDefaultRatio,
-                                 config.shuwuDyUpperLimit);
-        int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320;
-        int fh = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320;
-        shuwuMotionSim_.initializeImage(fw, fh);
-        // KalmanP 5x5 跟踪（AiMod: m_tracker.init(2, 5)）
-        shuwuKalman_.init(2, 5);
-        // P_PID X/Y 分轴（AiMod 原值）
-        shuwuPidX_.setName("1458679219");
-        shuwuPidX_.init(config.shuwuKpX, config.shuwuKiX, config.shuwuKdX,
-                        config.shuwuPredictX, config.shuwuRateX);
-        shuwuPidX_.setBase(config.shuwuKiMode, config.shuwuKpLimit, config.shuwuKiLimit,
-                           config.shuwuKdLimit, config.shuwuLimit,
-                           config.shuwuKiRate, config.shuwuKiDeadband);
-        shuwuPidY_.setName("1458679219");
-        shuwuPidY_.init(config.shuwuKpY, config.shuwuKiY, config.shuwuKdY,
-                        config.shuwuPredictY, config.shuwuRateY);
-        shuwuPidY_.setBase(config.shuwuKiMode, config.shuwuKpLimit, config.shuwuKiLimit,
-                           config.shuwuKdLimit, config.shuwuLimit,
-                           config.shuwuKiRate, config.shuwuKiDeadband);
-    }
     
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
@@ -441,9 +412,6 @@ void AbstractMouseController::tick()
                 smithPredictor.reset();
                 adaptivePidX_.reset();
                 adaptivePidY_.reset();
-                shuwuPidX_.reset();
-                shuwuPidY_.reset();
-                shuwuMotionSim_.onTargetLost();
                 resetMotionState();
             }
             // 宽限内（missCnt<8）：不 reset，滤波器状态自然冻结（本帧不 predict/update），
@@ -776,7 +744,6 @@ void AbstractMouseController::tick()
             case AlgorithmType::AimController:algoName = "AimController(ChrisPID)"; break;
             case AlgorithmType::SlewRate:     algoName = "SlewRate"; break;
             case AlgorithmType::AdaptivePID:  algoName = "AdaptivePID"; break;
-            case AlgorithmType::ShuWuPID:     algoName = "ShuWuPID(书屋)"; break;
         }
         obs_log(LOG_INFO, "[%s] ALGO_DISPATCH: algo=%d(%s) err=(%.2f,%.2f) dist=%.2f fov=%d maxMove=%.2f deadZone=%.2f dt=%.4fs lastApplied=%d",
                 getLogPrefix(),
@@ -1196,58 +1163,6 @@ void AbstractMouseController::tick()
             lastOutputY = moveY;
             break;
         }
-        case AlgorithmType::ShuWuPID: {
-            // 书屋控制器（AiMod 完整移植）：
-            // MotionSimulator 拟人瞄准仿真(过冲/停顿/头部偏好/点击节奏)
-            // → P_PID(双卡尔曼+双调制积分+atan2软限幅+突变重置)
-            // 与 AiMod 一致：case 内直接发送，不走公共链
-            // (timeBased缩放/bezier/ghost/recoil/衰减会二次加工输出 → 参数打架)
-            if (lastAppliedAlgorithm_ != AlgorithmType::ShuWuPID) {
-                shuwuPidX_.reset();
-                shuwuPidY_.reset();
-                shuwuMotionSim_.reset();
-                lastAppliedAlgorithm_ = AlgorithmType::ShuWuPID;
-            }
-            // AiMod 链路: YOLO → KalmanP 5x5跟踪(平滑bbox) → MotionSimulator → P_PID
-            int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320;
-            int fh = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320;
-            std::vector<KalmanDetail::DetectionObject> kdets;
-            for (const auto& d : currentDetections) {
-                KalmanDetail::DetectionObject ko;
-                ko.bbox.x = d.x * fw;
-                ko.bbox.y = d.y * fh;
-                ko.bbox.width = d.width * fw;
-                ko.bbox.height = d.height * fh;
-                ko.label = d.classId;
-                ko.prob = d.confidence;
-                ko.track_id = d.trackId;
-                kdets.push_back(ko);
-            }
-            std::vector<KalmanDetail::DetectionObject> tracked = shuwuKalman_.predict(kdets);
-            if (!tracked.empty()) {
-                // 优先锁定目标的平滑框，否则最近
-                KalmanDetail::DetectionObject* sel = nullptr;
-                for (auto& t : tracked)
-                    if (t.track_id == lockedTrackId) { sel = &t; break; }
-                if (!sel) sel = &tracked[0];
-                // 目标延迟检查（AiMod: checkTargetDelay(trackedResults.size())）
-                if (shuwuMotionSim_.checkTargetDelay(tracked.size())) {
-                    shuwuMotionSim_.tick(sel->bbox.x, sel->bbox.y,
-                                         sel->bbox.width, sel->bbox.height, isFiring);
-                    double simDx = shuwuMotionSim_.lastDx();
-                    double simDy = shuwuMotionSim_.lastDy();
-                    moveX = static_cast<float>(shuwuPidX_.update(simDx));
-                    moveY = static_cast<float>(shuwuPidY_.update(simDy));
-                    int sendX = static_cast<int>(std::round(moveX));
-                    int sendY = static_cast<int>(std::round(moveY));
-                    moveMouse(sendX, sendY);
-                }
-            }
-            lastOutputX = moveX;
-            lastOutputY = moveY;
-            // 跳过公共链（timeBased/bezier/ghost/recoil/衰减/subpixel 不再二次加工）
-            return;
-        }
     }
 
     bool firing = checkFiring();
@@ -1531,20 +1446,6 @@ Detection* AbstractMouseController::selectTarget()
 
     // 如果当前没有锁定目标，直接选择最佳目标
     if (lockedTrackId < 0) {
-        // 首次锁定确认：连续 kFirstLockFrames 帧同 trackId 且是 bestTarget 才锁，
-        // 防单帧误检(320x320 假阳性)直接抢锁。确认前返回 nullptr 不跟。
-        static constexpr int kFirstLockFrames = 3;
-        if (pendingLockTrackId == bestTarget->trackId) {
-            if (++pendingLockFrames < kFirstLockFrames) {
-                return nullptr;
-            }
-        } else {
-            pendingLockTrackId = bestTarget->trackId;
-            pendingLockFrames = 1;
-            return nullptr;
-        }
-        pendingLockTrackId = -1;
-        pendingLockFrames = 0;
         lockedTrackId = bestTarget->trackId;
         lockMissCount_ = 0;
         pendingTargetTrackId = -1;

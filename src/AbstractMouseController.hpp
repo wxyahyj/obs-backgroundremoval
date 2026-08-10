@@ -18,10 +18,6 @@
 #include "AdaptivePIDController.hpp"
 #include "IMMFilter.hpp"
 #include "VariationalBayesFilter.hpp"
-#include "shuwu_pid.hpp"
-#include "MotionSimulator.h"
-#include "KalmanFilter.hpp"
-#include "KalmanFilter.hpp"
 #include "OneEuroFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
@@ -166,13 +162,6 @@ protected:
     AdaptivePIDController adaptivePidX_;
     AdaptivePIDController adaptivePidY_;
 
-    // 书屋控制器（AiMod 完整移植：KalmanP跟踪 + MotionSimulator拟人仿真 + P_PID）
-    shuwu::ShuWuPid shuwuPidX_;
-    shuwu::ShuWuPid shuwuPidY_;
-    MotionSimulator shuwuMotionSim_;
-    // 书屋 KalmanP 5x5 多目标跟踪（AiMod m_tracker 同源，平滑检测框去抖）
-    KalmanP shuwuKalman_;  // KalmanP 在全局命名空间（KalmanDetail 只包 DetectionObject）
-
     AlgorithmType lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;  // 上次应用的算法类型，用于检测算法切换
 
     std::chrono::steady_clock::time_point lastTickTime;
@@ -195,9 +184,6 @@ protected:
     // 延迟转火相关
     int pendingTargetTrackId;
     std::chrono::steady_clock::time_point pendingTargetStartTime;
-    // 首次锁定确认：新目标连续 N 帧出现且是 bestTarget 才锁定（防单帧误检抢锁）
-    int pendingLockTrackId = -1;
-    int pendingLockFrames = 0;
     float pendingTargetScore;
     float currentTargetScore;
     

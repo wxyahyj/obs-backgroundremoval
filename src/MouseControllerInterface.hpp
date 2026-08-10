@@ -28,8 +28,7 @@ enum class AlgorithmType {
     ExternalPID,      // 1: 专业PID（外部库逆向重构）
     AimController,    // 2: aim 控制器（增量式PID+运动预测+柏林噪声）
     SlewRate,         // 3: SlewRate（限速平滑趋近）
-    AdaptivePID,      // 4: 自适应PID（位置式+自适应积分增益+积分死区）
-    ShuWuPID          // 5: 书屋控制器（双卡尔曼+双调制积分+atan2软限幅+突变重置）
+    AdaptivePID       // 4: 自适应PID（位置式+自适应积分增益+积分死区）
 };
 
 // PID闁轰胶澧楀畵渚€宕堕悙鍓佹闁告垼濮ら弳鐔虹尵鐠囪尙鈧?
@@ -210,36 +209,6 @@ struct MouseControllerConfig {
     float adaptivePidIntegralGainThreshold = 50.0f; // 积分自适应阈值
     float adaptivePidIntegralGainRate = 0.015f;    // 积分自适应速率
     float adaptivePidOutputLimit = 10.0f;          // 输出限幅
-
-    // 书屋控制器（AiMod 完整移植：MotionSimulator 拟人仿真 + P_PID + 神经网络曲线）
-    // 参数与 AiMod/pid.h 完全一致（X/Y 分轴）
-    float shuwuKpX = 25.0f;       // X比例系数 (AiMod KpX=25)
-    float shuwuKiX = 0.0f;        // X积分系数 (AiMod KiX=0)
-    float shuwuKdX = 25.0f;       // X微分系数 (AiMod KdX=KpX)
-    float shuwuPredictX = 2.0f;   // X速度倍率 (AiMod PredictX=2)
-    float shuwuRateX = 0.15f;     // X kp积分速率 (AiMod RateX=0.15)
-    float shuwuKpY = 30.0f;       // Y比例系数 (AiMod KpY=30)
-    float shuwuKiY = 0.0f;        // Y积分系数
-    float shuwuKdY = 30.0f;       // Y微分系数 (AiMod KdY=KpY)
-    float shuwuPredictY = 0.0f;   // Y速度倍率 (AiMod PredictY=0)
-    float shuwuRateY = 0.1f;      // Y kp积分速率 (AiMod RateY=0.1)
-    // setBase 参数 (AiMod: setBase(1, 9900, 9900, 9900, 0, 0.005, 0.5))
-    int   shuwuKiMode = 1;        // 0=I累加 1=I项开 其它=关
-    float shuwuKpLimit = 9900.0f; // P 限幅
-    float shuwuKiLimit = 9900.0f; // I 限幅
-    float shuwuKdLimit = 9900.0f; // D 限幅
-    float shuwuLimit = 0.0f;      // 总输出限幅 (0=关)
-    float shuwuKiRate = 0.005f;   // ki积分速率 → kf1.Q
-    float shuwuKiDeadband = 0.5f; // I 输出死区
-    // MotionSimulator 拟人仿真配置 (AiMod: switches全true, params(2,80,0.85,0.10,0.05), dy(0.4,0.65,0.8))
-    int   shuwuMaxRetry = 2;      // 最大重试次数
-    int   shuwuTargetDelayMs = 80;// 目标延迟ms
-    float shuwuDirectProb = 0.85f;// 直线概率
-    float shuwuOvershootProb = 0.10f; // 过冲概率
-    float shuwuMicroOvsProb = 0.05f;  // 微过冲概率
-    float shuwuDyMinRatio = 0.4f; // 垂直偏移最小比例
-    float shuwuDyDefaultRatio = 0.65f; // 垂直偏移默认比例
-    float shuwuDyUpperLimit = 0.8f;   // 垂直偏移上限
 
     // 连续瞄准与弹道控制
     bool continuousAimEnabled = false;
