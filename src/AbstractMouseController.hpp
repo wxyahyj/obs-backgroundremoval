@@ -184,6 +184,9 @@ protected:
     // 延迟转火相关
     int pendingTargetTrackId;
     std::chrono::steady_clock::time_point pendingTargetStartTime;
+    // 首次锁定确认：新目标连续 N 帧出现且是 bestTarget 才锁定（防单帧误检抢锁）
+    int pendingLockTrackId = -1;
+    int pendingLockFrames = 0;
     float pendingTargetScore;
     float currentTargetScore;
     

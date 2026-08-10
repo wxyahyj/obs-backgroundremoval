@@ -1446,6 +1446,20 @@ Detection* AbstractMouseController::selectTarget()
 
     // 如果当前没有锁定目标，直接选择最佳目标
     if (lockedTrackId < 0) {
+        // 首次锁定确认：连续 kFirstLockFrames 帧同 trackId 且是 bestTarget 才锁，
+        // 防单帧误检(320x320 假阳性)直接抢锁。确认前返回 nullptr 不跟。
+        static constexpr int kFirstLockFrames = 3;
+        if (pendingLockTrackId == bestTarget->trackId) {
+            if (++pendingLockFrames < kFirstLockFrames) {
+                return nullptr;
+            }
+        } else {
+            pendingLockTrackId = bestTarget->trackId;
+            pendingLockFrames = 1;
+            return nullptr;
+        }
+        pendingLockTrackId = -1;
+        pendingLockFrames = 0;
         lockedTrackId = bestTarget->trackId;
         lockMissCount_ = 0;
         pendingTargetTrackId = -1;
