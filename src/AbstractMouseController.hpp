@@ -20,6 +20,8 @@
 #include "VariationalBayesFilter.hpp"
 #include "shuwu_pid.hpp"
 #include "MotionSimulator.h"
+#include "KalmanFilter.hpp"
+#include "KalmanFilter.hpp"
 #include "OneEuroFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
@@ -164,10 +166,12 @@ protected:
     AdaptivePIDController adaptivePidX_;
     AdaptivePIDController adaptivePidY_;
 
-    // 书屋控制器（AiMod 完整移植：MotionSimulator 拟人仿真 + P_PID）
+    // 书屋控制器（AiMod 完整移植：KalmanP跟踪 + MotionSimulator拟人仿真 + P_PID）
     shuwu::ShuWuPid shuwuPidX_;
     shuwu::ShuWuPid shuwuPidY_;
     MotionSimulator shuwuMotionSim_;
+    // 书屋 KalmanP 5x5 多目标跟踪（AiMod m_tracker 同源，平滑检测框去抖）
+    KalmanP shuwuKalman_;  // KalmanP 在全局命名空间（KalmanDetail 只包 DetectionObject）
 
     AlgorithmType lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;  // 上次应用的算法类型，用于检测算法切换
 

@@ -224,6 +224,8 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320;
         int fh = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320;
         shuwuMotionSim_.initializeImage(fw, fh);
+        // KalmanP 5x5 跟踪（AiMod: m_tracker.init(2, 5)）
+        shuwuKalman_.init(2, 5);
         // P_PID X/Y 分轴（AiMod 原值）
         shuwuPidX_.setName("1458679219");
         shuwuPidX_.init(config.shuwuKpX, config.shuwuKiX, config.shuwuKdX,
@@ -1206,14 +1208,32 @@ void AbstractMouseController::tick()
                 shuwuMotionSim_.reset();
                 lastAppliedAlgorithm_ = AlgorithmType::ShuWuPID;
             }
-            if (target) {
-                // 目标延迟检查（AiMod: checkTargetDelay 未到延迟跳过本帧）
-                if (shuwuMotionSim_.checkTargetDelay(1)) {
-                    float boxX = target->centerX * ((config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320);
-                    float boxY = target->centerY * ((config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320);
-                    float boxW = target->width * ((config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320);
-                    float boxH = target->height * ((config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320);
-                    shuwuMotionSim_.tick(boxX, boxY, boxW, boxH, isFiring);
+            // AiMod 链路: YOLO → KalmanP 5x5跟踪(平滑bbox) → MotionSimulator → P_PID
+            int fw = (config.inferenceFrameWidth > 0) ? config.inferenceFrameWidth : 320;
+            int fh = (config.inferenceFrameHeight > 0) ? config.inferenceFrameHeight : 320;
+            std::vector<KalmanDetail::DetectionObject> kdets;
+            for (const auto& d : currentDetections) {
+                KalmanDetail::DetectionObject ko;
+                ko.bbox.x = d.x * fw;
+                ko.bbox.y = d.y * fh;
+                ko.bbox.width = d.width * fw;
+                ko.bbox.height = d.height * fh;
+                ko.label = d.classId;
+                ko.prob = d.confidence;
+                ko.track_id = d.trackId;
+                kdets.push_back(ko);
+            }
+            std::vector<KalmanDetail::DetectionObject> tracked = shuwuKalman_.predict(kdets);
+            if (!tracked.empty()) {
+                // 优先锁定目标的平滑框，否则最近
+                KalmanDetail::DetectionObject* sel = nullptr;
+                for (auto& t : tracked)
+                    if (t.track_id == lockedTrackId) { sel = &t; break; }
+                if (!sel) sel = &tracked[0];
+                // 目标延迟检查（AiMod: checkTargetDelay(trackedResults.size())）
+                if (shuwuMotionSim_.checkTargetDelay(tracked.size())) {
+                    shuwuMotionSim_.tick(sel->bbox.x, sel->bbox.y,
+                                         sel->bbox.width, sel->bbox.height, isFiring);
                     double simDx = shuwuMotionSim_.lastDx();
                     double simDy = shuwuMotionSim_.lastDy();
                     moveX = static_cast<float>(shuwuPidX_.update(simDx));
