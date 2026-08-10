@@ -211,6 +211,22 @@ void AbstractMouseController::updateConfig(const MouseControllerConfig& newConfi
         adaptivePidX_.configure(adaptiveCfg);
         adaptivePidY_.configure(adaptiveCfg);
     }
+
+    // 书屋控制器配置同步（pid.lib 语义：setName 解锁守卫 → init → setBase）
+    {
+        shuwuPidX_.setName("1458679219");
+        shuwuPidX_.init(config.shuwuKp, config.shuwuKi, config.shuwuKd,
+                        config.shuwuPredict, config.shuwuRate);
+        shuwuPidX_.setBase(config.shuwuKiMode, config.shuwuKpLimit, config.shuwuKiLimit,
+                           config.shuwuKdLimit, config.shuwuLimit,
+                           config.shuwuKiRate, config.shuwuKiDeadband);
+        shuwuPidY_.setName("1458679219");
+        shuwuPidY_.init(config.shuwuKp, config.shuwuKi, config.shuwuKd,
+                        config.shuwuPredict, config.shuwuRate);
+        shuwuPidY_.setBase(config.shuwuKiMode, config.shuwuKpLimit, config.shuwuKiLimit,
+                           config.shuwuKdLimit, config.shuwuLimit,
+                           config.shuwuKiRate, config.shuwuKiDeadband);
+    }
     
     if (configChanged) {
         obs_log(LOG_INFO, "[%s] Config updated: enableMouseControl=%d, autoTriggerEnabled=%d, fireDuration=%dms, interval=%dms",
@@ -744,6 +760,7 @@ void AbstractMouseController::tick()
             case AlgorithmType::AimController:algoName = "AimController(ChrisPID)"; break;
             case AlgorithmType::SlewRate:     algoName = "SlewRate"; break;
             case AlgorithmType::AdaptivePID:  algoName = "AdaptivePID"; break;
+            case AlgorithmType::ShuWuPID:     algoName = "ShuWuPID(书屋)"; break;
         }
         obs_log(LOG_INFO, "[%s] ALGO_DISPATCH: algo=%d(%s) err=(%.2f,%.2f) dist=%.2f fov=%d maxMove=%.2f deadZone=%.2f dt=%.4fs lastApplied=%d",
                 getLogPrefix(),
@@ -1159,6 +1176,21 @@ void AbstractMouseController::tick()
 
             previousErrorX = errorX;
             previousErrorY = errorY;
+            lastOutputX = moveX;
+            lastOutputY = moveY;
+            break;
+        }
+        case AlgorithmType::ShuWuPID: {
+            // 书屋控制器（pid_x64.lib 逆向还原移植，与 pid.h 语义完全一致）：
+            // 双卡尔曼平滑 + 双调制积分 + atan2 软限幅 + 突变重置(|Δe|>30 全清)
+            // 直通原始误差，不走 Smith/预测链——原库即此结构
+            if (lastAppliedAlgorithm_ != AlgorithmType::ShuWuPID) {
+                shuwuPidX_.reset();
+                shuwuPidY_.reset();
+                lastAppliedAlgorithm_ = AlgorithmType::ShuWuPID;
+            }
+            moveX = static_cast<float>(shuwuPidX_.update(errorX));
+            moveY = static_cast<float>(shuwuPidY_.update(errorY));
             lastOutputX = moveX;
             lastOutputY = moveY;
             break;

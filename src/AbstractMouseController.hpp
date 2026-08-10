@@ -18,6 +18,7 @@
 #include "AdaptivePIDController.hpp"
 #include "IMMFilter.hpp"
 #include "VariationalBayesFilter.hpp"
+#include "shuwu_pid.hpp"
 #include "OneEuroFilter.hpp"
 #include "curve.hpp"
 #include "mpid.hpp"
@@ -161,6 +162,10 @@ protected:
     // 自适应PID控制器（位置式+自适应积分增益）
     AdaptivePIDController adaptivePidX_;
     AdaptivePIDController adaptivePidY_;
+
+    // 书屋控制器（双卡尔曼+双调制积分+atan2软限幅+突变重置）
+    shuwu::ShuWuPid shuwuPidX_;
+    shuwu::ShuWuPid shuwuPidY_;
 
     AlgorithmType lastAppliedAlgorithm_ = AlgorithmType::AdvancedPID;  // 上次应用的算法类型，用于检测算法切换
 

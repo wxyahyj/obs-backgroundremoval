@@ -697,6 +697,19 @@ float aimOutputMax;
 	float adaptivePidIntegralGainThreshold;
 	float adaptivePidIntegralGainRate;
 	float adaptivePidOutputLimit;
+	// 书屋控制器参数
+	float shuwuKp;
+	float shuwuKi;
+	float shuwuKd;
+	float shuwuPredict;
+	float shuwuRate;
+	int   shuwuKiMode;
+	float shuwuKpLimit;
+	float shuwuKiLimit;
+	float shuwuKdLimit;
+	float shuwuLimit;
+	float shuwuKiRate;
+	float shuwuKiDeadband;
 
 		// 准星检测器
 	CrosshairDetector crosshairDetector;
@@ -1393,6 +1406,7 @@ obs_properties_t *yolo_detector_filter_properties(void *data)
 	obs_property_list_add_int(algorithmTypeList, "aim 控制器 (增量式PID+预测+噪声)", 2);
 	obs_property_list_add_int(algorithmTypeList, "SlewRate (限速平滑趋近)", 3);
 	obs_property_list_add_int(algorithmTypeList, "自适应PID (位置式+自适应积分)", 4);
+	obs_property_list_add_int(algorithmTypeList, "书屋控制器 (双卡尔曼+双调制积分)", 5);
 	obs_property_set_long_description(algorithmTypeList, "选择控制算法：高级PID包含动态P增益、预测等功能；专业PID内置卡尔曼滤波和自适应增益；aim 控制器集成增量式PID+运动预测+柏林噪声；SlewRate 使用限速平滑趋近+阻尼制动；自适应PID采用位置式PID+自适应积分增益+积分死区+双重抗饱和");
 	obs_property_set_modified_callback(algorithmTypeList, onConfigChanged);
 	
@@ -1494,6 +1508,34 @@ obs_properties_add_group(props, "aim_controller_group", "aim 控制器配置", O
 		obs_property_t *adaptOutLimitProp = obs_properties_add_float_slider(adaptivePidProps, "adaptive_pid_output_limit", "输出限幅", 1.0f, 200.0f, 1.0f);
 		obs_property_set_long_description(adaptOutLimitProp, "单帧输出最大值，默认10.0");
 		obs_properties_add_group(props, "adaptive_pid_controller_group", "自适应PID 控制器配置", OBS_GROUP_NORMAL, adaptivePidProps);
+
+	// ========== 书屋控制器配置（pid.lib 参数完全一致） ==========
+	obs_properties_t *shuwuProps = obs_properties_create();
+	obs_property_t *swKpProp = obs_properties_add_float_slider(shuwuProps, "shuwu_kp", "Kp 比例系数", 0.0, 5.0, 0.01);
+	obs_property_set_long_description(swKpProp, "比例系数（pid_init 参数1）");
+	obs_property_t *swKiProp = obs_properties_add_float_slider(shuwuProps, "shuwu_ki", "Ki 积分系数", 0.0, 1.0, 0.001);
+	obs_property_set_long_description(swKiProp, "积分系数（pid_init 参数2）");
+	obs_property_t *swKdProp = obs_properties_add_float_slider(shuwuProps, "shuwu_kd", "Kd 微分系数", 0.0, 5.0, 0.01);
+	obs_property_set_long_description(swKdProp, "微分系数（pid_init 参数3）");
+	obs_property_t *swPredictProp = obs_properties_add_float_slider(shuwuProps, "shuwu_predict", "Predict 速度倍率", 0.0, 3.0, 0.05);
+	obs_property_set_long_description(swPredictProp, "输出速度倍率（pid_init 参数4）");
+	obs_property_t *swRateProp = obs_properties_add_float_slider(shuwuProps, "shuwu_rate", "Rate kp积分速率", 0.001, 0.2, 0.001);
+	obs_property_set_long_description(swRateProp, "kp积分爬升速率，越大P增益越快到位（pid_init 参数5）");
+	obs_property_t *swKiModeProp = obs_properties_add_int(shuwuProps, "shuwu_ki_mode", "KiMode 积分模式", 0, 2, 1);
+	obs_property_set_long_description(swKiModeProp, "0=I累加 1=I项开 其它=关（pid_set_base 参数1）");
+	obs_property_t *swKpLimitProp = obs_properties_add_float_slider(shuwuProps, "shuwu_kp_limit", "Kp限幅", 0.0, 10000.0, 100.0);
+	obs_property_set_long_description(swKpLimitProp, "P项atan2软限幅，0=关（pid_set_base 参数2）");
+	obs_property_t *swKiLimitProp = obs_properties_add_float_slider(shuwuProps, "shuwu_ki_limit", "Ki限幅", 0.0, 10000.0, 100.0);
+	obs_property_set_long_description(swKiLimitProp, "I项atan2软限幅，0=关（pid_set_base 参数3）");
+	obs_property_t *swKdLimitProp = obs_properties_add_float_slider(shuwuProps, "shuwu_kd_limit", "Kd限幅", 0.0, 10000.0, 100.0);
+	obs_property_set_long_description(swKdLimitProp, "D项atan2软限幅，0=关（pid_set_base 参数4）");
+	obs_property_t *swLimitProp = obs_properties_add_float_slider(shuwuProps, "shuwu_limit", "总输出限幅", 0.0, 10000.0, 100.0);
+	obs_property_set_long_description(swLimitProp, "总输出atan2软限幅，0=关（pid_set_base 参数5）");
+	obs_property_t *swKiRateProp = obs_properties_add_float_slider(shuwuProps, "shuwu_ki_rate", "KiRate 卡尔曼Q", 0.001, 0.5, 0.001);
+	obs_property_set_long_description(swKiRateProp, "ki积分速率→kf1.Q，越小滤波越强（pid_set_base 参数6）");
+	obs_property_t *swDeadbandProp = obs_properties_add_float_slider(shuwuProps, "shuwu_ki_deadband", "KiDeadband 积分死区", 0.0, 2.0, 0.05);
+	obs_property_set_long_description(swDeadbandProp, "I项输出死区（pid_set_base 参数7）");
+	obs_properties_add_group(props, "shuwu_pid_group", "书屋控制器配置", OBS_GROUP_NORMAL, shuwuProps);
 
 		// ========== 页面7: 准星检测 ==========
 #ifdef _WIN32
@@ -2581,6 +2623,18 @@ void yolo_detector_filter_defaults(obs_data_t *settings)
     obs_data_set_default_double(settings, "adaptive_pid_integral_gain_threshold", 50.0);
     obs_data_set_default_double(settings, "adaptive_pid_integral_gain_rate", 0.015);
     obs_data_set_default_double(settings, "adaptive_pid_output_limit", 10.0);
+    obs_data_set_default_double(settings, "shuwu_kp", 0.8);
+    obs_data_set_default_double(settings, "shuwu_ki", 0.02);
+    obs_data_set_default_double(settings, "shuwu_kd", 0.3);
+    obs_data_set_default_double(settings, "shuwu_predict", 1.0);
+    obs_data_set_default_double(settings, "shuwu_rate", 0.03);
+    obs_data_set_default_int(settings, "shuwu_ki_mode", 1);
+    obs_data_set_default_double(settings, "shuwu_kp_limit", 9900.0);
+    obs_data_set_default_double(settings, "shuwu_ki_limit", 9900.0);
+    obs_data_set_default_double(settings, "shuwu_kd_limit", 9900.0);
+    obs_data_set_default_double(settings, "shuwu_limit", 0.0);
+    obs_data_set_default_double(settings, "shuwu_ki_rate", 0.005);
+    obs_data_set_default_double(settings, "shuwu_ki_deadband", 0.5);
     obs_data_set_default_double(settings, "incremental_side_comp_denom", 1.0);
     obs_data_set_default_double(settings, "incremental_input_alpha", 0.3);
     obs_data_set_default_double(settings, "incremental_d_alpha", 0.2);
@@ -3129,6 +3183,18 @@ tf->aimOutputMax = (float)obs_data_get_double(settings, "aim_output_max");
 		tf->adaptivePidIntegralGainThreshold = (float)obs_data_get_double(settings, "adaptive_pid_integral_gain_threshold");
 		tf->adaptivePidIntegralGainRate = (float)obs_data_get_double(settings, "adaptive_pid_integral_gain_rate");
 		tf->adaptivePidOutputLimit = (float)obs_data_get_double(settings, "adaptive_pid_output_limit");
+		tf->shuwuKp = (float)obs_data_get_double(settings, "shuwu_kp");
+		tf->shuwuKi = (float)obs_data_get_double(settings, "shuwu_ki");
+		tf->shuwuKd = (float)obs_data_get_double(settings, "shuwu_kd");
+		tf->shuwuPredict = (float)obs_data_get_double(settings, "shuwu_predict");
+		tf->shuwuRate = (float)obs_data_get_double(settings, "shuwu_rate");
+		tf->shuwuKiMode = (int)obs_data_get_int(settings, "shuwu_ki_mode");
+		tf->shuwuKpLimit = (float)obs_data_get_double(settings, "shuwu_kp_limit");
+		tf->shuwuKiLimit = (float)obs_data_get_double(settings, "shuwu_ki_limit");
+		tf->shuwuKdLimit = (float)obs_data_get_double(settings, "shuwu_kd_limit");
+		tf->shuwuLimit = (float)obs_data_get_double(settings, "shuwu_limit");
+		tf->shuwuKiRate = (float)obs_data_get_double(settings, "shuwu_ki_rate");
+		tf->shuwuKiDeadband = (float)obs_data_get_double(settings, "shuwu_ki_deadband");
 
 		bool hasEnabledConfig = false;
 	for (int i = 0; i < 5; i++) {
@@ -6300,6 +6366,18 @@ void yolo_detector_filter_video_tick(void *data, float seconds)
 		mcConfig.adaptivePidIntegralGainThreshold = tf->adaptivePidIntegralGainThreshold;
 		mcConfig.adaptivePidIntegralGainRate = tf->adaptivePidIntegralGainRate;
 		mcConfig.adaptivePidOutputLimit = tf->adaptivePidOutputLimit;
+		mcConfig.shuwuKp = tf->shuwuKp;
+		mcConfig.shuwuKi = tf->shuwuKi;
+		mcConfig.shuwuKd = tf->shuwuKd;
+		mcConfig.shuwuPredict = tf->shuwuPredict;
+		mcConfig.shuwuRate = tf->shuwuRate;
+		mcConfig.shuwuKiMode = tf->shuwuKiMode;
+		mcConfig.shuwuKpLimit = tf->shuwuKpLimit;
+		mcConfig.shuwuKiLimit = tf->shuwuKiLimit;
+		mcConfig.shuwuKdLimit = tf->shuwuKdLimit;
+		mcConfig.shuwuLimit = tf->shuwuLimit;
+		mcConfig.shuwuKiRate = tf->shuwuKiRate;
+		mcConfig.shuwuKiDeadband = tf->shuwuKiDeadband;
 		// 贝塞尔曲线移动参数
 		mcConfig.enableBezierMovement = cfg.enableBezierMovement;
 		mcConfig.bezierCurvature = cfg.bezierCurvature;

@@ -28,7 +28,8 @@ enum class AlgorithmType {
     ExternalPID,      // 1: 专业PID（外部库逆向重构）
     AimController,    // 2: aim 控制器（增量式PID+运动预测+柏林噪声）
     SlewRate,         // 3: SlewRate（限速平滑趋近）
-    AdaptivePID       // 4: 自适应PID（位置式+自适应积分增益+积分死区）
+    AdaptivePID,      // 4: 自适应PID（位置式+自适应积分增益+积分死区）
+    ShuWuPID          // 5: 书屋控制器（双卡尔曼+双调制积分+atan2软限幅+突变重置）
 };
 
 // PID闁轰胶澧楀畵渚€宕堕悙鍓佹闁告垼濮ら弳鐔虹尵鐠囪尙鈧?
@@ -209,6 +210,22 @@ struct MouseControllerConfig {
     float adaptivePidIntegralGainThreshold = 50.0f; // 积分自适应阈值
     float adaptivePidIntegralGainRate = 0.015f;    // 积分自适应速率
     float adaptivePidOutputLimit = 10.0f;          // 输出限幅
+
+    // 书屋控制器（ShuWuPid, pid_x64.lib 逆向还原移植，参数与 pid.h 完全一致）
+    // init 参数
+    float shuwuKp = 0.8f;         // 比例系数
+    float shuwuKi = 0.02f;        // 积分系数
+    float shuwuKd = 0.3f;         // 微分系数
+    float shuwuPredict = 1.0f;    // 输出速度倍率
+    float shuwuRate = 0.03f;      // kp积分速率
+    // setBase 参数
+    int   shuwuKiMode = 1;        // 0=I累加 1=I项开 其它=关
+    float shuwuKpLimit = 9900.0f; // P 限幅
+    float shuwuKiLimit = 9900.0f; // I 限幅
+    float shuwuKdLimit = 9900.0f; // D 限幅
+    float shuwuLimit = 0.0f;      // 总输出限幅 (0=关)
+    float shuwuKiRate = 0.005f;   // ki积分速率 → kf1.Q
+    float shuwuKiDeadband = 0.5f; // I 输出死区
 
     // 连续瞄准与弹道控制
     bool continuousAimEnabled = false;
